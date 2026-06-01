@@ -1,0 +1,8 @@
+{
+  "namespace": "online-boutique",
+  "service": "paymentservice",
+  "metric": "cpu",
+  "value": 95.0,
+  "threshold": 80.0,
+  "message": "Prometheus 알람: paymentservice CPU가 95%를 초과했습니다"
+}

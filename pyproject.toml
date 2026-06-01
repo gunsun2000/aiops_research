@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aiops-k8s-agents"
+version = "0.1.0"
+description = "로컬 우선 AIOps 4개 에이전트 Kubernetes 명령어 검증 프로토타입"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.optional-dependencies]
+autogen = [
+  "autogen-agentchat>=0.4",
+  "autogen-ext[openai]>=0.4",
+  "pydantic>=2",
+]
+dev = [
+  "pytest>=8.0",
+]
+
+[project.scripts]
+aiops-k8s-agents = "aiops_k8s_agents.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
