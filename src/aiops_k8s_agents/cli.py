@@ -5,6 +5,8 @@ import asyncio
 import inspect
 import json
 from dataclasses import asdict, replace
+from datetime import datetime
+from pathlib import Path
 from typing import Sequence
 
 from aiops_k8s_agents.agents import AIMCMPCoordinator
@@ -62,6 +64,13 @@ def build_parser() -> argparse.ArgumentParser:
     prometheus_parser.add_argument("--allowed-deployment", action="append", required=True)
     prometheus_parser.add_argument("--min-replicas", type=int, default=1)
     prometheus_parser.add_argument("--max-replicas", type=int, default=5)
+
+    autogen_prometheus_parser = subparsers.add_parser(
+        "autogen-prometheus-run",
+        help="Read one Prometheus query result and run it through AutoGen GroupChat.",
+    )
+    _add_prometheus_arguments(autogen_prometheus_parser)
+    autogen_prometheus_parser.add_argument("--model", default="gpt-4o-mini")
     return parser
 
 
@@ -77,6 +86,31 @@ def _add_alert_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--allowed-deployment", action="append", required=True)
     parser.add_argument("--min-replicas", type=int, default=1)
     parser.add_argument("--max-replicas", type=int, default=5)
+    _add_result_logging_argument(parser)
+
+
+def _add_prometheus_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--mode", choices=[mode.value for mode in ExecutionMode], default="mock")
+    parser.add_argument("--prometheus-url", default="")
+    parser.add_argument("--mock-response-file", default="")
+    parser.add_argument("--query", required=True)
+    parser.add_argument("--metric", required=True)
+    parser.add_argument("--threshold", required=True, type=float)
+    parser.add_argument("--default-namespace", required=True)
+    parser.add_argument("--default-service", required=True)
+    parser.add_argument("--allowed-namespace", action="append", required=True)
+    parser.add_argument("--allowed-deployment", action="append", required=True)
+    parser.add_argument("--min-replicas", type=int, default=1)
+    parser.add_argument("--max-replicas", type=int, default=5)
+    _add_result_logging_argument(parser)
+
+
+def _add_result_logging_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--save-result-dir",
+        default="",
+        help="Optional directory where the final CommandResult JSON is saved.",
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -85,17 +119,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "run":
         result = _run_alert(args)
-        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+        _emit_result(args, result)
         return 0 if result.valid else 2
 
     if args.command == "autogen-run":
         result = asyncio.run(run_autogen_groupchat(args))
-        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+        _emit_result(args, result)
         return 0 if result.valid else 2
 
     if args.command == "prometheus-run":
         result = run_prometheus_alert(args)
-        print(json.dumps(asdict(result), ensure_ascii=False, indent=2))
+        _emit_result(args, result)
+        return 0 if result.valid else 2
+
+    if args.command == "autogen-prometheus-run":
+        result = asyncio.run(run_autogen_prometheus_alert(args))
+        _emit_result(args, result)
         return 0 if result.valid else 2
 
     parser.error(f"unsupported command: {args.command}")
@@ -158,26 +197,68 @@ async def run_autogen_groupchat(args: argparse.Namespace) -> CommandResult:
                 await closed
 
 
-def run_prometheus_alert(args: argparse.Namespace) -> CommandResult:
-    config = PrometheusMetricConfig(
-        query=args.query,
-        metric=args.metric,
-        threshold=args.threshold,
-        default_namespace=args.default_namespace,
-        default_service=args.default_service,
-    )
+async def run_autogen_prometheus_alert(args: argparse.Namespace) -> CommandResult:
     try:
-        if args.mock_response_file:
-            alert = prometheus_result_to_alert_event(
-                load_prometheus_response(args.mock_response_file),
-                config,
-            )
-        else:
-            if not args.prometheus_url:
-                raise PrometheusAdapterError(
-                    "--prometheus-url or --mock-response-file is required"
-                )
-            alert = PrometheusAdapter(args.prometheus_url).query_alert(config)
+        alert = _prometheus_alert_from_args(args)
+    except Exception as exc:
+        return _error_result(
+            args.mode,
+            str(exc),
+            {
+                "coordinator": "AI-MCMP",
+                "autogen": "groupchat",
+                "input_source": "prometheus",
+            },
+        )
+
+    validator = _validator_from_args(args)
+
+    try:
+        model_client = create_openai_model_client(args.model)
+    except Exception as exc:
+        return _error_result(
+            args.mode,
+            str(exc),
+            {
+                "coordinator": "AI-MCMP",
+                "autogen": "groupchat",
+                "input_source": "prometheus",
+            },
+        )
+
+    try:
+        provider = AutoGenRoundRobinDecisionProvider(model_client=model_client)
+        coordinator = AutoGenGroupChatCoordinator(
+            validator=validator,
+            mode=ExecutionMode(args.mode),
+            decision_provider=provider,
+        )
+        result = await coordinator.run(alert)
+        return replace(
+            result,
+            metadata={**result.metadata, "input_source": "prometheus"},
+        )
+    except (AutoGenDecisionError, CommandValidationError, RuntimeError, ValueError) as exc:
+        return _error_result(
+            args.mode,
+            str(exc),
+            {
+                "coordinator": "AI-MCMP",
+                "autogen": "groupchat",
+                "input_source": "prometheus",
+            },
+        )
+    finally:
+        close = getattr(model_client, "close", None)
+        if close is not None:
+            closed = close()
+            if inspect.isawaitable(closed):
+                await closed
+
+
+def run_prometheus_alert(args: argparse.Namespace) -> CommandResult:
+    try:
+        alert = _prometheus_alert_from_args(args)
     except Exception as exc:
         return _error_result(
             args.mode,
@@ -188,6 +269,24 @@ def run_prometheus_alert(args: argparse.Namespace) -> CommandResult:
     validator = _validator_from_args(args)
     result = _run_alert_with_validator(args, alert, validator)
     return replace(result, metadata={**result.metadata, "input_source": "prometheus"})
+
+
+def _prometheus_alert_from_args(args: argparse.Namespace) -> AlertEvent:
+    config = PrometheusMetricConfig(
+        query=args.query,
+        metric=args.metric,
+        threshold=args.threshold,
+        default_namespace=args.default_namespace,
+        default_service=args.default_service,
+    )
+    if args.mock_response_file:
+        return prometheus_result_to_alert_event(
+            load_prometheus_response(args.mock_response_file),
+            config,
+        )
+    if not args.prometheus_url:
+        raise PrometheusAdapterError("--prometheus-url or --mock-response-file is required")
+    return PrometheusAdapter(args.prometheus_url).query_alert(config)
 
 
 def _validator_from_args(args: argparse.Namespace) -> CommandValidator:
@@ -221,6 +320,24 @@ def _error_result(mode: str, error: str, metadata: dict[str, str]) -> CommandRes
         stderr=error,
         metadata=merged_metadata,
     )
+
+
+def _emit_result(args: argparse.Namespace, result: CommandResult) -> None:
+    data = asdict(result)
+    text = json.dumps(data, ensure_ascii=False, indent=2)
+    print(text)
+
+    save_result_dir = getattr(args, "save_result_dir", "")
+    if not save_result_dir:
+        return
+
+    output_dir = Path(save_result_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+    command_name = str(args.command).replace("-", "_")
+    mode = str(result.mode).replace("-", "_")
+    output_path = output_dir / f"{timestamp}_{command_name}_{mode}.json"
+    output_path.write_text(text + "\n", encoding="utf-8")
 
 
 if __name__ == "__main__":

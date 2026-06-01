@@ -2,7 +2,10 @@ import asyncio
 import json
 
 from aiops_k8s_agents.autogen_groupchat import (
+    AUTOGEN_AGENT_NAMES,
     AutoGenGroupChatCoordinator,
+    AutoGenRoundRobinDecisionProvider,
+    _decision_schema,
     parse_autogen_decision,
 )
 from aiops_k8s_agents.executor import ExecutionMode
@@ -37,6 +40,59 @@ def test_parse_autogen_decision_payload_with_action_reward_and_parameters():
         "deployment": "paymentservice",
         "replicas": "3",
     }
+
+
+def test_parse_autogen_decision_accepts_known_agent_alias_from_llm():
+    payload = {
+        "agent": "AI HA Agent",
+        "action": "ha_scale_out_required",
+        "reward": 0.90,
+        "approved": True,
+        "reason": "CPU saturation requires scale-out.",
+        "parameters": {
+            "namespace": "online-boutique",
+            "deployment": "paymentservice",
+            "replicas": "3",
+        },
+    }
+
+    decision = parse_autogen_decision(
+        payload,
+        expected_agent="AIServiceHASupportAgent",
+    )
+
+    assert decision.agent == "AIServiceHASupportAgent"
+
+
+def test_decision_schema_is_strict_openai_response_format_compatible():
+    schema = _decision_schema().model_json_schema()
+
+    assert set(schema["required"]) == set(schema["properties"])
+    parameters_ref = schema["properties"]["parameters"]["$ref"]
+    parameters_schema_name = parameters_ref.rsplit("/", 1)[-1]
+    parameters_schema = schema["$defs"][parameters_schema_name]
+    assert set(parameters_schema["required"]) == set(parameters_schema["properties"])
+    assert set(parameters_schema["properties"]) == {
+        "namespace",
+        "deployment",
+        "replicas",
+    }
+
+
+def test_round_robin_groupchat_registers_structured_message_type():
+    from autogen_agentchat.messages import StructuredMessage
+
+    provider = AutoGenRoundRobinDecisionProvider(model_client=object())
+    team = provider._build_team()
+
+    assert team._message_factory.is_registered(StructuredMessage[_decision_schema()])
+
+
+def test_round_robin_groupchat_allows_task_plus_all_agent_replies():
+    provider = AutoGenRoundRobinDecisionProvider(model_client=object())
+    team = provider._build_team()
+
+    assert team._termination_condition._max_messages == len(AUTOGEN_AGENT_NAMES) + 1
 
 
 def test_autogen_groupchat_coordinator_executes_valid_groupchat_decisions():

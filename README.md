@@ -22,6 +22,10 @@
 [에이전트별 액션 및 Reward 설계](docs/agent_action_reward_policy.md)에 정리되어
 있습니다.
 
+로컬에서 바로 복사해 실행할 수 있는 테스트/실험 명령어는
+[로컬 테스트 및 실험 명령어 모음](docs/experiment_commands.md)에 정리되어
+있습니다.
+
 v1에서 실행 가능한 Kubernetes 액션은 아래 하나로 제한합니다.
 
 ```bash
