@@ -45,9 +45,10 @@ AutoGen에서는 위 4개 에이전트를 `AssistantAgent`로 만들고,
 }
 ```
 
-응용관리 에이전트만 `parameters`에 `namespace`, `deployment`, `replicas`를 반드시
-포함합니다. 나머지 에이전트는 action/reward/approved/reason으로 검토 결과를
-반환합니다.
+현재 structured output schema에서는 4개 에이전트 모두 `parameters`에
+`namespace`, `deployment`, `replicas`를 포함합니다. 최종 `ScaleAction` 생성에는
+응용관리 에이전트의 `parameters`가 사용되고, 나머지 에이전트의 값은 판단 로그와
+형식 안정성 검증에 사용됩니다.
 
 ## 실행 방법
 
@@ -57,6 +58,23 @@ set OPENAI_API_KEY=<your-api-key>
 aiops-k8s-agents autogen-run \
   --mode mock \
   --model gpt-4o-mini \
+  --namespace online-boutique \
+  --service paymentservice \
+  --metric cpu \
+  --value 95 \
+  --threshold 80 \
+  --allowed-namespace online-boutique \
+  --allowed-deployment paymentservice
+```
+
+4개 에이전트가 어떤 판단을 냈는지 눈으로 확인하려면 `--show-transcript`를
+추가합니다. 출력 JSON의 `metadata.transcript`에 에이전트별
+`action/approved/reward/reason` 요약이 들어갑니다.
+
+```bash
+aiops-k8s-agents autogen-run \
+  --mode mock \
+  --show-transcript \
   --namespace online-boutique \
   --service paymentservice \
   --metric cpu \

@@ -62,7 +62,11 @@ class AIApplicationManagementAgent:
     name: str = "AIApplicationManagementAgent"
     default_cpu_replicas: int = 3
 
-    def propose(self, alert: AlertEvent, diagnosis: Diagnosis) -> tuple[ScaleAction, AgentDecision]:
+    def propose(
+        self,
+        alert: AlertEvent,
+        diagnosis: Diagnosis,
+    ) -> tuple[ScaleAction, AgentDecision]:
         if diagnosis.cause != "cpu_saturation":
             raise ValueError(f"unsupported diagnosis for scaling: {diagnosis.cause}")
         action = ScaleAction(

@@ -96,54 +96,60 @@ def test_round_robin_groupchat_allows_task_plus_all_agent_replies():
 
 
 def test_autogen_groupchat_coordinator_executes_valid_groupchat_decisions():
-    async def fake_groupchat(_alert):
-        return [
-            parse_autogen_decision(
-                {
-                    "agent": "AIServiceHASupportAgent",
-                    "action": "ha_scale_out_required",
-                    "reward": 0.90,
-                    "approved": True,
-                    "reason": "HA 관점에서 scale-out이 필요합니다.",
-                },
-                expected_agent="AIServiceHASupportAgent",
-            ),
-            parse_autogen_decision(
-                {
-                    "agent": "AIApplicationManagementAgent",
-                    "action": "app_scale_deployment",
-                    "reward": 0.85,
-                    "approved": True,
-                    "reason": "paymentservice를 3개 replica로 확장합니다.",
-                    "parameters": {
-                        "namespace": "online-boutique",
-                        "deployment": "paymentservice",
-                        "replicas": 3,
-                    },
-                },
-                expected_agent="AIApplicationManagementAgent",
-            ),
-            parse_autogen_decision(
-                {
-                    "agent": "AISemiconductorInfraOpsAgent",
-                    "action": "infra_capacity_approved",
-                    "reward": 0.70,
-                    "approved": True,
-                    "reason": "인프라 자원 범위 안입니다.",
-                },
-                expected_agent="AISemiconductorInfraOpsAgent",
-            ),
-            parse_autogen_decision(
-                {
-                    "agent": "CostOptimizationAgent",
-                    "action": "cost_budget_approved",
-                    "reward": 0.60,
-                    "approved": True,
-                    "reason": "비용 정책 범위 안입니다.",
-                },
-                expected_agent="CostOptimizationAgent",
-            ),
+    class FakeGroupChat:
+        transcript_lines = [
+            "AIServiceHASupportAgent: action=ha_scale_out_required approved=True reward=0.90 reason=HA 관점에서 scale-out이 필요합니다.",
+            "AIApplicationManagementAgent: action=app_scale_deployment approved=True reward=0.85 reason=paymentservice를 3개 replica로 확장합니다.",
         ]
+
+        async def __call__(self, _alert):
+            return [
+                parse_autogen_decision(
+                    {
+                        "agent": "AIServiceHASupportAgent",
+                        "action": "ha_scale_out_required",
+                        "reward": 0.90,
+                        "approved": True,
+                        "reason": "HA 관점에서 scale-out이 필요합니다.",
+                    },
+                    expected_agent="AIServiceHASupportAgent",
+                ),
+                parse_autogen_decision(
+                    {
+                        "agent": "AIApplicationManagementAgent",
+                        "action": "app_scale_deployment",
+                        "reward": 0.85,
+                        "approved": True,
+                        "reason": "paymentservice를 3개 replica로 확장합니다.",
+                        "parameters": {
+                            "namespace": "online-boutique",
+                            "deployment": "paymentservice",
+                            "replicas": 3,
+                        },
+                    },
+                    expected_agent="AIApplicationManagementAgent",
+                ),
+                parse_autogen_decision(
+                    {
+                        "agent": "AISemiconductorInfraOpsAgent",
+                        "action": "infra_capacity_approved",
+                        "reward": 0.70,
+                        "approved": True,
+                        "reason": "인프라 자원 범위 안입니다.",
+                    },
+                    expected_agent="AISemiconductorInfraOpsAgent",
+                ),
+                parse_autogen_decision(
+                    {
+                        "agent": "CostOptimizationAgent",
+                        "action": "cost_budget_approved",
+                        "reward": 0.60,
+                        "approved": True,
+                        "reason": "비용 정책 범위 안입니다.",
+                    },
+                    expected_agent="CostOptimizationAgent",
+                ),
+            ]
 
     coordinator = AutoGenGroupChatCoordinator(
         validator=CommandValidator(
@@ -153,7 +159,8 @@ def test_autogen_groupchat_coordinator_executes_valid_groupchat_decisions():
             max_replicas=5,
         ),
         mode=ExecutionMode.MOCK,
-        decision_provider=fake_groupchat,
+        decision_provider=FakeGroupChat(),
+        include_transcript=True,
     )
     alert = AlertEvent(
         namespace="online-boutique",
@@ -173,6 +180,7 @@ def test_autogen_groupchat_coordinator_executes_valid_groupchat_decisions():
     assert result.metadata["coordinator"] == "AI-MCMP"
     assert result.metadata["autogen"] == "groupchat"
     assert result.metadata["reward_total"] == "3.05"
+    assert result.metadata["transcript"] == "\n".join(FakeGroupChat.transcript_lines)
 
 
 def test_autogen_groupchat_coordinator_rejects_when_one_agent_rejects():

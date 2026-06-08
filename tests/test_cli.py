@@ -122,6 +122,101 @@ def test_cli_autogen_run_prints_groupchat_result(monkeypatch, capsys):
     assert output["metadata"]["reward_total"] == "3.05"
 
 
+def test_cli_autogen_run_can_show_agent_transcript(monkeypatch, capsys):
+    from aiops_k8s_agents.autogen_groupchat import parse_autogen_decision
+
+    class FakeProvider:
+        transcript_lines = [
+            "AIServiceHASupportAgent: action=ha_scale_out_required approved=True reward=0.90 reason=HA 복구 필요",
+            "AIApplicationManagementAgent: action=app_scale_deployment approved=True reward=0.85 reason=replica 3개 확장",
+            "AISemiconductorInfraOpsAgent: action=infra_capacity_approved approved=True reward=0.70 reason=자원 가능",
+            "CostOptimizationAgent: action=cost_budget_approved approved=True reward=0.60 reason=비용 가능",
+        ]
+
+        def __init__(self, model_client):
+            self.model_client = model_client
+
+        async def __call__(self, _alert):
+            return [
+                parse_autogen_decision(
+                    {
+                        "agent": "AIServiceHASupportAgent",
+                        "action": "ha_scale_out_required",
+                        "reward": 0.90,
+                        "approved": True,
+                        "reason": "HA 복구 필요",
+                    },
+                    expected_agent="AIServiceHASupportAgent",
+                ),
+                parse_autogen_decision(
+                    {
+                        "agent": "AIApplicationManagementAgent",
+                        "action": "app_scale_deployment",
+                        "reward": 0.85,
+                        "approved": True,
+                        "reason": "replica 3개 확장",
+                        "parameters": {
+                            "namespace": "online-boutique",
+                            "deployment": "paymentservice",
+                            "replicas": "3",
+                        },
+                    },
+                    expected_agent="AIApplicationManagementAgent",
+                ),
+                parse_autogen_decision(
+                    {
+                        "agent": "AISemiconductorInfraOpsAgent",
+                        "action": "infra_capacity_approved",
+                        "reward": 0.70,
+                        "approved": True,
+                        "reason": "자원 가능",
+                    },
+                    expected_agent="AISemiconductorInfraOpsAgent",
+                ),
+                parse_autogen_decision(
+                    {
+                        "agent": "CostOptimizationAgent",
+                        "action": "cost_budget_approved",
+                        "reward": 0.60,
+                        "approved": True,
+                        "reason": "비용 가능",
+                    },
+                    expected_agent="CostOptimizationAgent",
+                ),
+            ]
+
+    monkeypatch.setattr(cli, "create_openai_model_client", lambda _model: object())
+    monkeypatch.setattr(cli, "AutoGenRoundRobinDecisionProvider", FakeProvider)
+
+    exit_code = main(
+        [
+            "autogen-run",
+            "--mode",
+            "mock",
+            "--show-transcript",
+            "--namespace",
+            "online-boutique",
+            "--service",
+            "paymentservice",
+            "--metric",
+            "cpu",
+            "--value",
+            "95",
+            "--threshold",
+            "80",
+            "--allowed-namespace",
+            "online-boutique",
+            "--allowed-deployment",
+            "paymentservice",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["metadata"]["transcript"] == "\n".join(FakeProvider.transcript_lines)
+
+
 def test_cli_autogen_run_returns_json_error_when_model_client_fails(monkeypatch, capsys):
     def fail_model_client(_model):
         raise ValueError("OPENAI_API_KEY가 설정되지 않았습니다")

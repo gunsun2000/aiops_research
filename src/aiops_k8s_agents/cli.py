@@ -47,6 +47,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_alert_arguments(autogen_parser)
     autogen_parser.add_argument("--model", default="gpt-4o-mini")
+    _add_autogen_transcript_argument(autogen_parser)
 
     prometheus_parser = subparsers.add_parser(
         "prometheus-run",
@@ -71,6 +72,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_prometheus_arguments(autogen_prometheus_parser)
     autogen_prometheus_parser.add_argument("--model", default="gpt-4o-mini")
+    _add_autogen_transcript_argument(autogen_prometheus_parser)
+
     return parser
 
 
@@ -110,6 +113,14 @@ def _add_result_logging_argument(parser: argparse.ArgumentParser) -> None:
         "--save-result-dir",
         default="",
         help="Optional directory where the final CommandResult JSON is saved.",
+    )
+
+
+def _add_autogen_transcript_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--show-transcript",
+        action="store_true",
+        help="Include a readable AutoGen agent transcript in metadata.transcript.",
     )
 
 
@@ -181,6 +192,7 @@ async def run_autogen_groupchat(args: argparse.Namespace) -> CommandResult:
             validator=validator,
             mode=ExecutionMode(args.mode),
             decision_provider=provider,
+            include_transcript=args.show_transcript,
         )
         return await coordinator.run(alert)
     except (AutoGenDecisionError, CommandValidationError, RuntimeError, ValueError) as exc:
@@ -232,6 +244,7 @@ async def run_autogen_prometheus_alert(args: argparse.Namespace) -> CommandResul
             validator=validator,
             mode=ExecutionMode(args.mode),
             decision_provider=provider,
+            include_transcript=args.show_transcript,
         )
         result = await coordinator.run(alert)
         return replace(
@@ -324,6 +337,14 @@ def _error_result(mode: str, error: str, metadata: dict[str, str]) -> CommandRes
 
 def _emit_result(args: argparse.Namespace, result: CommandResult) -> None:
     data = asdict(result)
+    _emit_json_report(args, data, mode=str(result.mode))
+
+
+def _emit_json_report(
+    args: argparse.Namespace,
+    data: dict,
+    mode: str = "report",
+) -> None:
     text = json.dumps(data, ensure_ascii=False, indent=2)
     print(text)
 
@@ -335,8 +356,8 @@ def _emit_result(args: argparse.Namespace, result: CommandResult) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
     command_name = str(args.command).replace("-", "_")
-    mode = str(result.mode).replace("-", "_")
-    output_path = output_dir / f"{timestamp}_{command_name}_{mode}.json"
+    normalized_mode = mode.replace("-", "_")
+    output_path = output_dir / f"{timestamp}_{command_name}_{normalized_mode}.json"
     output_path.write_text(text + "\n", encoding="utf-8")
 
 

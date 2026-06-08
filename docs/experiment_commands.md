@@ -52,10 +52,10 @@ python -m pip install -e ".[dev,autogen]"
 python -m pytest
 ```
 
-현재 성공 기준:
+성공 기준:
 
 ```text
-32 passed
+... passed
 ```
 
 AutoGen 관련 테스트만 실행:
@@ -145,6 +145,22 @@ AutoGen GroupChat 실행:
 
 ```powershell
 aiops-k8s-agents autogen-run --mode mock --namespace online-boutique --service paymentservice --metric cpu --value 95 --threshold 80 --message "paymentservice CPU usage is 95 percent" --allowed-namespace online-boutique --allowed-deployment paymentservice
+```
+
+4개 에이전트가 어떤 판단을 냈는지 눈으로 한 번 확인하려면 `--show-transcript`를
+붙입니다.
+
+```powershell
+aiops-k8s-agents autogen-run --mode mock --show-transcript --namespace online-boutique --service paymentservice --metric cpu --value 95 --threshold 80 --message "paymentservice CPU usage is 95 percent" --allowed-namespace online-boutique --allowed-deployment paymentservice
+```
+
+출력 JSON의 `metadata.transcript`에서 아래와 같은 형태를 확인합니다.
+
+```text
+AIServiceHASupportAgent: action=ha_scale_out_required approved=True reward=0.90 reason=...
+AIApplicationManagementAgent: action=app_scale_deployment approved=True reward=0.85 reason=...
+AISemiconductorInfraOpsAgent: action=infra_capacity_approved approved=True reward=0.70 reason=...
+CostOptimizationAgent: action=cost_budget_approved approved=True reward=0.60 reason=...
 ```
 
 같은 실험을 스크립트로 실행:
@@ -342,6 +358,9 @@ Prometheus API
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\run_prometheus_autogen_local.ps1
 ```
+
+Prometheus 입력까지 포함한 AutoGen 발화 요약을 보고 싶으면 직접 명령에
+`--show-transcript`를 붙여 실행합니다.
 
 성공 기준:
 

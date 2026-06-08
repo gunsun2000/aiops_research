@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable
 
 from aiops_k8s_agents.agents import AgentDecision
@@ -98,6 +98,7 @@ class AutoGenGroupChatCoordinator:
     validator: CommandValidator
     mode: ExecutionMode = ExecutionMode.MOCK
     decision_provider: DecisionProvider | None = None
+    include_transcript: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.mode, str):
@@ -131,7 +132,7 @@ class AutoGenGroupChatCoordinator:
         )
 
     def _metadata(self, consensus: str, decisions: list[AgentDecision]) -> dict[str, str]:
-        return {
+        metadata = {
             "coordinator": "AI-MCMP",
             "autogen": "groupchat",
             "consensus": consensus,
@@ -148,15 +149,24 @@ class AutoGenGroupChatCoordinator:
             ),
             "reward_total": f"{sum(decision.reward for decision in decisions):.2f}",
         }
+        if self.include_transcript:
+            transcript = "\n".join(
+                getattr(self.decision_provider, "transcript_lines", [])
+            )
+            if transcript:
+                metadata["transcript"] = transcript
+        return metadata
 
 
 @dataclass
 class AutoGenRoundRobinDecisionProvider:
     model_client: Any
+    transcript_lines: list[str] = field(default_factory=list, init=False)
 
     async def __call__(self, alert: AlertEvent) -> list[AgentDecision]:
         team = self._build_team()
         result = await team.run(task=build_autogen_task(alert))
+        self.transcript_lines = self._extract_transcript(result)
         return self._extract_decisions(result)
 
     def _build_team(self) -> Any:
@@ -199,6 +209,28 @@ class AutoGenRoundRobinDecisionProvider:
                 parse_autogen_decision(getattr(message, "content", None), source)
             )
         return _order_decisions(decisions)
+
+    @staticmethod
+    def _extract_transcript(result: Any) -> list[str]:
+        transcript: list[str] = []
+        messages = getattr(result, "messages", [])
+        for message in messages:
+            source = getattr(message, "source", "")
+            if source not in AUTOGEN_AGENT_NAMES:
+                continue
+            try:
+                data = _payload_to_dict(getattr(message, "content", None))
+            except AutoGenDecisionError:
+                continue
+            transcript.append(
+                (
+                    f"{source}: action={data.get('action')} "
+                    f"approved={data.get('approved')} "
+                    f"reward={float(data.get('reward', 0.0)):.2f} "
+                    f"reason={data.get('reason')}"
+                )
+            )
+        return transcript
 
 
 def create_openai_model_client(model: str) -> Any:

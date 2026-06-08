@@ -1,145 +1,261 @@
-# AIOps 4개 에이전트 Kubernetes 자동화 프로토타입
+# AIOps 4-Agent Kubernetes 자동화 프로토타입
 
-교수님이 제안하신 AIOps 구조를 로컬에서 먼저 검증하기 위한 프로토타입입니다.
+교수님이 제안하신 구조에서 **AI 에이전트 레이어**를 로컬에서 먼저 검증하는
+프로토타입입니다.
 
-1. AIOpsLab / Kind / Prometheus가 인프라와 서비스 상태를 생성합니다.
-2. `AI-MCMP` 통합 관리 에이전트가 4개 전문 에이전트의 의견을 수집합니다.
-3. 검증된 Kubernetes 액션만 이식 가능한 `kubectl` 명령어로 변환합니다.
-4. 같은 소스코드를 로컬 mock 검증에서 연구실 Ubuntu 서버로 옮겨 실행합니다.
+중요한 점은 하나입니다.
 
-## 아키텍처
-
-현재 프로토타입은 `agentops.png` 그림의 2번 AI 에이전트 레이어를 따릅니다.
-
-- `AIMCMPCoordinator`: GroupChat Manager 역할의 최종 의사결정자입니다.
-- `AIServiceHASupportAgent`: 서비스 장애 위험과 복구 필요성을 판단합니다.
-- `AIApplicationManagementAgent`: 애플리케이션 배포/제어 액션을 제안합니다.
-- `AISemiconductorInfraOpsAgent`: GPU/NPU 자원 여유를 모사해 인프라 적합성을 검토합니다.
-- `CostOptimizationAgent`: 1차 비용 정책 안에서 액션이 안전한지 확인합니다.
-- `KubernetesExecutor`: allowlist를 통과한 scale 명령만 실행합니다.
-
-에이전트별 액션과 reward 설계는
-[에이전트별 액션 및 Reward 설계](docs/agent_action_reward_policy.md)에 정리되어
-있습니다.
-
-로컬에서 바로 복사해 실행할 수 있는 테스트/실험 명령어는
-[로컬 테스트 및 실험 명령어 모음](docs/experiment_commands.md)에 정리되어
-있습니다.
-
-v1에서 실행 가능한 Kubernetes 액션은 아래 하나로 제한합니다.
-
-```bash
-kubectl scale deployment <deployment> --replicas=<N> -n <namespace>
+```text
+지금 저장소 = AIOpsLab 본 실험장이 아니라,
+AIOpsLab에 붙일 4-agent Kubernetes 자동 제어 모듈
 ```
 
-LLM이 만든 자유 텍스트는 직접 실행하지 않습니다. 에이전트 출력은 반드시
-`ScaleAction` 구조체가 되고, allowlist 검증기를 통과한 뒤 명령어 렌더러로
-변환되어야 합니다.
+즉, 지금 목표는 큰 서버 없이도 먼저 **에이전트 판단 로직**, **명령어 생성**,
+**명령어 안전 검증**, **AutoGen GroupChat 흐름**을 로컬에서 검증하는 것입니다.
+나중에 연구실 고성능 서버가 준비되면 같은 코드를 AIOpsLab 환경으로 옮겨
+풀스케일 실험을 진행합니다.
 
-## 로컬 Mock 실행
+## 전체 연구 목표
 
-처음 한 번 패키지를 editable mode로 설치합니다.
+이 연구의 최종 목표는 Kubernetes 기반 마이크로서비스 환경에서 장애나 과부하가
+발생했을 때, 4개의 AI 에이전트가 서로 의견을 검토한 뒤 안전한 복구/최적화
+명령을 자동으로 생성하고 실행하는 것입니다.
 
-```bash
-python -m pip install -e ".[dev]"
+최종적으로 만들고 싶은 흐름은 아래와 같습니다.
+
+```text
+Prometheus metric / log / alert
+-> 4-agent AutoGen GroupChat
+-> action/reward 기반 합의
+-> CommandValidator 안전 검증
+-> kubectl 명령 생성
+-> Kubernetes에서 복구/최적화 실행
+-> 실행 결과를 다시 metric으로 관찰
 ```
 
-```bash
-python -m aiops_k8s_agents.cli run \
-  --mode mock \
-  --namespace online-boutique \
-  --service paymentservice \
-  --metric cpu \
-  --value 95 \
-  --threshold 80 \
-  --allowed-namespace online-boutique \
-  --allowed-deployment paymentservice
+## 그림의 두번째 부분을 파일에 넣는다는 의미
+
+그림의 두번째 부분은 **AI 에이전트 레이어**입니다. 현재 저장소에 만든 파일들은
+이미 이 부분을 구현하는 역할을 합니다.
+
+전체 그림에 붙이면 구조는 이렇게 바뀝니다.
+
+```text
+기존 인프라만 있는 상태:
+Prometheus / Kubernetes / Online Boutique
+
+현재 만든 파일을 추가한 뒤:
+Prometheus / Kubernetes / Online Boutique
+-> 4-agent AI 판단 레이어
+-> 안전 검증된 kubectl 명령 생성
+-> Kubernetes 자원 제어
 ```
 
-JSON 출력에 들어가야 하는 예상 명령어는 아래와 같습니다.
+즉, 이 저장소는 AIOpsLab 위에서 직접 서비스를 띄우는 코드가 아니라,
+**AIOpsLab에서 나온 metric과 alert를 보고 무엇을 실행할지 결정하는 두뇌 역할**을
+합니다.
 
-```bash
+| 그림 요소 | 현재 파일/모듈 | 역할 |
+| --- | --- | --- |
+| AI-MCMP 통합 관리 에이전트 | `AIMCMPCoordinator`, `AutoGenGroupChatCoordinator` | 4개 에이전트 의견을 모아 최종 실행 여부 결정 |
+| AI서비스 HA 지원 에이전트 | `AIServiceHASupportAgent` | 장애 위험을 보고 scale-out 같은 HA 복구 필요성 판단 |
+| AI응용관리 자동화 에이전트 | `AIApplicationManagementAgent` | 실제 Kubernetes 응용 제어 액션 생성 |
+| AI반도체 인프라 운용 자동화 에이전트 | `AISemiconductorInfraOpsAgent` | replica 증가가 인프라 자원 관점에서 가능한지 검토 |
+| 비용 최적화 지원 에이전트 | `CostOptimizationAgent` | replica 증가가 비용 정책 안에 있는지 검토 |
+| 최종 실행 액션 생성 | `ScaleAction`, `CommandValidator`, `KubernetesExecutor` | 안전한 `kubectl scale` 명령으로 변환하고 실행 |
+
+현재는 CPU 95% 과부하 시나리오 하나를 기준으로 검증하므로, 메인 에이전트
+로직은 `src/aiops_k8s_agents/agents.py` 한 파일에 모아두었습니다. 이렇게 두면
+4개 에이전트의 판단 흐름과 `AI-MCMP` 조율 과정을 한눈에 보기 쉽습니다.
+
+나중에 연구실 서버에서 AIOpsLab을 붙이고 memory, pod crash, latency, 비용
+최적화 같은 시나리오가 늘어나면 그때 에이전트별 파일로 분리할 수 있습니다.
+
+따라서 두번째 사진 부분의 역할은 아래 한 문장으로 정리할 수 있습니다.
+
+```text
+Prometheus가 알려준 장애 상태를 4개 에이전트가 검토하고,
+실행해도 안전한 Kubernetes 복구 명령으로 바꾸는 중간 판단 계층
+```
+
+## 현재 상태
+
+| 구분 | 상태 |
+| --- | --- |
+| 4개 에이전트 판단 로직 | 완료 |
+| action/reward 설계 | 완료 |
+| AutoGen GroupChat 연결 | 완료 |
+| kubectl 명령 생성/검증 | 완료 |
+| kind dry-run 검증 | 완료 |
+| Prometheus 입력 경로 검증 | 완료 |
+| 로컬 kind real scale | 완료 |
+| CI/CD 자동 테스트 | 완료 |
+| AIOpsLab 풀스케일 서버 실험 | 서버 확보 후 진행 |
+
+현재 로컬에서 확인한 대표 성공 명령은 아래입니다.
+
+```powershell
 kubectl scale deployment paymentservice --replicas=3 -n online-boutique
 ```
 
-## 실행 모드
+이 명령은 로컬 kind 클러스터에서 실제로 실행했고, `paymentservice`가 `3/3`
+Running 상태가 되는 것까지 확인했습니다.
 
-- `mock`: `kubectl`을 호출하지 않고 명령어 검증과 렌더링만 수행합니다.
-- `dry-run`: 로컬 Kind 클러스터에 `kubectl ... --dry-run=server`로 검증합니다.
-- `real`: 설정된 kubeconfig를 대상으로 검증된 명령어를 실제 실행합니다.
+## 4개 에이전트 역할
 
-deterministic policy agent에서 LLM 기반 AutoGen agent로 확장할 때는 선택 의존성을
-설치합니다.
+| 에이전트 | 하는 일 |
+| --- | --- |
+| `AIServiceHASupportAgent` | 장애 위험을 보고 HA 복구 액션이 필요한지 판단 |
+| `AIApplicationManagementAgent` | 실제 애플리케이션 제어 액션 생성 |
+| `AISemiconductorInfraOpsAgent` | GPU/NPU/가속기 자원 여유가 있다고 보고 인프라 관점 검토 |
+| `CostOptimizationAgent` | 비용 관점에서 실행해도 되는지 검토 |
 
-```bash
-python -m pip install -e ".[autogen,dev]"
-```
-
-## AutoGen GroupChat 실행
-
-AutoGen GroupChat은 기존 안전 실행 구조 위에 붙는 선택형 레이어입니다. AutoGen
-에이전트가 `action`, `reward`, `approved`, `reason`, `parameters`를 구조화해서
-반환하면, 기존 validator가 최종 `kubectl` 명령어를 검증합니다.
-
-```bash
-set OPENAI_API_KEY=<your-api-key>
-aiops-k8s-agents autogen-run \
-  --mode mock \
-  --model gpt-4o-mini \
-  --namespace online-boutique \
-  --service paymentservice \
-  --metric cpu \
-  --value 95 \
-  --threshold 80 \
-  --allowed-namespace online-boutique \
-  --allowed-deployment paymentservice
-```
-
-`autogen-run`도 처음에는 `mock` 모드로만 검증하세요. 서버 이관 후에도 `dry-run`
-확인 없이 `real` 모드로 바로 전환하지 않습니다.
-
-## Prometheus Metric 입력 실행
-
-실제 Prometheus 서버가 없어도 mock 응답 파일로 metric 입력 경로를 검증할 수 있습니다.
-
-```bash
-aiops-k8s-agents prometheus-run \
-  --mode mock \
-  --mock-response-file examples/prometheus_cpu_high_response.json \
-  --query "cpu_query" \
-  --metric cpu \
-  --threshold 80 \
-  --default-namespace online-boutique \
-  --default-service paymentservice \
-  --allowed-namespace online-boutique \
-  --allowed-deployment paymentservice
-```
-
-나중에 Prometheus가 준비되면 `--mock-response-file` 대신 `--prometheus-url`을 사용합니다.
-
-```bash
-aiops-k8s-agents prometheus-run \
-  --mode mock \
-  --prometheus-url http://localhost:9090 \
-  --query "avg(rate(container_cpu_usage_seconds_total{service=\"paymentservice\"}[1m]))" \
-  --metric cpu \
-  --threshold 80 \
-  --default-namespace online-boutique \
-  --default-service paymentservice \
-  --allowed-namespace online-boutique \
-  --allowed-deployment paymentservice
-```
-
-로컬 kind에 배포된 상태를 확인하려면:
+현재 CPU 95% 시나리오의 최종 명령은 아래입니다.
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\local_kind_status.ps1
+kubectl scale deployment paymentservice --replicas=3 -n online-boutique
 ```
 
-현재 테스트는 결과 재현성을 위해 deterministic mock 동작을 사용합니다.
+현재 action/reward 예시는 아래와 같습니다.
 
-## 테스트
+| 에이전트 | 대표 action | reward |
+| --- | --- | ---: |
+| `AIServiceHASupportAgent` | `ha_scale_out_required` | `+0.90` |
+| `AIApplicationManagementAgent` | `app_scale_deployment` | `+0.85` |
+| `AISemiconductorInfraOpsAgent` | `infra_capacity_approved` | `+0.70` |
+| `CostOptimizationAgent` | `cost_budget_approved` | `+0.60` |
 
-```bash
+CPU 95% 상황에서는 총 reward가 `3.05`가 되고, 모든 에이전트가 승인하면
+최종 scale 명령이 생성됩니다.
+
+## 제일 중요한 실행 순서
+
+Windows PowerShell에서 아래 순서만 기억하면 됩니다.
+
+```powershell
 python -m pytest
 ```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_autogen_mock.ps1
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_autogen_dry_run.ps1
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run_prometheus_autogen_local.ps1
+```
+
+마지막으로 실제 적용 상태를 확인합니다.
+
+```powershell
+kubectl get deployment paymentservice -n online-boutique
+kubectl get pods -n online-boutique -l app=paymentservice
+```
+
+정상이면 `paymentservice`가 `3/3`이고 pod 3개가 `Running`이어야 합니다.
+
+## CI/CD 자동 테스트
+
+별도 운영/평가 연구 기능은 빼고, 프로젝트 안정성을 위한 CI/CD만 남겼습니다.
+현재 남긴 자동화는 GitHub에 코드를 push하거나 pull request를 만들 때 테스트가 자동으로
+돌아가게 하는 기능입니다.
+
+| 구분 | 파일 | 의미 |
+| --- | --- | --- |
+| CI/CD | `.github/workflows/ci.yml` | GitHub push/PR 때 자동으로 Python 패키지 설치, `pytest`, CLI 설치 확인 실행 |
+
+즉, 이 프로젝트의 중심은 여전히 4-agent AIOps 자동 제어이고, CI/CD는 코드가
+깨졌는지 자동으로 확인하는 보조 장치입니다.
+
+로컬에서 같은 검증을 직접 하려면 아래 명령만 실행하면 됩니다.
+
+```powershell
+python -m pytest
+```
+
+## 헷갈리면 이것만 구분하기
+
+| 용어 | 뜻 |
+| --- | --- |
+| `mock` | Kubernetes 없이 명령어가 맞는지만 확인 |
+| `dry-run` | Kubernetes API에 검증만 요청하고 실제 실행은 안 함 |
+| `local real` | 내 PC의 kind 클러스터에 실제 scale 실행 |
+| `server real` | 연구실 서버의 AIOpsLab 환경에서 실제 실행 |
+
+항상 이 순서를 지킵니다.
+
+```text
+mock -> dry-run -> local real -> 서버 dry-run -> 서버 real
+```
+
+## AIOpsLab은 언제 쓰나?
+
+아직 AIOpsLab 본 실험은 하지 않았습니다.
+
+지금은 AIOpsLab에 붙일 **에이전트 제어 엔진**을 만든 단계입니다. 연구실 서버가
+준비되면 아래 순서로 연결합니다.
+
+```text
+AIOpsLab 설치
+-> Online Boutique 배포
+-> Chaos Mesh 장애 주입
+-> Prometheus metric 수집
+-> 4-agent 시스템에 metric 전달
+-> 검증된 kubectl 명령 real 실행
+```
+
+## 큰 서버로 옮긴 뒤 할 일
+
+연구실 고성능 Ubuntu 서버가 준비되면 로컬에서 만든 코드를 그대로 옮기고,
+실험 대상을 가벼운 kind 검증 환경에서 AIOpsLab 풀스케일 환경으로 바꿉니다.
+
+| 단계 | 서버에서 할 일 | 목표 |
+| --- | --- | --- |
+| 1 | Python 환경과 패키지 설치 | 로컬 코드가 서버에서도 실행되는지 확인 |
+| 2 | AIOpsLab 설치 | 실제 연구 실험장 준비 |
+| 3 | Online Boutique 전체 배포 | 마이크로서비스 대상 시스템 구성 |
+| 4 | Prometheus 연결 | 실제 metric/log/alert 수집 |
+| 5 | Chaos Mesh 연결 | 장애를 의도적으로 주입 |
+| 6 | `mock` 실행 | 서버에서도 에이전트 판단이 같은지 확인 |
+| 7 | `dry-run` 실행 | 서버 Kubernetes API에서 명령 호환성 확인 |
+| 8 | `real` 실행 | 검증된 명령으로 실제 복구/최적화 수행 |
+
+서버에서도 바로 `real`로 가지 않고, 반드시 아래 순서를 지킵니다.
+
+```text
+서버 mock -> 서버 dry-run -> 서버 real
+```
+
+## 최종 성공 기준
+
+큰 서버에서 최종적으로 확인해야 하는 목표는 아래입니다.
+
+| 목표 | 성공 기준 |
+| --- | --- |
+| 장애 감지 | Prometheus/alert 입력이 4-agent 시스템으로 들어옴 |
+| 에이전트 합의 | 4개 에이전트가 action/reward를 내고 최종 합의함 |
+| 안전 검증 | allowlist와 validator를 통과한 명령만 실행됨 |
+| 자동 복구 | 과부하/장애 상황에서 replica scale-out 등 복구 액션 수행 |
+| 결과 관찰 | 실행 후 pod 상태, metric, 복구 시간을 기록 |
+| 연구 증거 | mock/dry-run/real 결과 JSON과 metric 로그를 실험 결과로 저장 |
+
+최종 논문/보고서에서는 아래 흐름을 증명하는 것이 핵심입니다.
+
+```text
+장애 주입
+-> metric 변화 감지
+-> 4-agent 판단 및 reward 합의
+-> 안전한 Kubernetes 명령 생성
+-> 실제 복구 실행
+-> 복구 시간/자원 사용량/비용 변화 분석
+```
+
+## 자세한 문서
+
+- 전체 실행 명령어: [docs/experiment_commands.md](docs/experiment_commands.md)
+- action/reward 설계: [docs/agent_action_reward_policy.md](docs/agent_action_reward_policy.md)
+- AutoGen 설명: [docs/autogen_groupchat.md](docs/autogen_groupchat.md)
+- 서버 이관 절차: [docs/server_migration_runbook.md](docs/server_migration_runbook.md)
