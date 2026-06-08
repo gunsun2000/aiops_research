@@ -4,10 +4,11 @@ import argparse
 import asyncio
 import inspect
 import json
+import time
 from dataclasses import asdict, replace
 from datetime import datetime
 from pathlib import Path
-from typing import Sequence
+from typing import Any, Sequence
 
 from aiops_k8s_agents.agents import AIMCMPCoordinator
 from aiops_k8s_agents.autogen_groupchat import (
@@ -17,6 +18,7 @@ from aiops_k8s_agents.autogen_groupchat import (
     create_openai_model_client,
 )
 from aiops_k8s_agents.executor import ExecutionMode
+from aiops_k8s_agents.kubernetes_status import collect_kubernetes_snapshot
 from aiops_k8s_agents.models import AlertEvent, CommandResult
 from aiops_k8s_agents.prometheus import (
     PrometheusAdapter,
@@ -73,6 +75,26 @@ def build_parser() -> argparse.ArgumentParser:
     _add_prometheus_arguments(autogen_prometheus_parser)
     autogen_prometheus_parser.add_argument("--model", default="gpt-4o-mini")
     _add_autogen_transcript_argument(autogen_prometheus_parser)
+
+    feedback_loop_parser = subparsers.add_parser(
+        "feedback-loop",
+        help="Repeatedly read Prometheus, run the 4-agent controller, and save a research report.",
+    )
+    _add_prometheus_arguments(feedback_loop_parser)
+    feedback_loop_parser.add_argument("--iterations", type=int, default=3)
+    feedback_loop_parser.add_argument("--interval-seconds", type=float, default=10.0)
+    feedback_loop_parser.add_argument(
+        "--autogen",
+        action="store_true",
+        help="Use AutoGen GroupChat for each loop iteration.",
+    )
+    feedback_loop_parser.add_argument("--model", default="gpt-4o-mini")
+    feedback_loop_parser.add_argument(
+        "--no-kubernetes-snapshot",
+        action="store_true",
+        help="Skip before/after kubectl deployment and pod snapshots.",
+    )
+    _add_autogen_transcript_argument(feedback_loop_parser)
 
     return parser
 
@@ -148,8 +170,62 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit_result(args, result)
         return 0 if result.valid else 2
 
+    if args.command == "feedback-loop":
+        report = run_feedback_loop(args)
+        _emit_json_report(args, report)
+        return 0 if report["failed"] == 0 else 2
+
     parser.error(f"unsupported command: {args.command}")
     return 2
+
+
+def run_feedback_loop(args: argparse.Namespace) -> dict[str, Any]:
+    if args.iterations < 1:
+        raise ValueError("--iterations must be at least 1")
+    records: list[dict[str, Any]] = []
+
+    for index in range(args.iterations):
+        before = _snapshot_from_args(args)
+        result = _run_feedback_iteration(args)
+        after = _snapshot_from_args(args)
+        records.append(
+            {
+                "iteration": index + 1,
+                "timestamp": datetime.now().isoformat(timespec="seconds"),
+                "before": before,
+                "result": asdict(result),
+                "after": after,
+            }
+        )
+        if index < args.iterations - 1:
+            time.sleep(args.interval_seconds)
+
+    failed = sum(1 for record in records if not record["result"]["valid"])
+    return {
+        "command": "feedback-loop",
+        "mode": args.mode,
+        "iterations": args.iterations,
+        "failed": failed,
+        "passed": args.iterations - failed,
+        "input_source": "prometheus",
+        "autogen": bool(args.autogen),
+        "records": records,
+    }
+
+
+def _run_feedback_iteration(args: argparse.Namespace) -> CommandResult:
+    if args.autogen:
+        return asyncio.run(run_autogen_prometheus_alert(args))
+    return run_prometheus_alert(args)
+
+
+def _snapshot_from_args(args: argparse.Namespace) -> dict[str, Any] | None:
+    if args.no_kubernetes_snapshot:
+        return None
+    return collect_kubernetes_snapshot(
+        namespace=args.default_namespace,
+        deployment=args.default_service,
+    )
 
 
 def _run_alert(args: argparse.Namespace) -> CommandResult:

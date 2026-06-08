@@ -176,6 +176,55 @@ kubectl get pods -n online-boutique -l app=paymentservice
 python -m pytest
 ```
 
+## 서버 개인용 kind 통합 실험
+
+관리자 kubeconfig가 없어도 연구실 서버 안에 개인용 kind 클러스터를 만들면 아래
+범위까지는 연구 실험으로 진행할 수 있습니다.
+
+```text
+개인용 kind Kubernetes
+-> paymentservice deployment
+-> Prometheus API
+-> 4-agent 판단 및 reward 합의
+-> kubectl dry-run / real scale
+-> Chaos Mesh pod-kill 장애 주입
+-> Kubernetes 복구 상태 확인
+```
+
+현재 이 단계에서 확인할 수 있는 연구 증거는 다음과 같습니다.
+
+| 증거 | 의미 |
+| --- | --- |
+| `python -m pytest` 통과 | 서버에서도 코드가 정상 동작 |
+| `feedback-loop` 리포트 | Prometheus 입력, 에이전트 판단, 명령어, reward, pod 상태 저장 |
+| `deployment.apps/paymentservice scaled` | 실제 Kubernetes scale 실행 |
+| PodChaos 적용 후 새 pod 생성 | Chaos Mesh 장애 주입과 Kubernetes 복구 확인 |
+
+서버에서 반복 실험을 실행할 때는 아래 스크립트를 사용할 수 있습니다.
+
+```bash
+bash scripts/server_kind_status.sh
+```
+
+```bash
+bash scripts/server_feedback_loop.sh
+```
+
+AutoGen까지 포함한 피드백 루프는 아래처럼 실행합니다.
+
+```bash
+USE_AUTOGEN=1 ITERATIONS=3 INTERVAL_SECONDS=10 bash scripts/server_feedback_loop.sh
+```
+
+pod kill 장애 주입 실험은 아래처럼 실행합니다.
+
+```bash
+bash scripts/server_chaos_pod_kill_once.sh
+```
+
+`feedback-loop`는 각 반복마다 Kubernetes 상태와 에이전트 실행 결과를 JSON으로
+저장합니다. 기본 저장 위치는 `runs/`입니다.
+
 ## 헷갈리면 이것만 구분하기
 
 | 용어 | 뜻 |

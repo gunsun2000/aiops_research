@@ -526,3 +526,88 @@ aiops-k8s-agents run \
 ```bash
 kubectl scale deployment paymentservice --replicas=3 -n online-boutique
 ```
+
+## 13. 서버 개인용 kind 통합 실험 명령어
+
+연구실 공용 Kubernetes kubeconfig 권한이 없을 때는 개인용 kind 클러스터에서 아래
+범위까지 실험합니다.
+
+```text
+Prometheus
+-> feedback-loop
+-> 4-agent action/reward
+-> kubectl dry-run 또는 real
+-> Kubernetes 상태 snapshot 저장
+```
+
+서버 터미널 기본 환경:
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG=~/geonhae/kubeconfigs/kind-geonhae-aiops.yaml
+```
+
+서버 kind 상태 확인:
+
+```bash
+bash scripts/server_kind_status.sh
+```
+
+deterministic 피드백 루프:
+
+```bash
+ITERATIONS=3 INTERVAL_SECONDS=10 MODE=dry-run bash scripts/server_feedback_loop.sh
+```
+
+AutoGen GroupChat 피드백 루프:
+
+```bash
+export OPENAI_API_KEY="sk-..."
+USE_AUTOGEN=1 ITERATIONS=3 INTERVAL_SECONDS=10 MODE=dry-run bash scripts/server_feedback_loop.sh
+```
+
+real mode 피드백 루프는 dry-run이 성공한 뒤에만 실행합니다.
+
+```bash
+ITERATIONS=1 MODE=real bash scripts/server_feedback_loop.sh
+```
+
+결과 파일 확인:
+
+```bash
+ls -lt runs | head
+cat "$(ls -t runs/*.json | head -n 1)"
+```
+
+Chaos Mesh pod kill 장애 주입:
+
+```bash
+bash scripts/server_chaos_pod_kill_once.sh
+```
+
+직접 `feedback-loop` 명령을 실행하려면:
+
+```bash
+aiops-k8s-agents feedback-loop \
+  --mode dry-run \
+  --prometheus-url http://127.0.0.1:9090 \
+  --query up \
+  --metric cpu \
+  --threshold 0.5 \
+  --default-namespace online-boutique \
+  --default-service paymentservice \
+  --allowed-namespace online-boutique \
+  --allowed-deployment paymentservice \
+  --iterations 3 \
+  --interval-seconds 10 \
+  --save-result-dir runs
+```
+
+성공 기준:
+
+- `failed`가 `0`입니다.
+- 각 record의 `result.valid`가 `true`입니다.
+- 각 record에 `before`, `result`, `after`가 저장됩니다.
+- `after.deployment_status.ready_replicas`가 `3`입니다.

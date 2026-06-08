@@ -307,3 +307,107 @@ def test_cli_autogen_prometheus_run_prints_groupchat_prometheus_result(monkeypat
     assert output["valid"] is True
     assert output["metadata"]["autogen"] == "groupchat"
     assert output["metadata"]["input_source"] == "prometheus"
+
+
+def test_cli_feedback_loop_records_prometheus_results(monkeypatch, capsys):
+    def fake_prometheus_run(_args):
+        return CommandResult(
+            command="kubectl scale deployment paymentservice --replicas=3 -n online-boutique",
+            mode="dry-run",
+            valid=True,
+            stdout="deployment.apps/paymentservice scaled (server dry run)",
+            stderr="",
+            metadata={
+                "coordinator": "AI-MCMP",
+                "consensus": "approved",
+                "input_source": "prometheus",
+            },
+        )
+
+    monkeypatch.setattr(cli, "run_prometheus_alert", fake_prometheus_run)
+    monkeypatch.setattr(cli.time, "sleep", lambda _seconds: None)
+
+    exit_code = main(
+        [
+            "feedback-loop",
+            "--mode",
+            "dry-run",
+            "--prometheus-url",
+            "http://127.0.0.1:9090",
+            "--query",
+            "up",
+            "--metric",
+            "cpu",
+            "--threshold",
+            "0.5",
+            "--default-namespace",
+            "online-boutique",
+            "--default-service",
+            "paymentservice",
+            "--allowed-namespace",
+            "online-boutique",
+            "--allowed-deployment",
+            "paymentservice",
+            "--iterations",
+            "2",
+            "--interval-seconds",
+            "0",
+            "--no-kubernetes-snapshot",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["command"] == "feedback-loop"
+    assert output["iterations"] == 2
+    assert output["passed"] == 2
+    assert output["failed"] == 0
+    assert output["records"][0]["result"]["valid"] is True
+
+
+def test_cli_feedback_loop_reports_failed_iterations(monkeypatch, capsys):
+    def fake_prometheus_run(_args):
+        return CommandResult(
+            command="",
+            mode="dry-run",
+            valid=False,
+            stdout="",
+            stderr="bad metric",
+            metadata={"input_source": "prometheus"},
+        )
+
+    monkeypatch.setattr(cli, "run_prometheus_alert", fake_prometheus_run)
+
+    exit_code = main(
+        [
+            "feedback-loop",
+            "--mode",
+            "dry-run",
+            "--prometheus-url",
+            "http://127.0.0.1:9090",
+            "--query",
+            "up",
+            "--metric",
+            "cpu",
+            "--threshold",
+            "0.5",
+            "--default-namespace",
+            "online-boutique",
+            "--default-service",
+            "paymentservice",
+            "--allowed-namespace",
+            "online-boutique",
+            "--allowed-deployment",
+            "paymentservice",
+            "--iterations",
+            "1",
+            "--no-kubernetes-snapshot",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert output["failed"] == 1
+    assert output["records"][0]["result"]["stderr"] == "bad metric"
