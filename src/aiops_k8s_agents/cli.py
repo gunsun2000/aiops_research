@@ -18,6 +18,10 @@ from aiops_k8s_agents.autogen_groupchat import (
     create_openai_model_client,
 )
 from aiops_k8s_agents.executor import ExecutionMode
+from aiops_k8s_agents.aiopslab_results import (
+    summarize_aiopslab_reports,
+    write_aiopslab_summary_files,
+)
 from aiops_k8s_agents.kubernetes_status import collect_kubernetes_snapshot
 from aiops_k8s_agents.models import AlertEvent, CommandResult
 from aiops_k8s_agents.prometheus import (
@@ -95,6 +99,22 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip before/after kubectl deployment and pod snapshots.",
     )
     _add_autogen_transcript_argument(feedback_loop_parser)
+
+    aiopslab_summary_parser = subparsers.add_parser(
+        "summarize-aiopslab-runs",
+        help="Summarize saved AIOpsLab auto-detection reports into Markdown and CSV.",
+    )
+    aiopslab_summary_parser.add_argument("--runs-dir", default="runs")
+    aiopslab_summary_parser.add_argument(
+        "--output-md",
+        default="",
+        help="Markdown summary path. Defaults to <runs-dir>/aiopslab_detection_summary.md.",
+    )
+    aiopslab_summary_parser.add_argument(
+        "--output-csv",
+        default="",
+        help="CSV summary path. Defaults to <runs-dir>/aiopslab_detection_summary.csv.",
+    )
 
     return parser
 
@@ -175,8 +195,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit_json_report(args, report)
         return 0 if report["failed"] == 0 else 2
 
+    if args.command == "summarize-aiopslab-runs":
+        report = summarize_aiopslab_runs(args)
+        _emit_json_report(args, report)
+        return 0
+
     parser.error(f"unsupported command: {args.command}")
     return 2
+
+
+def summarize_aiopslab_runs(args: argparse.Namespace) -> dict[str, Any]:
+    runs_dir = Path(args.runs_dir)
+    output_md = Path(args.output_md) if args.output_md else runs_dir / "aiopslab_detection_summary.md"
+    output_csv = (
+        Path(args.output_csv)
+        if args.output_csv
+        else runs_dir / "aiopslab_detection_summary.csv"
+    )
+    summary = summarize_aiopslab_reports(runs_dir)
+    write_aiopslab_summary_files(
+        summary,
+        markdown_path=output_md,
+        csv_path=output_csv,
+    )
+    return {
+        "command": "summarize-aiopslab-runs",
+        "runs_dir": str(runs_dir),
+        "output_md": str(output_md),
+        "output_csv": str(output_csv),
+        "total_runs": summary.total_runs,
+        "correct_runs": summary.correct_runs,
+        "metric_success_runs": summary.metric_success_runs,
+        "average_ttd": summary.average_ttd,
+        "average_steps": summary.average_steps,
+        "average_final_reward": summary.average_final_reward,
+    }
 
 
 def run_feedback_loop(args: argparse.Namespace) -> dict[str, Any]:

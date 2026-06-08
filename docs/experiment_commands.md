@@ -676,3 +676,51 @@ Saved report: .../runs/<timestamp>_aiopslab_auto_detection.json
 - runner는 AIOpsLab 원본을 크게 고치지 않고, 실행 중 `openebs-ndm-*` daemon pod만 Ready 판정에서 제외합니다.
 - `openebs-localpv-provisioner`, `openebs-ndm-operator`, exporter pod들은 여전히 Ready 상태를 요구합니다.
 - AIOpsLab이 Prometheus port-forward를 `32001` 같은 동적 포트로 열면 runner가 Prometheus client URL도 같은 포트로 맞춥니다.
+
+## 15. AIOpsLab 자동 detection 반복 실험과 결과표 생성
+
+단발 성공을 논문/보고서용 결과로 만들려면 같은 문제를 여러 번 반복하고 TTD, steps, reward, metric 수집 성공 여부를
+표로 정리합니다.
+
+서버에서 3회 반복 실행:
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiopslab
+git pull origin master
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG=~/geonhae/kubeconfigs/kind-geonhae-aiops.yaml
+
+RUNS=3 SLEEP_SECONDS=15 bash scripts/server_aiopslab_repeat_detection.sh
+```
+
+이미 저장된 JSON report만 다시 요약하려면:
+
+```bash
+bash scripts/server_aiopslab_summarize_runs.sh
+```
+
+직접 CLI로 요약하려면:
+
+```bash
+aiops-k8s-agents summarize-aiopslab-runs \
+  --runs-dir runs \
+  --output-md runs/aiopslab_detection_summary.md \
+  --output-csv runs/aiopslab_detection_summary.csv
+```
+
+생성되는 파일:
+
+```text
+runs/aiopslab_detection_summary.md
+runs/aiopslab_detection_summary.csv
+```
+
+요약 지표:
+
+- `total_runs`: 반복 실험 횟수
+- `correct_runs`: AIOpsLab 평가가 Correct인 횟수
+- `metric_success_runs`: Prometheus metric CSV 수집 성공 횟수
+- `average_ttd_seconds`: 평균 detection 시간
+- `average_steps`: 평균 API action 단계 수
+- `average_final_reward`: 최종 제출 단계의 평균 reward 합

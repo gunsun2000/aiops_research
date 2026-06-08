@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from aiops_k8s_agents.models import CommandResult
 import aiops_k8s_agents.cli as cli
@@ -411,3 +412,58 @@ def test_cli_feedback_loop_reports_failed_iterations(monkeypatch, capsys):
     assert exit_code == 2
     assert output["failed"] == 1
     assert output["records"][0]["result"]["stderr"] == "bad metric"
+
+
+def test_cli_summarize_aiopslab_runs_writes_report_files(tmp_path, capsys):
+    report_path = tmp_path / "20260608_aiopslab_auto_detection.json"
+    report_path.write_text(
+        json.dumps(
+            {
+                "problem_id": "misconfig_app_hotel_res-detection-1",
+                "namespace": "test-hotel-reservation",
+                "service": "geo",
+                "decisions": [
+                    {
+                        "step": 3,
+                        "api_call": 'submit("Yes")',
+                        "metadata": {"reward_total": "3.10"},
+                        "observation_excerpt": (
+                            "Metrics data exported to directory: /tmp/metric"
+                        ),
+                    }
+                ],
+                "aiopslab_results": {
+                    "final_state": "SubmissionStatus.VALID_SUBMISSION",
+                    "results": {
+                        "Detection Accuracy": "Correct",
+                        "TTD": 3.684,
+                        "steps": 3,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    output_md = tmp_path / "summary.md"
+    output_csv = tmp_path / "summary.csv"
+    exit_code = main(
+        [
+            "summarize-aiopslab-runs",
+            "--runs-dir",
+            str(tmp_path),
+            "--output-md",
+            str(output_md),
+            "--output-csv",
+            str(output_csv),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["total_runs"] == 1
+    assert output["correct_runs"] == 1
+    assert output["metric_success_runs"] == 1
+    assert Path(output["output_md"]).exists()
+    assert output_csv.exists()

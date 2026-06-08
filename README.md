@@ -326,10 +326,18 @@ export KUBECONFIG=~/geonhae/kubeconfigs/kind-geonhae-aiops.yaml
 bash scripts/server_aiopslab_auto_detection.sh
 ```
 
+반복 실험과 결과표 생성:
+
+```bash
+RUNS=3 SLEEP_SECONDS=15 bash scripts/server_aiopslab_repeat_detection.sh
+```
+
 성공 기준:
 
 ```text
 Correct detection: Yes
 Detection Accuracy: Correct
 Saved report: .../runs/<timestamp>_aiopslab_auto_detection.json
+runs/aiopslab_detection_summary.md
+runs/aiopslab_detection_summary.csv
 ```
