@@ -675,3 +675,4 @@ Saved report: .../runs/<timestamp>_aiopslab_auto_detection.json
 - 개인 kind 환경에서는 OpenEBS NDM daemon pod가 `ContainerCreating`에 머물 수 있습니다.
 - runner는 AIOpsLab 원본을 크게 고치지 않고, 실행 중 `openebs-ndm-*` daemon pod만 Ready 판정에서 제외합니다.
 - `openebs-localpv-provisioner`, `openebs-ndm-operator`, exporter pod들은 여전히 Ready 상태를 요구합니다.
+- AIOpsLab이 Prometheus port-forward를 `32001` 같은 동적 포트로 열면 runner가 Prometheus client URL도 같은 포트로 맞춥니다.

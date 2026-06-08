@@ -7,7 +7,6 @@ import json
 import os
 import sys
 import time
-from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -93,6 +92,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable the kind/OpenEBS NDM readiness compatibility patch.",
     )
     parser.add_argument(
+        "--no-prometheus-dynamic-port-patch",
+        action="store_true",
+        help="Disable the AIOpsLab Prometheus dynamic local port compatibility patch.",
+    )
+    parser.add_argument(
         "--quiet-decisions",
         action="store_true",
         help="Do not print each 4-agent decision during the run.",
@@ -115,6 +119,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
 
     if not args.no_openebs_kind_patch:
         _patch_openebs_wait_for_ready()
+    if not args.no_prometheus_dynamic_port_patch:
+        _patch_prometheus_api_dynamic_port()
 
     from aiopslab.orchestrator import Orchestrator
 
@@ -194,6 +200,32 @@ def _patch_openebs_wait_for_ready() -> None:
         )
 
     KubeCtl.wait_for_ready = patched_wait_for_ready
+
+
+def _patch_prometheus_api_dynamic_port() -> None:
+    from aiopslab.observer import metric_api
+
+    if getattr(metric_api.PrometheusAPI, "_ai_mcmp_dynamic_port_patch", False):
+        return
+
+    def patched_init(self: Any, url: str, namespace: str) -> None:
+        self.namespace = namespace
+        self.output_threads = []
+        self.port = self.find_free_port()
+        self.port_forward_process = None
+        self.stop_event = metric_api.threading.Event()
+        self.start_port_forward()
+
+        dynamic_url = f"http://localhost:{self.port}"
+        print(f"Prometheus API dynamic URL selected: {dynamic_url}")
+        self.client = metric_api.PrometheusConnect(dynamic_url, disable_ssl=True)
+        self.namespace = namespace
+        self.pod_list, self.service_list = self.initialize_pod_and_service_lists(
+            namespace
+        )
+
+    metric_api.PrometheusAPI.__init__ = patched_init
+    metric_api.PrometheusAPI._ai_mcmp_dynamic_port_patch = True
 
 
 def _is_required_openebs_pod(name: str) -> bool:
