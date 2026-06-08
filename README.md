@@ -308,3 +308,28 @@ AIOpsLab 설치
 - action/reward 설계: [docs/agent_action_reward_policy.md](docs/agent_action_reward_policy.md)
 - AutoGen 설명: [docs/autogen_groupchat.md](docs/autogen_groupchat.md)
 - 서버 이관 절차: [docs/server_migration_runbook.md](docs/server_migration_runbook.md)
+
+## 최신 단계: AIOpsLab 자동 detection 연결
+
+현재 프로젝트는 서버 개인 kind 클러스터에서 AIOpsLab 공식 Hotel Reservation detection 문제를 실행한 뒤,
+사람이 직접 입력하던 `get_logs -> get_metrics -> submit` 흐름을 AI-MCMP 4-agent 정책으로 자동화하는
+runner를 포함합니다.
+
+서버에서 실행:
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiopslab
+git pull origin master
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG=~/geonhae/kubeconfigs/kind-geonhae-aiops.yaml
+bash scripts/server_aiopslab_auto_detection.sh
+```
+
+성공 기준:
+
+```text
+Correct detection: Yes
+Detection Accuracy: Correct
+Saved report: .../runs/<timestamp>_aiopslab_auto_detection.json
+```

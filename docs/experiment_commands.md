@@ -611,3 +611,67 @@ aiops-k8s-agents feedback-loop \
 - 각 record의 `result.valid`가 `true`입니다.
 - 각 record에 `before`, `result`, `after`가 저장됩니다.
 - `after.deployment_status.ready_replicas`가 `3`입니다.
+
+## 14. AIOpsLab 공식 문제를 4-agent가 자동으로 풀기
+
+이 단계는 사람이 AIOpsLab 프롬프트에 직접 `get_logs`, `get_metrics`, `submit`을 입력하던 과정을
+우리 AI-MCMP 4-agent 정책으로 자동화합니다.
+
+서버 기본 환경:
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiopslab
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG=~/geonhae/kubeconfigs/kind-geonhae-aiops.yaml
+```
+
+최신 코드 가져오기:
+
+```bash
+git pull origin master
+```
+
+AIOpsLab 자동 detection 실행:
+
+```bash
+bash scripts/server_aiopslab_auto_detection.sh
+```
+
+직접 Python runner를 실행하려면:
+
+```bash
+python scripts/server_aiopslab_auto_detection.py \
+  --aiopslab-root ~/geonhae/external/AIOpsLab \
+  --problem-id misconfig_app_hotel_res-detection-1 \
+  --namespace test-hotel-reservation \
+  --service geo \
+  --kubeconfig ~/geonhae/kubeconfigs/kind-geonhae-aiops.yaml \
+  --save-result-dir runs
+```
+
+자동화 흐름:
+
+```text
+AIOpsLab problem start
+-> 4-agent가 get_logs("test-hotel-reservation", "geo") 호출
+-> 로그에서 panic/no reachable servers 같은 장애 근거 확인
+-> 4-agent가 get_metrics("test-hotel-reservation", 10) 호출
+-> action/reward 합의 기록
+-> 4-agent가 submit("Yes") 또는 submit("No") 제출
+-> AIOpsLab 평가 결과 저장
+```
+
+성공 기준:
+
+```text
+Correct detection: Yes
+Detection Accuracy: Correct
+Saved report: .../runs/<timestamp>_aiopslab_auto_detection.json
+```
+
+참고:
+
+- 개인 kind 환경에서는 OpenEBS NDM daemon pod가 `ContainerCreating`에 머물 수 있습니다.
+- runner는 AIOpsLab 원본을 크게 고치지 않고, 실행 중 `openebs-ndm-*` daemon pod만 Ready 판정에서 제외합니다.
+- `openebs-localpv-provisioner`, `openebs-ndm-operator`, exporter pod들은 여전히 Ready 상태를 요구합니다.
