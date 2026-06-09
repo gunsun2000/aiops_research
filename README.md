@@ -242,37 +242,40 @@ mock -> dry-run -> local real -> 서버 dry-run -> 서버 real
 
 ## AIOpsLab은 언제 쓰나?
 
-아직 AIOpsLab 본 실험은 하지 않았습니다.
+이제 AIOpsLab 본 실험까지 연결했습니다.
 
-지금은 AIOpsLab에 붙일 **에이전트 제어 엔진**을 만든 단계입니다. 연구실 서버가
-준비되면 아래 순서로 연결합니다.
+현재 서버 개인 kind 클러스터에서 AIOpsLab 공식 Hotel Reservation detection 문제를
+실행했고, 사람이 직접 입력하던 `get_logs -> get_metrics -> submit` 흐름을
+AI-MCMP 4-agent 정책으로 자동화했습니다.
 
 ```text
 AIOpsLab 설치
--> Online Boutique 배포
--> Chaos Mesh 장애 주입
--> Prometheus metric 수집
--> 4-agent 시스템에 metric 전달
--> 검증된 kubectl 명령 real 실행
+-> Hotel Reservation 서비스 배포
+-> AIOpsLab 장애 주입
+-> 4-agent가 logs/metrics 관찰
+-> action/reward 합의
+-> Referee가 AIOpsLab API call 검증
+-> submit("Yes") 또는 submit("No") 자동 제출
+-> AIOpsLab 평가 결과 저장
 ```
 
-## 큰 서버로 옮긴 뒤 할 일
+## 서버에서 완료한 일과 다음 확장
 
-연구실 고성능 Ubuntu 서버가 준비되면 로컬에서 만든 코드를 그대로 옮기고,
-실험 대상을 가벼운 kind 검증 환경에서 AIOpsLab 풀스케일 환경으로 바꿉니다.
+연구실 서버에서는 기존 공용 Kubernetes 설정을 건드리지 않고, 개인 kind 클러스터를
+만들어 안전하게 실험했습니다.
 
-| 단계 | 서버에서 할 일 | 목표 |
+| 단계 | 상태 | 목표 |
 | --- | --- | --- |
-| 1 | Python 환경과 패키지 설치 | 로컬 코드가 서버에서도 실행되는지 확인 |
-| 2 | AIOpsLab 설치 | 실제 연구 실험장 준비 |
-| 3 | Online Boutique 전체 배포 | 마이크로서비스 대상 시스템 구성 |
-| 4 | Prometheus 연결 | 실제 metric/log/alert 수집 |
-| 5 | Chaos Mesh 연결 | 장애를 의도적으로 주입 |
-| 6 | `mock` 실행 | 서버에서도 에이전트 판단이 같은지 확인 |
-| 7 | `dry-run` 실행 | 서버 Kubernetes API에서 명령 호환성 확인 |
-| 8 | `real` 실행 | 검증된 명령으로 실제 복구/최적화 수행 |
+| 1 | 완료 | Python/conda 환경 구성 |
+| 2 | 완료 | 개인 kind 클러스터 생성 |
+| 3 | 완료 | CPU 95% synthetic alert로 scale action 검증 |
+| 4 | 완료 | Prometheus / Chaos Mesh 기본 실험 |
+| 5 | 완료 | AIOpsLab Hotel Reservation detection 자동 실행 |
+| 6 | 완료 | AIOpsLab 반복 실험 결과표 생성 |
+| 7 | 다음 단계 | 다른 AIOpsLab problem family로 확장 |
+| 8 | 다음 단계 | baseline 비교와 통계 분석 |
 
-서버에서도 바로 `real`로 가지 않고, 반드시 아래 순서를 지킵니다.
+서버 실험에서도 real action으로 바로 가지 않고, 아래 순서를 기준으로 검증했습니다.
 
 ```text
 서버 mock -> 서버 dry-run -> 서버 real
@@ -307,6 +310,7 @@ AIOpsLab 설치
 - 전체 실행 명령어: [docs/experiment_commands.md](docs/experiment_commands.md)
 - action/reward 설계: [docs/agent_action_reward_policy.md](docs/agent_action_reward_policy.md)
 - 교수님 참고 PPT 반영 항목: [docs/research_reference_integration.md](docs/research_reference_integration.md)
+- 초기 연구 검증 완료 정리: [docs/first_stage_research_completion.md](docs/first_stage_research_completion.md)
 - AutoGen 설명: [docs/autogen_groupchat.md](docs/autogen_groupchat.md)
 - 서버 이관 절차: [docs/server_migration_runbook.md](docs/server_migration_runbook.md)
 
@@ -341,4 +345,15 @@ Detection Accuracy: Correct
 Saved report: .../runs/<timestamp>_aiopslab_auto_detection.json
 runs/aiopslab_detection_summary.md
 runs/aiopslab_detection_summary.csv
+```
+
+2026-06-09 서버 반복 실험 요약:
+
+```text
+total_runs: 12
+correct_runs: 12
+metric_success_runs: 11
+average_ttd_seconds: 4.117
+average_steps: 3.000
+average_final_reward: 3.100
 ```

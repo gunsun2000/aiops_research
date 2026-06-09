@@ -725,3 +725,37 @@ runs/aiopslab_detection_summary.csv
 - `average_steps`: 평균 API action 단계 수
 - `average_final_reward`: 최종 제출 단계의 평균 reward 합
 - `phase_coverage`: 참고 PPT의 `detection/localization/analysis/mitigation` 중 해당 반복 실험에서 실제 사용된 단계
+
+## 16. 초기 연구 검증 단계 최종 결과 확인
+
+서버에서 최종 요약표를 확인합니다.
+
+```bash
+cd ~/geonhae/aiops_research
+cat runs/aiopslab_detection_summary.md
+```
+
+CSV 파일도 함께 확인할 수 있습니다.
+
+```bash
+cat runs/aiopslab_detection_summary.csv
+```
+
+2026-06-09 기준 서버 반복 실험 결과:
+
+```text
+total_runs: 12
+correct_runs: 12
+metric_success_runs: 11
+average_ttd_seconds: 4.117
+average_steps: 3.000
+average_final_reward: 3.100
+```
+
+보고서나 발표자료에는 아래 문장을 사용할 수 있습니다.
+
+```text
+AIOpsLab Hotel Reservation detection 문제를 대상으로 4-agent 자동 탐지 실험을 12회 반복 수행한 결과,
+12회 모두 Correct detection으로 평가되었다. 평균 TTD는 4.117초, 평균 action step은 3.0,
+평균 최종 reward는 3.10으로 측정되었다.
+```
