@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from aiops_k8s_agents.agents import AgentDecision
+from aiops_k8s_agents.research_framework import referee_aiopslab_api_call
 
 
 AIOPSLAB_DETECTION_AGENT_NAMES = (
@@ -103,18 +104,31 @@ class AIOpsLabDetectionPolicy:
             decisions=_submit_decisions(has_anomaly),
         )
 
-    @staticmethod
     def _decision(
+        self,
         api_call: str,
         consensus: str,
         has_anomaly: bool | None,
         decisions: list[AgentDecision],
     ) -> AIOpsLabActionDecision:
+        referee = referee_aiopslab_api_call(
+            api_call,
+            namespace=self.namespace,
+            service=self.service,
+            metrics_duration_minutes=self.metrics_duration_minutes,
+        )
         return AIOpsLabActionDecision(
             api_call=api_call,
-            valid=all(decision.approved for decision in decisions),
+            valid=referee.valid and all(decision.approved for decision in decisions),
             has_anomaly=has_anomaly,
-            metadata=_metadata(consensus, decisions),
+            metadata=_metadata(
+                consensus,
+                decisions,
+                phase=referee.phase,
+                api_call=api_call,
+                referee="approved" if referee.valid else "rejected",
+                referee_reason=referee.reason,
+            ),
         )
 
 
@@ -230,11 +244,24 @@ def _submit_decisions(has_anomaly: bool) -> list[AgentDecision]:
     ]
 
 
-def _metadata(consensus: str, decisions: list[AgentDecision]) -> dict[str, str]:
+def _metadata(
+    consensus: str,
+    decisions: list[AgentDecision],
+    *,
+    phase: str,
+    api_call: str,
+    referee: str,
+    referee_reason: str,
+) -> dict[str, str]:
     return {
         "coordinator": "AI-MCMP",
         "task": "aiopslab-detection",
+        "phase": phase,
+        "phase_model": "detection|localization|analysis|mitigation",
         "consensus": consensus,
+        "bounded_action": api_call,
+        "referee": referee,
+        "referee_reason": referee_reason,
         "agents": ",".join(AIOPSLAB_DETECTION_AGENT_NAMES),
         "decisions": "|".join(
             f"{decision.agent}:{'approved' if decision.approved else 'rejected'}"

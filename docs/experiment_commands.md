@@ -724,3 +724,4 @@ runs/aiopslab_detection_summary.csv
 - `average_ttd_seconds`: 평균 detection 시간
 - `average_steps`: 평균 API action 단계 수
 - `average_final_reward`: 최종 제출 단계의 평균 reward 합
+- `phase_coverage`: 참고 PPT의 `detection/localization/analysis/mitigation` 중 해당 반복 실험에서 실제 사용된 단계

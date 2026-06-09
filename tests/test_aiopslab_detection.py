@@ -15,6 +15,14 @@ def test_detection_policy_first_collects_target_service_logs():
     assert decision.api_call == 'get_logs("test-hotel-reservation", "geo")'
     assert decision.valid is True
     assert decision.metadata["coordinator"] == "AI-MCMP"
+    assert decision.metadata["phase"] == "detection"
+    assert decision.metadata["phase_model"] == (
+        "detection|localization|analysis|mitigation"
+    )
+    assert decision.metadata["bounded_action"] == (
+        'get_logs("test-hotel-reservation", "geo")'
+    )
+    assert decision.metadata["referee"] == "approved"
     assert decision.metadata["consensus"] == "investigating"
     assert "AIServiceHASupportAgent:ha_collect_logs" in decision.metadata["actions"]
 
@@ -31,6 +39,7 @@ def test_detection_policy_collects_metrics_after_geo_panic_logs():
     assert decision.api_call == 'get_metrics("test-hotel-reservation", 10)'
     assert decision.valid is True
     assert decision.has_anomaly is True
+    assert decision.metadata["phase"] == "analysis"
     assert decision.metadata["consensus"] == "anomaly_detected"
     assert "AIServiceHASupportAgent:ha_anomaly_detected" in decision.metadata["actions"]
     assert "AISemiconductorInfraOpsAgent:infra_dependency_failure_detected" in (
@@ -53,6 +62,7 @@ def test_detection_policy_submits_yes_after_metrics_when_anomaly_was_seen():
     assert decision.api_call == 'submit("Yes")'
     assert decision.valid is True
     assert decision.has_anomaly is True
+    assert decision.metadata["phase"] == "detection"
     assert decision.metadata["consensus"] == "approved"
     assert "AIApplicationManagementAgent:app_submit_detection_result" in (
         decision.metadata["actions"]

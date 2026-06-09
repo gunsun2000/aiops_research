@@ -24,19 +24,19 @@ def _write_report(path, *, ttd, steps, reward_total, metric_success=True):
                     {
                         "step": 1,
                         "api_call": 'get_logs("test-hotel-reservation", "geo")',
-                        "metadata": {"reward_total": "1.55"},
+                        "metadata": {"reward_total": "1.55", "phase": "detection"},
                         "observation_excerpt": "Please take the next action",
                     },
                     {
                         "step": 2,
                         "api_call": 'get_metrics("test-hotel-reservation", 10)',
-                        "metadata": {"reward_total": "3.10"},
+                        "metadata": {"reward_total": "3.10", "phase": "analysis"},
                         "observation_excerpt": "panic: no reachable servers",
                     },
                     {
                         "step": 3,
                         "api_call": 'submit("Yes")',
-                        "metadata": {"reward_total": reward_total},
+                        "metadata": {"reward_total": reward_total, "phase": "detection"},
                         "observation_excerpt": metric_text,
                     },
                 ],
@@ -66,6 +66,7 @@ def test_summarize_aiopslab_reports_extracts_research_metrics(tmp_path):
     assert summary.average_ttd == 4.0
     assert summary.average_steps == 3.0
     assert summary.average_final_reward == 3.05
+    assert summary.records[0].phase_coverage == "detection+analysis"
     assert summary.records[0].metric_exported is True
     assert summary.records[0].metric_path == "/tmp/metric_20260608_185426"
 
@@ -99,5 +100,5 @@ def test_write_aiopslab_summary_files_outputs_markdown_and_csv(tmp_path):
     csv_text = csv_path.read_text(encoding="utf-8")
 
     assert "AIOpsLab 4-Agent Detection 반복 실험 요약" in markdown
-    assert "| 1 | Correct | 3.600 | 3 | 3.10 | yes |" in markdown
-    assert "run_index,file,detection_accuracy,ttd,steps,final_reward,metric_exported,metric_path" in csv_text
+    assert "| 1 | Correct | 3.600 | 3 | 3.10 | detection+analysis | yes |" in markdown
+    assert "run_index,file,detection_accuracy,ttd,steps,final_reward,phase_coverage,metric_exported,metric_path" in csv_text

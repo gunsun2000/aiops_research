@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
 
+from aiops_k8s_agents.research_framework import AIOPS_PHASE_ORDER, infer_aiopslab_api_phase
+
 
 METRIC_PATH_PATTERN = re.compile(r"Metrics data exported to directory:\s*(\S+)")
 
@@ -22,6 +24,7 @@ class AIOpsLabRunRecord:
     ttd: float | None
     steps: int | None
     final_reward: float | None
+    phase_coverage: str
     metric_exported: bool
     metric_path: str
     final_state: str
@@ -83,8 +86,8 @@ def render_markdown_summary(summary: AIOpsLabSummary) -> str:
         "",
         "## Runs",
         "",
-        "| run | accuracy | TTD(s) | steps | final_reward | metric | report |",
-        "| ---: | --- | ---: | ---: | ---: | --- | --- |",
+        "| run | accuracy | TTD(s) | steps | final_reward | phases | metric | report |",
+        "| ---: | --- | ---: | ---: | ---: | --- | --- | --- |",
     ]
     for record in summary.records:
         lines.append(
@@ -93,6 +96,7 @@ def render_markdown_summary(summary: AIOpsLabSummary) -> str:
                 f"{_format_optional_float(record.ttd)} | "
                 f"{record.steps if record.steps is not None else ''} | "
                 f"{_format_optional_reward(record.final_reward)} | "
+                f"{record.phase_coverage} | "
                 f"{'yes' if record.metric_exported else 'no'} | "
                 f"{record.file} |"
             )
@@ -108,6 +112,7 @@ def _record_from_report(index: int, path: Path) -> AIOpsLabRunRecord:
     decisions = list(data.get("decisions", []))
     metric_path = _extract_metric_path(decisions, aiopslab_results)
     final_reward = _extract_final_reward(decisions)
+    phase_coverage = _extract_phase_coverage(decisions)
     return AIOpsLabRunRecord(
         run_index=index,
         file=path.name,
@@ -118,6 +123,7 @@ def _record_from_report(index: int, path: Path) -> AIOpsLabRunRecord:
         ttd=_optional_float(metrics.get("TTD")),
         steps=_optional_int(metrics.get("steps")),
         final_reward=final_reward,
+        phase_coverage=phase_coverage,
         metric_exported=bool(metric_path),
         metric_path=metric_path,
         final_state=str(aiopslab_results.get("final_state", "")),
@@ -144,6 +150,19 @@ def _extract_final_reward(decisions: list[dict[str, Any]]) -> float | None:
     return None
 
 
+def _extract_phase_coverage(decisions: list[dict[str, Any]]) -> str:
+    phases: set[str] = set()
+    for decision in decisions:
+        metadata = dict(decision.get("metadata", {}))
+        phase = str(metadata.get("phase", "")).strip()
+        if not phase:
+            phase = infer_aiopslab_api_phase(str(decision.get("api_call", "")))
+        if phase:
+            phases.add(phase)
+    ordered = [phase for phase in AIOPS_PHASE_ORDER if phase in phases]
+    return "+".join(ordered)
+
+
 def _write_csv_summary(summary: AIOpsLabSummary, csv_path: Path) -> None:
     with csv_path.open("w", encoding="utf-8", newline="") as file:
         writer = csv.DictWriter(
@@ -155,6 +174,7 @@ def _write_csv_summary(summary: AIOpsLabSummary, csv_path: Path) -> None:
                 "ttd",
                 "steps",
                 "final_reward",
+                "phase_coverage",
                 "metric_exported",
                 "metric_path",
             ],
@@ -171,6 +191,7 @@ def _write_csv_summary(summary: AIOpsLabSummary, csv_path: Path) -> None:
                     "final_reward": (
                         "" if record.final_reward is None else f"{record.final_reward:.2f}"
                     ),
+                    "phase_coverage": record.phase_coverage,
                     "metric_exported": "yes" if record.metric_exported else "no",
                     "metric_path": record.metric_path,
                 }

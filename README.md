@@ -306,6 +306,7 @@ AIOpsLab 설치
 
 - 전체 실행 명령어: [docs/experiment_commands.md](docs/experiment_commands.md)
 - action/reward 설계: [docs/agent_action_reward_policy.md](docs/agent_action_reward_policy.md)
+- 교수님 참고 PPT 반영 항목: [docs/research_reference_integration.md](docs/research_reference_integration.md)
 - AutoGen 설명: [docs/autogen_groupchat.md](docs/autogen_groupchat.md)
 - 서버 이관 절차: [docs/server_migration_runbook.md](docs/server_migration_runbook.md)
 
