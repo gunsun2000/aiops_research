@@ -37,6 +37,18 @@ AIOpsLab / Kubernetes 장애 상태
 | `runs/` | 실험 결과 JSON/CSV/Markdown 저장 폴더, GitHub에는 올리지 않음 |
 | `external/AIOpsLab/` | Microsoft AIOpsLab 외부 코드, GitHub에는 올리지 않음 |
 
+`src/aiops_k8s_agents/` 안의 4대 에이전트 구조는 아래처럼 나누었습니다.
+
+| 파일 | 담당 |
+| --- | --- |
+| `ha_agent.py` | AI서비스 HA 지원 에이전트. 장애 위험과 HA 복구 필요성 판단 |
+| `application_agent.py` | AI응용관리 자동화 에이전트. 실제 Kubernetes 응용 제어 액션 생성 |
+| `infra_agent.py` | AI반도체 인프라 운용 자동화 에이전트. GPU/NPU/인프라 용량 관점 검토 |
+| `cost_agent.py` | 비용 최적화 지원 에이전트. 자원 증가가 비용 정책 안에 있는지 검토 |
+| `coordinator.py` | AI-MCMP 통합 관리 에이전트. 4대 에이전트 결정을 모아 최종 실행 여부 결정 |
+| `agent_decision.py` | 각 에이전트가 내는 action, reward, 승인 여부 구조체 |
+| `agents.py` | 예전 import 경로를 유지하기 위한 호환용 입구 |
+
 중요한 구분:
 
 ```text

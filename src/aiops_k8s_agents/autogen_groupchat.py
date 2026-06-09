@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable
 
-from aiops_k8s_agents.agents import AgentDecision
+from aiops_k8s_agents.agent_decision import AgentDecision
 from aiops_k8s_agents.executor import ExecutionMode, KubernetesExecutor
 from aiops_k8s_agents.models import AlertEvent, CommandResult, ScaleAction
 from aiops_k8s_agents.validator import CommandValidator

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from aiops_k8s_agents.agents import AgentDecision
+from aiops_k8s_agents.agent_decision import AgentDecision
 from aiops_k8s_agents.research_framework import referee_aiopslab_api_call
 
 

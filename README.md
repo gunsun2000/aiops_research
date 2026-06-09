@@ -79,12 +79,14 @@ Prometheus / Kubernetes / Online Boutique
 | 비용 최적화 지원 에이전트 | `CostOptimizationAgent` | replica 증가가 비용 정책 안에 있는지 검토 |
 | 최종 실행 액션 생성 | `ScaleAction`, `CommandValidator`, `KubernetesExecutor` | 안전한 `kubectl scale` 명령으로 변환하고 실행 |
 
-현재는 CPU 95% 과부하 시나리오 하나를 기준으로 검증하므로, 메인 에이전트
-로직은 `src/aiops_k8s_agents/agents.py` 한 파일에 모아두었습니다. 이렇게 두면
-4개 에이전트의 판단 흐름과 `AI-MCMP` 조율 과정을 한눈에 보기 쉽습니다.
+4대 에이전트는 이제 연구 장표의 역할과 맞게 파일을 분리했습니다. 즉,
+`agents.py`는 기존 import가 깨지지 않도록 남겨 둔 호환용 입구이고, 실제 판단
+로직은 `ha_agent.py`, `application_agent.py`, `infra_agent.py`,
+`cost_agent.py`, `coordinator.py`에 나뉘어 있습니다.
 
-나중에 연구실 서버에서 AIOpsLab을 붙이고 memory, pod crash, latency, 비용
-최적화 같은 시나리오가 늘어나면 그때 에이전트별 파일로 분리할 수 있습니다.
+이렇게 해두면 CPU 95% 과부하 시나리오뿐 아니라, 연구실 서버에서 AIOpsLab을
+붙인 뒤 memory, pod crash, latency, 비용 최적화 같은 시나리오가 늘어나도
+각 에이전트 파일에 책임별로 액션/reward 정책을 추가할 수 있습니다.
 
 따라서 두번째 사진 부분의 역할은 아래 한 문장으로 정리할 수 있습니다.
 
