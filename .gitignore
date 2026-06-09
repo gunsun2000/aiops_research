@@ -9,3 +9,4 @@ build/
 external/
 runs/
 ppt_render/
+.ppt_render/

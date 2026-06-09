@@ -25,10 +25,10 @@ Kubernetes/AIOpsLab 환경에서 **AI 에이전트 레이어**를 검증하는
 AIOpsLab에 붙일 4-agent Kubernetes 자동 제어 모듈
 ```
 
-즉, 지금 목표는 큰 서버 없이도 먼저 **에이전트 판단 로직**, **명령어 생성**,
-**명령어 안전 검증**, **AutoGen GroupChat 흐름**을 로컬에서 검증하는 것입니다.
-나중에 연구실 고성능 서버가 준비되면 같은 코드를 AIOpsLab 환경으로 옮겨
-풀스케일 실험을 진행합니다.
+즉, 이 저장소의 목표는 **에이전트 판단 로직**, **명령어 생성**,
+**명령어 안전 검증**, **AutoGen GroupChat 흐름**, **AIOpsLab 자동 detection
+실험**을 한 프로젝트 안에서 검증하는 것입니다. 현재는 로컬 검증을 거쳐
+연구실 서버 개인 kind 클러스터에서 AIOpsLab 공식 detection 문제까지 실행했습니다.
 
 ## 전체 연구 목표
 
@@ -105,7 +105,8 @@ Prometheus가 알려준 장애 상태를 4개 에이전트가 검토하고,
 | Prometheus 입력 경로 검증 | 완료 |
 | 로컬 kind real scale | 완료 |
 | CI/CD 자동 테스트 | 완료 |
-| AIOpsLab 풀스케일 서버 실험 | 서버 확보 후 진행 |
+| AIOpsLab Hotel Reservation detection 반복 실험 | 완료 |
+| 공용/full-scale Kubernetes 확장 실험 | 다음 단계 |
 
 현재 로컬에서 확인한 대표 성공 명령은 아래입니다.
 
@@ -296,9 +297,9 @@ AIOpsLab 설치
 서버 mock -> 서버 dry-run -> 서버 real
 ```
 
-## 최종 성공 기준
+## 다음 확장 성공 기준
 
-큰 서버에서 최종적으로 확인해야 하는 목표는 아래입니다.
+현재 초기 검증 이후, 공용/full-scale Kubernetes 환경으로 확장할 때 확인해야 하는 목표는 아래입니다.
 
 | 목표 | 성공 기준 |
 | --- | --- |
