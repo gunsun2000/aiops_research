@@ -1,7 +1,22 @@
 # AIOps 4-Agent Kubernetes 자동화 프로토타입
 
- **AI 에이전트 레이어**를 로컬에서 먼저 검증하는
-프로토타입입니다.
+Kubernetes/AIOpsLab 환경에서 **AI 에이전트 레이어**를 검증하는
+4-agent AIOps 자동 감시/관리 프로토타입입니다.
+
+처음 보는 사람은 아래 문서를 먼저 보면 됩니다.
+
+- 설치와 실행 가이드: [docs/install_and_run_guide.md](docs/install_and_run_guide.md)
+- 초기 연구 검증 완료 정리: [docs/first_stage_research_completion.md](docs/first_stage_research_completion.md)
+
+가장 많이 쓰는 실행 흐름은 아래와 같습니다.
+
+| 목적 | 환경 | 명령 |
+| --- | --- | --- |
+| 우리 코드 테스트 | `aiops_research` | `python -m pytest` |
+| CPU 95% synthetic alert | `aiops_research` | `aiops-k8s-agents run ...` |
+| AutoGen GroupChat | `aiops_research` | `aiops-k8s-agents autogen-run ...` |
+| AIOpsLab 자동 detection | `aiopslab` | `bash scripts/server_aiopslab_auto_detection.sh` |
+| AIOpsLab 반복 실험 | `aiopslab` | `RUNS=3 SLEEP_SECONDS=15 bash scripts/server_aiopslab_repeat_detection.sh` |
 
 중요한 점은 하나입니다.
 
@@ -308,6 +323,7 @@ AIOpsLab 설치
 ## 자세한 문서
 
 - 전체 실행 명령어: [docs/experiment_commands.md](docs/experiment_commands.md)
+- 설치와 실행 가이드: [docs/install_and_run_guide.md](docs/install_and_run_guide.md)
 - action/reward 설계: [docs/agent_action_reward_policy.md](docs/agent_action_reward_policy.md)
 - 교수님 참고 PPT 반영 항목: [docs/research_reference_integration.md](docs/research_reference_integration.md)
 - 초기 연구 검증 완료 정리: [docs/first_stage_research_completion.md](docs/first_stage_research_completion.md)
