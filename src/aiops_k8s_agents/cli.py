@@ -18,6 +18,10 @@ from aiops_k8s_agents.autogen_groupchat import (
     create_openai_model_client,
 )
 from aiops_k8s_agents.executor import ExecutionMode
+from aiops_k8s_agents.full_stack_experiments import (
+    load_full_stack_experiment_plan,
+    plan_to_dict,
+)
 from aiops_k8s_agents.aiopslab_results import (
     summarize_aiopslab_reports,
     write_aiopslab_summary_files,
@@ -116,6 +120,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="CSV summary path. Defaults to <runs-dir>/aiopslab_detection_summary.csv.",
     )
 
+    full_stack_parser = subparsers.add_parser(
+        "list-full-stack-experiments",
+        help="Print the fixed full-stack environment and controlled experiment variables.",
+    )
+    full_stack_parser.add_argument(
+        "--config",
+        default="config/full_stack_experiments.json",
+        help="Full-stack experiment matrix JSON path.",
+    )
+    _add_result_logging_argument(full_stack_parser)
+
     return parser
 
 
@@ -200,8 +215,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit_json_report(args, report)
         return 0
 
+    if args.command == "list-full-stack-experiments":
+        report = list_full_stack_experiments(args)
+        _emit_json_report(args, report)
+        return 0
+
     parser.error(f"unsupported command: {args.command}")
     return 2
+
+
+def list_full_stack_experiments(args: argparse.Namespace) -> dict[str, Any]:
+    plan = load_full_stack_experiment_plan(Path(args.config))
+    return plan_to_dict(plan)
 
 
 def summarize_aiopslab_runs(args: argparse.Namespace) -> dict[str, Any]:

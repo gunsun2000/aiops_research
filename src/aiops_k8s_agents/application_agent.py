@@ -18,7 +18,7 @@ class AIApplicationManagementAgent:
         alert: AlertEvent,
         diagnosis: Diagnosis,
     ) -> tuple[ScaleAction, AgentDecision]:
-        if diagnosis.cause != "cpu_saturation":
+        if diagnosis.cause not in _SCALING_CAUSES:
             raise ValueError(f"unsupported diagnosis for scaling: {diagnosis.cause}")
 
         action = ScaleAction(
@@ -36,8 +36,8 @@ class AIApplicationManagementAgent:
             reward=0.85,
             approved=True,
             reason=(
-                f"{alert.service}를 {self.default_cpu_replicas}개 replica로 "
-                "확장하는 응용 관리 액션을 제안합니다."
+                f"Scale {alert.service} to {self.default_cpu_replicas} replicas "
+                "as the application management action."
             ),
             parameters={
                 "namespace": action.namespace,
@@ -45,3 +45,13 @@ class AIApplicationManagementAgent:
                 "replicas": str(action.replicas),
             },
         )
+
+
+_SCALING_CAUSES = {
+    "cpu_saturation",
+    "memory_saturation",
+    "latency_saturation",
+    "network_degradation",
+    "pod_restarts",
+    "low_availability",
+}

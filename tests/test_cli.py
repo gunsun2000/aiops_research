@@ -467,3 +467,24 @@ def test_cli_summarize_aiopslab_runs_writes_report_files(tmp_path, capsys):
     assert output["metric_success_runs"] == 1
     assert Path(output["output_md"]).exists()
     assert output_csv.exists()
+
+
+def test_cli_lists_full_stack_experiment_matrix(capsys):
+    exit_code = main(
+        [
+            "list-full-stack-experiments",
+            "--config",
+            "config/full_stack_experiments.json",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["environment"]["name"] == "full-stack"
+    assert {scenario["id"] for scenario in output["scenarios"]} == {
+        "cpu-stress",
+        "memory-stress",
+        "pod-kill",
+        "network-delay",
+    }

@@ -376,3 +376,44 @@ average_ttd_seconds: 4.117
 average_steps: 3.000
 average_final_reward: 3.100
 ```
+
+## Full-stack 확장 실험
+
+다음 확장 단계로 `minimal`, `AIOpsLab`, `full-stack`을 분리해서 운영할 수 있게 했습니다.
+
+```text
+minimal = 빠른 sanity check
+AIOpsLab = 공식 benchmark 검증
+full-stack = 장애/metric/action 변수를 바꾸는 확장 실험
+```
+
+새로 추가된 full-stack 구성:
+
+- `kube-prometheus-stack`
+- Online Boutique 전체 서비스
+- Chaos Mesh `pod-kill`, `cpu-stress`, `memory-stress`, `network-delay`
+- 4-agent feedback loop
+- 실험 변수 매트릭스: `config/full_stack_experiments.json`
+
+서버에서 시작:
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+git pull origin master
+python -m pip install -e ".[dev,autogen]"
+
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG=~/geonhae/kubeconfigs/kind-geonhae-aiops.yaml
+
+bash scripts/server_full_stack_setup.sh
+```
+
+실험 매트릭스 확인:
+
+```bash
+aiops-k8s-agents list-full-stack-experiments \
+  --config config/full_stack_experiments.json
+```
+
+자세한 실행 순서는 [docs/full_stack_experiment_guide.md](docs/full_stack_experiment_guide.md)를 보면 됩니다.

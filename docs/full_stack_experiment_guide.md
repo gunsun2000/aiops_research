@@ -1,0 +1,216 @@
+# Full-stack 확장 실험 가이드
+
+이 문서는 `minimal`, `AIOpsLab`, `full-stack`을 분리해서 운영하기 위한 실행 가이드입니다.
+
+핵심 원칙은 아래와 같습니다.
+
+```text
+minimal = 빠른 sanity check
+AIOpsLab = 공식 benchmark 검증
+full-stack = 장애/metric/action 변수를 바꾸는 확장 실험
+```
+
+즉, 기존 minimal 환경을 지우지 않습니다. 연구실 서버의 개인 kind 클러스터 안에 full-stack 실험 모드를 추가하고, 그 위에서 변수만 하나씩 바꿉니다.
+
+## 1. Full-stack 고정 환경
+
+| 요소 | 내용 |
+| --- | --- |
+| Monitoring | `kube-prometheus-stack` |
+| Application | Online Boutique 전체 서비스 |
+| Fault Injection | Chaos Mesh |
+| Agent Layer | 4-agent runner |
+| Result Archive | `runs/full-stack*` |
+
+설치되는 Prometheus stack은 `k8s/kube-prometheus-stack-values.yaml` 값을 사용합니다.
+
+## 2. 변화시키는 변수
+
+변수는 `config/full_stack_experiments.json`에 정리되어 있습니다.
+
+```bash
+aiops-k8s-agents list-full-stack-experiments \
+  --config config/full_stack_experiments.json
+```
+
+현재 준비된 장애 scenario:
+
+| scenario | 장애 | metric | 대상 |
+| --- | --- | --- | --- |
+| `cpu-stress` | CPU 부하 | `cpu` | `paymentservice` |
+| `memory-stress` | memory 부하 | `memory` | `checkoutservice` |
+| `pod-kill` | pod kill | `availability` | `paymentservice` |
+| `network-delay` | network delay | `latency` | `paymentservice` |
+
+현재 준비된 비교 변수:
+
+| variable | 비교 목적 |
+| --- | --- |
+| `fault_type` | 장애 종류별 대응 비교 |
+| `agent_policy` | 4-agent 전체와 agent ablation 비교 |
+| `llm_model` | deterministic 정책과 AutoGen LLM 모델 비교 |
+| `reward_policy` | reward 설계 민감도 비교 |
+| `baseline` | single-agent/manual/no-agent baseline 비교 |
+
+## 3. 서버에서 full-stack 설치
+
+서버에서 실행합니다.
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+git pull origin master
+python -m pip install -e ".[dev,autogen]"
+
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG=~/geonhae/kubeconfigs/kind-geonhae-aiops.yaml
+
+bash scripts/server_full_stack_setup.sh
+```
+
+설치 후 상태 확인:
+
+```bash
+kubectl get pods -n monitoring-full
+kubectl get pods -n online-boutique
+```
+
+Prometheus UI 확인:
+
+```bash
+kubectl port-forward -n monitoring-full service/kube-prometheus-stack-prometheus 9091:9090
+```
+
+브라우저:
+
+```text
+http://127.0.0.1:9091
+```
+
+Grafana UI 확인:
+
+```bash
+kubectl port-forward -n monitoring-full service/kube-prometheus-stack-grafana 3000:80
+```
+
+브라우저:
+
+```text
+http://127.0.0.1:3000
+```
+
+## 4. 단일 장애 주입
+
+```bash
+SCENARIO=pod-kill bash scripts/server_full_stack_apply_chaos.sh
+SCENARIO=cpu-stress bash scripts/server_full_stack_apply_chaos.sh
+SCENARIO=memory-stress bash scripts/server_full_stack_apply_chaos.sh
+SCENARIO=network-delay bash scripts/server_full_stack_apply_chaos.sh
+```
+
+장애 정리:
+
+```bash
+ACTION=delete SCENARIO=pod-kill bash scripts/server_full_stack_apply_chaos.sh
+ACTION=delete SCENARIO=cpu-stress bash scripts/server_full_stack_apply_chaos.sh
+ACTION=delete SCENARIO=memory-stress bash scripts/server_full_stack_apply_chaos.sh
+ACTION=delete SCENARIO=network-delay bash scripts/server_full_stack_apply_chaos.sh
+```
+
+## 5. 4-agent feedback loop 실행
+
+CPU stress scenario:
+
+```bash
+SCENARIO=cpu-stress \
+ITERATIONS=3 \
+INTERVAL_SECONDS=10 \
+MODE=dry-run \
+bash scripts/server_full_stack_feedback_loop.sh
+```
+
+실제 scale까지 실행하려면:
+
+```bash
+SCENARIO=cpu-stress \
+ITERATIONS=3 \
+INTERVAL_SECONDS=10 \
+MODE=real \
+bash scripts/server_full_stack_feedback_loop.sh
+```
+
+AutoGen GroupChat까지 포함하려면:
+
+```bash
+USE_AUTOGEN=1 \
+SCENARIO=cpu-stress \
+ITERATIONS=3 \
+INTERVAL_SECONDS=10 \
+MODE=dry-run \
+bash scripts/server_full_stack_feedback_loop.sh
+```
+
+결과는 기본적으로 아래에 저장됩니다.
+
+```text
+runs/full-stack/
+```
+
+## 6. 여러 장애를 순서대로 실행
+
+아래 명령은 `pod-kill`, `cpu-stress`, `memory-stress`, `network-delay`를 순서대로 실행하고 각 결과를 저장합니다.
+
+```bash
+ITERATIONS=3 \
+INTERVAL_SECONDS=10 \
+MODE=dry-run \
+bash scripts/server_full_stack_experiment_matrix.sh
+```
+
+결과 폴더:
+
+```text
+runs/full-stack-matrix/
+```
+
+특정 scenario만 돌리고 싶으면:
+
+```bash
+SCENARIOS="pod-kill cpu-stress" \
+ITERATIONS=3 \
+MODE=dry-run \
+bash scripts/server_full_stack_experiment_matrix.sh
+```
+
+## 7. 주의할 점
+
+한 번에 모든 변수를 바꾸지 않습니다.
+
+좋은 실험:
+
+```text
+full-stack 환경 고정
+-> 장애 종류만 변경
+-> reward 고정
+-> LLM 모델 고정
+-> 결과 비교
+```
+
+나쁜 실험:
+
+```text
+장애 종류, LLM 모델, reward, Prometheus 설정을 동시에 변경
+-> 어떤 변수 때문에 결과가 바뀌었는지 해석 불가
+```
+
+`network-delay`의 기본 query는 안전한 placeholder인 `up`입니다. 실제 논문 실험에서는 Online Boutique 또는 ingress에서 latency metric을 노출한 뒤 `QUERY` 환경변수로 교체하는 것이 좋습니다.
+
+예시:
+
+```bash
+SCENARIO=network-delay \
+METRIC=latency \
+THRESHOLD=0.2 \
+QUERY='histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace="online-boutique"}[5m])) by (le))' \
+bash scripts/server_full_stack_feedback_loop.sh
+```

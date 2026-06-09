@@ -759,3 +759,68 @@ AIOpsLab Hotel Reservation detection 문제를 대상으로 4-agent 자동 탐�
 12회 모두 Correct detection으로 평가되었다. 평균 TTD는 4.117초, 평균 action step은 3.0,
 평균 최종 reward는 3.10으로 측정되었다.
 ```
+
+## 17. Full-stack 확장 실험
+
+이 단계는 minimal 환경을 지우는 것이 아니라, 별도 full-stack 모드를 추가해서 장애와 정책 변수를 바꾸는 실험입니다.
+
+고정 환경:
+
+```text
+kube-prometheus-stack
+Online Boutique 전체 서비스
+Chaos Mesh
+4-agent runner
+runs/full-stack* 결과 저장 구조
+```
+
+실험 매트릭스 확인:
+
+```bash
+aiops-k8s-agents list-full-stack-experiments \
+  --config config/full_stack_experiments.json
+```
+
+full-stack 설치:
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+git pull origin master
+python -m pip install -e ".[dev,autogen]"
+
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG=~/geonhae/kubeconfigs/kind-geonhae-aiops.yaml
+
+bash scripts/server_full_stack_setup.sh
+```
+
+단일 장애 주입:
+
+```bash
+SCENARIO=pod-kill bash scripts/server_full_stack_apply_chaos.sh
+SCENARIO=cpu-stress bash scripts/server_full_stack_apply_chaos.sh
+SCENARIO=memory-stress bash scripts/server_full_stack_apply_chaos.sh
+SCENARIO=network-delay bash scripts/server_full_stack_apply_chaos.sh
+```
+
+4-agent feedback loop:
+
+```bash
+SCENARIO=cpu-stress \
+ITERATIONS=3 \
+INTERVAL_SECONDS=10 \
+MODE=dry-run \
+bash scripts/server_full_stack_feedback_loop.sh
+```
+
+여러 장애를 순서대로 실행:
+
+```bash
+ITERATIONS=3 \
+INTERVAL_SECONDS=10 \
+MODE=dry-run \
+bash scripts/server_full_stack_experiment_matrix.sh
+```
+
+자세한 설명은 `docs/full_stack_experiment_guide.md`를 보면 됩니다.
