@@ -57,7 +57,7 @@ python -m pip install -e ".[autogen,dev]"
 set OPENAI_API_KEY=<your-api-key>
 aiops-k8s-agents autogen-run \
   --mode mock \
-  --model gpt-4o-mini \
+  --model gpt-5.5 \
   --namespace online-boutique \
   --service paymentservice \
   --metric cpu \

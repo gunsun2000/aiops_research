@@ -123,6 +123,48 @@ def test_cli_autogen_run_prints_groupchat_result(monkeypatch, capsys):
     assert output["metadata"]["reward_total"] == "3.05"
 
 
+def test_cli_autogen_run_defaults_to_current_openai_model(monkeypatch, capsys):
+    async def fake_autogen_run(args):
+        assert args.model == "gpt-5.5"
+        return CommandResult(
+            command="kubectl scale deployment paymentservice --replicas=3 -n online-boutique",
+            mode="mock",
+            valid=True,
+            stdout="mock",
+            stderr="",
+            metadata={"autogen": "groupchat"},
+        )
+
+    monkeypatch.setattr(cli, "run_autogen_groupchat", fake_autogen_run)
+
+    exit_code = main(
+        [
+            "autogen-run",
+            "--mode",
+            "mock",
+            "--namespace",
+            "online-boutique",
+            "--service",
+            "paymentservice",
+            "--metric",
+            "cpu",
+            "--value",
+            "95",
+            "--threshold",
+            "80",
+            "--allowed-namespace",
+            "online-boutique",
+            "--allowed-deployment",
+            "paymentservice",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["valid"] is True
+
+
 def test_cli_autogen_run_can_show_agent_transcript(monkeypatch, capsys):
     from aiops_k8s_agents.autogen_groupchat import parse_autogen_decision
 

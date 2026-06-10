@@ -27,7 +27,7 @@ AIOpsLab / Kubernetes 상태
 | AI-MCMP coordinator | 완료 | 4개 에이전트 판단을 모아 최종 action을 결정 |
 | Kubernetes validator | 완료 | allowlist와 replica 범위를 통과한 `kubectl scale`만 실행 |
 | AIOpsLab referee | 완료 | 허용된 AIOpsLab API call만 실행 |
-| AutoGen GroupChat | 완료 | OpenAI `gpt-4o-mini` 기반 4-agent structured output 경로 구현 |
+| AutoGen GroupChat | 완료 | OpenAI `gpt-5.5` 기본 모델 기반 4-agent structured output 경로 구현 |
 | Prometheus 연동 | 완료 | Prometheus query 결과를 alert event로 변환 |
 | Chaos Mesh / kind 실험 | 완료 | 개인 kind cluster에서 pod kill 및 scale 검증 |
 | AIOpsLab 자동 detection | 완료 | Hotel Reservation detection 문제 자동 해결 |

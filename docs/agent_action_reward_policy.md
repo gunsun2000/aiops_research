@@ -52,7 +52,7 @@
 | 요청 replica가 비용 안전 상한 이하 | `cost_budget_approved` | 승인 | `+0.60` | 비용 정책 안에서 실행 가능 |
 | 요청 replica가 비용 안전 상한 초과 | `cost_budget_rejected` | 거부 | `-0.70` | 비용 초과 위험이 있어 실행 차단 |
 
-## 현재 CPU 95% 시나리오의 Reward 합계
+## Optional CPU 95% smoke test의 Reward 합계
 
 입력:
 

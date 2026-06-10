@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import inspect
 import json
+import os
 import time
 from dataclasses import asdict, replace
 from datetime import datetime
@@ -37,6 +38,8 @@ from aiops_k8s_agents.prometheus import (
 )
 from aiops_k8s_agents.validator import CommandValidationError, CommandValidator
 
+DEFAULT_OPENAI_MODEL = os.environ.get("AIOPS_OPENAI_MODEL", "gpt-5.5")
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -56,7 +59,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run one alert through AutoGen RoundRobinGroupChat.",
     )
     _add_alert_arguments(autogen_parser)
-    autogen_parser.add_argument("--model", default="gpt-4o-mini")
+    autogen_parser.add_argument("--model", default=DEFAULT_OPENAI_MODEL)
     _add_autogen_transcript_argument(autogen_parser)
 
     prometheus_parser = subparsers.add_parser(
@@ -81,7 +84,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read one Prometheus query result and run it through AutoGen GroupChat.",
     )
     _add_prometheus_arguments(autogen_prometheus_parser)
-    autogen_prometheus_parser.add_argument("--model", default="gpt-4o-mini")
+    autogen_prometheus_parser.add_argument("--model", default=DEFAULT_OPENAI_MODEL)
     _add_autogen_transcript_argument(autogen_prometheus_parser)
 
     feedback_loop_parser = subparsers.add_parser(
@@ -96,7 +99,7 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Use AutoGen GroupChat for each loop iteration.",
     )
-    feedback_loop_parser.add_argument("--model", default="gpt-4o-mini")
+    feedback_loop_parser.add_argument("--model", default=DEFAULT_OPENAI_MODEL)
     feedback_loop_parser.add_argument(
         "--no-kubernetes-snapshot",
         action="store_true",

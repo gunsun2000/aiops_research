@@ -61,7 +61,7 @@
     {
       "id": "llm-model-comparison",
       "variable": "llm_model",
-      "description": "Compare deterministic policy, gpt-4o-mini AutoGen, and later larger LLM models with the same scenario."
+      "description": "Compare deterministic policy, gpt-5.5 AutoGen, lower-cost fallback models, and later model upgrades with the same scenario."
     },
     {
       "id": "reward-sensitivity",

@@ -22,7 +22,7 @@ AIOpsLab / Kubernetes 장애 상태
 
 | 실험 | 성격 | 목적 |
 | --- | --- | --- |
-| CPU 95% synthetic alert | 사람이 만든 가짜 alert | Kubernetes `scale deployment` action 생성과 검증 |
+| Optional CPU 95% smoke test | 사람이 만든 가짜 alert | Kubernetes `scale deployment` action 생성과 검증 |
 | AIOpsLab Hotel Reservation detection | AIOpsLab 공식 장애 주입 | 실제 fault injection 환경에서 4-agent 자동 탐지 검증 |
 
 ## 2. 폴더 구조
@@ -87,7 +87,7 @@ AIOpsLab과 같이 돌릴 때
 | 하고 싶은 일 | 환경 | 명령 예시 |
 | --- | --- | --- |
 | 우리 코드 테스트 | `aiops_research` | `python -m pytest` |
-| CPU 95% synthetic alert | `aiops_research` | `aiops-k8s-agents run ...` |
+| Optional CPU 95% smoke test | `aiops_research` | `aiops-k8s-agents run ...` |
 | AutoGen GroupChat | `aiops_research` | `aiops-k8s-agents autogen-run ...` |
 | AIOpsLab 공식 CLI | `aiopslab` | `python cli.py` |
 | AIOpsLab 자동 detection | `aiopslab` | `bash scripts/server_aiopslab_auto_detection.sh` |
@@ -235,9 +235,9 @@ cd ~/geonhae/aiops_research
 python -m pytest
 ```
 
-## 8. 실행 순서: CPU 95% synthetic alert
+## 8. 선택 실행: CPU 95% smoke test
 
-이 실험은 실제 장애 주입이 아니라, 4-agent가 Kubernetes scale action을 잘 만드는지 확인하는 synthetic validation입니다.
+이 실험은 실제 장애 주입이 아니라, 4-agent가 Kubernetes scale action을 잘 만드는지 빠르게 확인하는 optional smoke test입니다. 풀스케일 연구의 주 실험은 AIOpsLab/Chaos Mesh가 주입하는 실제 장애를 사용합니다.
 
 ```bash
 conda activate aiops_research
@@ -289,7 +289,7 @@ kubectl get pods -n online-boutique -l app=paymentservice
 
 ## 9. 실행 순서: AutoGen LLM GroupChat
 
-AutoGen 경로는 OpenAI API를 사용합니다. 기본 모델은 `gpt-4o-mini`입니다.
+AutoGen 경로는 OpenAI API를 사용합니다. 기본 모델은 `gpt-5.5`입니다.
 
 ```bash
 export OPENAI_API_KEY="sk-..."
@@ -325,10 +325,16 @@ aiops-k8s-agents autogen-run \
 모델을 바꾸고 싶으면:
 
 ```bash
---model gpt-4o-mini
+--model gpt-5.5
 ```
 
-부분을 다른 모델명으로 바꿀 수 있습니다. 현재 기본값은 `gpt-4o-mini`입니다.
+부분을 다른 모델명으로 바꿀 수 있습니다. 현재 기본값은 `gpt-5.5`입니다.
+
+서버에서 기본 모델을 임시로 바꾸고 싶으면 환경변수를 사용합니다.
+
+```bash
+export AIOPS_OPENAI_MODEL=gpt-4o-mini
+```
 
 ## 10. 실행 순서: AIOpsLab 자동 detection
 
@@ -410,14 +416,14 @@ AIOpsLab Hotel Reservation detection 문제를 대상으로 4-agent 자동 탐�
 
 ### CPU 95%는 진짜 장애인가?
 
-아닙니다. CPU 95%는 synthetic alert입니다.
+아닙니다. CPU 95%는 synthetic alert이며, 지금 풀스케일 단계에서는 주 실험이 아니라 smoke test입니다.
 
 ```text
 목적: scale action 생성과 kubectl validator 검증
 성격: 기능 검증용 가짜 alert
 ```
 
-실제 장애 주입은 AIOpsLab Hotel Reservation detection에서 수행합니다.
+실제 장애 주입은 AIOpsLab Hotel Reservation detection과 full-stack Chaos Mesh 시나리오에서 수행합니다.
 
 ### AIOpsLab은 우리 GitHub에 왜 없나?
 
@@ -443,7 +449,7 @@ XGBoost/PPO는 참고 PPT의 방식이고, 우리 초기 연구 검증 단계의
 
 ### LLM 모델은 무엇인가?
 
-AutoGen GroupChat 경로의 기본 모델은 `gpt-4o-mini`입니다.
+AutoGen GroupChat 경로의 기본 모델은 `gpt-5.5`입니다.
 
 LLM을 쓰는 명령:
 

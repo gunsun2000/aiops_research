@@ -121,7 +121,7 @@ export OPENAI_API_KEY=<your-api-key>
 ```bash
 aiops-k8s-agents autogen-run \
   --mode mock \
-  --model gpt-4o-mini \
+  --model gpt-5.5 \
   --namespace online-boutique \
   --service paymentservice \
   --metric cpu \

@@ -32,7 +32,7 @@
 | Mitigation | 완화 및 복구 | Kubernetes `scale deployment` validator와 real 실행 |
 
 현재 AIOpsLab 공식 문제는 detection 문제이므로 detection과 analysis가 가장 많이 사용됩니다.
-CPU 95% Kubernetes 실험은 mitigation 단계까지 연결됩니다.
+Optional CPU 95% smoke test는 mitigation 단계까지 연결되는 최소 기능 검증으로 남기고, 주 실험은 AIOpsLab/Chaos Mesh 장애 주입 결과를 사용합니다.
 
 ## 코드 반영 위치
 

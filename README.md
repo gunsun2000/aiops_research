@@ -13,10 +13,11 @@ Kubernetes/AIOpsLab 환경에서 **AI 에이전트 레이어**를 검증하는
 | 목적 | 환경 | 명령 |
 | --- | --- | --- |
 | 우리 코드 테스트 | `aiops_research` | `python -m pytest` |
-| CPU 95% synthetic alert | `aiops_research` | `aiops-k8s-agents run ...` |
+| Optional CPU 95% smoke test | `aiops_research` | `aiops-k8s-agents run ...` |
 | AutoGen GroupChat | `aiops_research` | `aiops-k8s-agents autogen-run ...` |
 | AIOpsLab 자동 detection | `aiopslab` | `bash scripts/server_aiopslab_auto_detection.sh` |
 | AIOpsLab 반복 실험 | `aiopslab` | `RUNS=3 SLEEP_SECONDS=15 bash scripts/server_aiopslab_repeat_detection.sh` |
+| Full-stack Chaos/Prometheus loop | `aiops_research` | `bash scripts/server_full_stack_feedback_loop.sh` |
 
 중요한 점은 하나입니다.
 
@@ -128,7 +129,7 @@ Running 상태가 되는 것까지 확인했습니다.
 | `AISemiconductorInfraOpsAgent` | GPU/NPU/가속기 자원 여유가 있다고 보고 인프라 관점 검토 |
 | `CostOptimizationAgent` | 비용 관점에서 실행해도 되는지 검토 |
 
-현재 CPU 95% 시나리오의 최종 명령은 아래입니다.
+CPU 95% synthetic alert는 현재 주 연구 장애가 아니라 optional smoke test입니다. 주 실험은 AIOpsLab/Chaos Mesh가 주입하는 실제 장애를 사용합니다. 이 smoke test의 최종 명령 예시는 아래입니다.
 
 ```powershell
 kubectl scale deployment paymentservice --replicas=3 -n online-boutique
@@ -143,7 +144,7 @@ kubectl scale deployment paymentservice --replicas=3 -n online-boutique
 | `AISemiconductorInfraOpsAgent` | `infra_capacity_approved` | `+0.70` |
 | `CostOptimizationAgent` | `cost_budget_approved` | `+0.60` |
 
-CPU 95% 상황에서는 총 reward가 `3.05`가 되고, 모든 에이전트가 승인하면
+Optional CPU 95% smoke test에서는 총 reward가 `3.05`가 되고, 모든 에이전트가 승인하면
 최종 scale 명령이 생성됩니다.
 
 ## 제일 중요한 실행 순서
@@ -286,7 +287,7 @@ AIOpsLab 설치
 | --- | --- | --- |
 | 1 | 완료 | Python/conda 환경 구성 |
 | 2 | 완료 | 개인 kind 클러스터 생성 |
-| 3 | 완료 | CPU 95% synthetic alert로 scale action 검증 |
+| 3 | 완료 | Optional CPU 95% smoke test로 scale action 검증 |
 | 4 | 완료 | Prometheus / Chaos Mesh 기본 실험 |
 | 5 | 완료 | AIOpsLab Hotel Reservation detection 자동 실행 |
 | 6 | 완료 | AIOpsLab 반복 실험 결과표 생성 |
