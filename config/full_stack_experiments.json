@@ -32,7 +32,7 @@
       "id": "pod-kill",
       "fault": "Chaos Mesh PodChaos pod kill on paymentservice",
       "metric": "availability",
-      "query": "kube_deployment_status_replicas_available{namespace=\"online-boutique\",deployment=\"paymentservice\"}",
+      "query": "max(kube_deployment_status_replicas_available{namespace=\"online-boutique\",deployment=\"paymentservice\"})",
       "threshold": 2,
       "service": "paymentservice",
       "chaos_manifest": "k8s/paymentservice-pod-kill.yaml"

@@ -16,30 +16,39 @@ INTERVAL_SECONDS="${INTERVAL_SECONDS:-10}"
 MODE="${MODE:-dry-run}"
 RUN_DIR="${RUN_DIR:-runs/full-stack}"
 
+set_default() {
+  local name="$1"
+  local default_value="$2"
+
+  if [[ -z "${!name:-}" ]]; then
+    printf -v "$name" '%s' "$default_value"
+  fi
+}
+
 case "$SCENARIO" in
   cpu-stress)
-    SERVICE="${SERVICE:-paymentservice}"
-    METRIC="${METRIC:-cpu}"
-    THRESHOLD="${THRESHOLD:-0.5}"
-    QUERY="${QUERY:-sum(rate(container_cpu_usage_seconds_total{namespace=\"online-boutique\",pod=~\"paymentservice-.*\",container!=\"\",image!=\"\"}[2m])) * 100}"
+    set_default SERVICE "paymentservice"
+    set_default METRIC "cpu"
+    set_default THRESHOLD "0.5"
+    set_default QUERY 'sum(rate(container_cpu_usage_seconds_total{namespace="online-boutique",pod=~"paymentservice-.*",container!="",image!=""}[2m])) * 100'
     ;;
   memory-stress)
-    SERVICE="${SERVICE:-checkoutservice}"
-    METRIC="${METRIC:-memory}"
-    THRESHOLD="${THRESHOLD:-128}"
-    QUERY="${QUERY:-sum(container_memory_working_set_bytes{namespace=\"online-boutique\",pod=~\"checkoutservice-.*\",container!=\"\",image!=\"\"}) / 1024 / 1024}"
+    set_default SERVICE "checkoutservice"
+    set_default METRIC "memory"
+    set_default THRESHOLD "128"
+    set_default QUERY 'sum(container_memory_working_set_bytes{namespace="online-boutique",pod=~"checkoutservice-.*",container!="",image!=""}) / 1024 / 1024'
     ;;
   pod-kill)
-    SERVICE="${SERVICE:-paymentservice}"
-    METRIC="${METRIC:-availability}"
-    THRESHOLD="${THRESHOLD:-2}"
-    QUERY="${QUERY:-kube_deployment_status_replicas_available{namespace=\"online-boutique\",deployment=\"paymentservice\"}}"
+    set_default SERVICE "paymentservice"
+    set_default METRIC "availability"
+    set_default THRESHOLD "2"
+    set_default QUERY 'max(kube_deployment_status_replicas_available{namespace="online-boutique",deployment="paymentservice"})'
     ;;
   network-delay)
-    SERVICE="${SERVICE:-paymentservice}"
-    METRIC="${METRIC:-latency}"
-    THRESHOLD="${THRESHOLD:-0.5}"
-    QUERY="${QUERY:-up}"
+    set_default SERVICE "paymentservice"
+    set_default METRIC "latency"
+    set_default THRESHOLD "0.5"
+    set_default QUERY "up"
     ;;
   *)
     echo "Unsupported scenario: ${SCENARIO}" >&2
@@ -61,7 +70,30 @@ cleanup() {
 }
 trap cleanup EXIT
 
-sleep 5
+wait_for_prometheus() {
+  local url="http://127.0.0.1:${PROMETHEUS_PORT}/-/ready"
+  local log_file="/tmp/geonhae-full-prometheus-${PROMETHEUS_PORT}.log"
+
+  for _ in {1..30}; do
+    if ! kill -0 "$PORT_FORWARD_PID" >/dev/null 2>&1; then
+      echo "Prometheus port-forward stopped unexpectedly." >&2
+      cat "$log_file" >&2 || true
+      exit 1
+    fi
+
+    if curl -sf "$url" >/dev/null 2>&1; then
+      return 0
+    fi
+
+    sleep 1
+  done
+
+  echo "Prometheus did not become ready at ${url}." >&2
+  cat "$log_file" >&2 || true
+  exit 1
+}
+
+wait_for_prometheus
 
 ALLOWED_DEPLOYMENTS=(
   adservice

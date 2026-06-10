@@ -29,6 +29,44 @@ def test_full_stack_experiment_plan_loads_fixed_environment_and_variables():
     }
 
 
+def test_full_stack_queries_are_safe_for_feedback_loop_defaults():
+    plan = load_full_stack_experiment_plan(
+        Path("config/full_stack_experiments.json")
+    )
+    scenarios = {scenario.id: scenario for scenario in plan.scenarios}
+
+    cpu_query = scenarios["cpu-stress"].query
+    assert 'image!=""}[2m]' in cpu_query
+    assert 'image!=""[2m]' not in cpu_query
+
+    pod_kill_query = scenarios["pod-kill"].query
+    assert pod_kill_query.startswith("max(")
+    assert "kube_deployment_status_replicas_available" in pod_kill_query
+    assert 'deployment="paymentservice"' in pod_kill_query
+
+
+def test_full_stack_feedback_loop_script_keeps_promql_out_of_parameter_expansion():
+    script = Path("scripts/server_full_stack_feedback_loop.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'QUERY="${QUERY:-' not in script
+    assert 'image!=""}[2m]' in script
+    assert "max(kube_deployment_status_replicas_available" in script
+    assert "wait_for_prometheus" in script
+
+
+def test_full_stack_setup_script_has_reset_and_rollout_diagnostics():
+    script = Path("scripts/server_full_stack_setup.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "RESET_ONLINE_BOUTIQUE" in script
+    assert "ALLOW_PARTIAL_ROLLOUT" in script
+    assert "kubectl describe deployment" in script
+    assert "kubectl logs" in script
+
+
 def test_full_stack_experiment_plan_rejects_duplicate_scenario_ids(tmp_path):
     config = tmp_path / "duplicate.json"
     config.write_text(

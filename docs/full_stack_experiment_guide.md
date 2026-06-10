@@ -214,3 +214,38 @@ THRESHOLD=0.2 \
 QUERY='histogram_quantile(0.95, sum(rate(http_request_duration_seconds_bucket{namespace="online-boutique"}[5m])) by (le))' \
 bash scripts/server_full_stack_feedback_loop.sh
 ```
+
+## 8. 서버에서 자주 나는 문제와 해결
+
+### Prometheus query가 `HTTP Error 400`으로 실패할 때
+
+`server_full_stack_feedback_loop.sh`는 기본 PromQL을 직접 넣어 둡니다.
+CPU 시나리오의 정상 query는 아래처럼 `[2m]`가 label matcher 바깥에 있어야 합니다.
+
+```text
+sum(rate(container_cpu_usage_seconds_total{namespace="online-boutique",pod=~"paymentservice-.*",container!="",image!=""}[2m])) * 100
+```
+
+### `deployment가 allowlist에 없습니다`가 뜰 때
+
+full Prometheus stack에서는 metric label에 다른 deployment 이름이 섞일 수 있습니다.
+그래서 `pod-kill` 기본 query는 label을 비우기 위해 `max(...)`로 집계합니다.
+
+```text
+max(kube_deployment_status_replicas_available{namespace="online-boutique",deployment="paymentservice"})
+```
+
+### Online Boutique rollout이 계속 실패할 때
+
+기존 `online-boutique` namespace에 minimal deployment와 full deployment가 섞이면 rollout이 꼬일 수 있습니다.
+그럴 때는 실험 namespace만 지우고 다시 배포합니다.
+
+```bash
+RESET_ONLINE_BOUTIQUE=1 bash scripts/server_full_stack_setup.sh
+```
+
+실패한 상태에서도 pod/log를 보고 싶으면 아래처럼 실행합니다.
+
+```bash
+ALLOW_PARTIAL_ROLLOUT=1 bash scripts/server_full_stack_setup.sh
+```
