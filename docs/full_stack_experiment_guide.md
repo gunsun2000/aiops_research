@@ -259,3 +259,43 @@ RESET_ONLINE_BOUTIQUE=1 bash scripts/server_full_stack_setup.sh
 ```bash
 ALLOW_PARTIAL_ROLLOUT=1 bash scripts/server_full_stack_setup.sh
 ```
+
+## 9. 최종 구현 완료 검증
+
+최종 검증 스크립트는 다음 작업을 한 번에 수행합니다.
+
+```text
+kind context 안전 확인
+-> 네 장애 시나리오 전후 replica 초기화
+-> MODE=real 피드백 루프 실행
+-> Chaos Mesh 장애 제거
+-> CSV/Markdown 최종 결과 생성
+```
+
+deterministic 4-agent 최종 검증:
+
+```bash
+CONFIRM_REAL_RUN=YES \
+ITERATIONS=3 \
+bash scripts/server_finalize_research.sh
+```
+
+AutoGen `gpt-5.5` 최종 검증:
+
+```bash
+CONFIRM_REAL_RUN=YES \
+USE_AUTOGEN=1 \
+ITERATIONS=3 \
+bash scripts/server_finalize_research.sh
+```
+
+안전상 `CONFIRM_REAL_RUN=YES`가 없거나 현재 kubeconfig context가 `kind-*`가
+아니면 실행이 중단됩니다. 공용 Kubernetes에서 실행할 때는 관리자의 명시적
+승인을 받은 후에만 `ALLOW_NON_KIND_REAL=1`을 사용합니다.
+
+결과 파일:
+
+```text
+runs/final-real/<실행시각>/final_summary.md
+runs/final-real/<실행시각>/final_summary.csv
+```

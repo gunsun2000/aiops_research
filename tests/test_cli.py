@@ -530,3 +530,49 @@ def test_cli_lists_full_stack_experiment_matrix(capsys):
         "pod-kill",
         "network-delay",
     }
+
+
+def test_cli_summarizes_full_stack_runs(tmp_path, capsys):
+    scenario_dir = tmp_path / "pod-kill"
+    scenario_dir.mkdir()
+    (scenario_dir / "run_feedback_loop_real.json").write_text(
+        json.dumps(
+            {
+                "command": "feedback-loop",
+                "mode": "real",
+                "iterations": 1,
+                "passed": 1,
+                "failed": 0,
+                "autogen": False,
+                "records": [
+                    {
+                        "before": {"deployment_status": {"desired_replicas": 1}},
+                        "result": {
+                            "command": "kubectl scale deployment paymentservice --replicas=3 -n online-boutique",
+                            "mode": "real",
+                            "valid": True,
+                            "metadata": {"reward_total": "3.05"},
+                        },
+                        "after": {"deployment_status": {"desired_replicas": 3}},
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "summarize-full-stack-runs",
+            "--runs-dir",
+            str(tmp_path),
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["total_scenarios"] == 1
+    assert output["successful_scenarios"] == 1
+    assert output["real_scale_verified_scenarios"] == 1
+    assert (tmp_path / "final_summary.md").exists()
+    assert (tmp_path / "final_summary.csv").exists()

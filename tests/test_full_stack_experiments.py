@@ -80,6 +80,27 @@ def test_full_stack_matrix_continues_to_cleanup_after_scenario_failure():
     assert "failed_scenarios" in script
 
 
+def test_full_stack_matrix_resets_each_scenario_before_and_after_execution():
+    script = Path("scripts/server_full_stack_experiment_matrix.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'SCENARIO="$scenario" bash scripts/server_full_stack_reset.sh' in script
+    assert script.count("server_full_stack_reset.sh") >= 2
+
+
+def test_final_real_script_requires_confirmation_and_private_kind_context():
+    script = Path("scripts/server_finalize_research.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'CONFIRM_REAL_RUN:-' in script
+    assert 'CONFIRM_REAL_RUN=YES' in script
+    assert "ALLOW_NON_KIND_REAL" in script
+    assert 'MODE=real' in script
+    assert "summarize-full-stack-runs" in script
+
+
 def test_full_stack_setup_script_has_reset_and_rollout_diagnostics():
     script = Path("scripts/server_full_stack_setup.sh").read_text(
         encoding="utf-8"

@@ -23,6 +23,10 @@ from aiops_k8s_agents.full_stack_experiments import (
     load_full_stack_experiment_plan,
     plan_to_dict,
 )
+from aiops_k8s_agents.full_stack_results import (
+    summarize_full_stack_reports,
+    write_full_stack_summary_files,
+)
 from aiops_k8s_agents.aiopslab_results import (
     summarize_aiopslab_reports,
     write_aiopslab_summary_files,
@@ -134,6 +138,14 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_result_logging_argument(full_stack_parser)
 
+    full_stack_summary_parser = subparsers.add_parser(
+        "summarize-full-stack-runs",
+        help="Summarize full-stack feedback-loop reports into Markdown and CSV.",
+    )
+    full_stack_summary_parser.add_argument("--runs-dir", required=True)
+    full_stack_summary_parser.add_argument("--output-md", default="")
+    full_stack_summary_parser.add_argument("--output-csv", default="")
+
     return parser
 
 
@@ -223,6 +235,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit_json_report(args, report)
         return 0
 
+    if args.command == "summarize-full-stack-runs":
+        report = summarize_full_stack_runs(args)
+        _emit_json_report(args, report)
+        return 0 if report["total_failed"] == 0 else 2
+
     parser.error(f"unsupported command: {args.command}")
     return 2
 
@@ -257,6 +274,27 @@ def summarize_aiopslab_runs(args: argparse.Namespace) -> dict[str, Any]:
         "average_ttd": summary.average_ttd,
         "average_steps": summary.average_steps,
         "average_final_reward": summary.average_final_reward,
+    }
+
+
+def summarize_full_stack_runs(args: argparse.Namespace) -> dict[str, Any]:
+    runs_dir = Path(args.runs_dir)
+    output_md = Path(args.output_md) if args.output_md else runs_dir / "final_summary.md"
+    output_csv = Path(args.output_csv) if args.output_csv else runs_dir / "final_summary.csv"
+    summary = summarize_full_stack_reports(runs_dir)
+    write_full_stack_summary_files(summary, output_md, output_csv)
+    return {
+        "command": "summarize-full-stack-runs",
+        "runs_dir": str(runs_dir),
+        "output_md": str(output_md),
+        "output_csv": str(output_csv),
+        "total_scenarios": summary.total_scenarios,
+        "successful_scenarios": summary.successful_scenarios,
+        "total_iterations": summary.total_iterations,
+        "total_passed": summary.total_passed,
+        "total_failed": summary.total_failed,
+        "average_reward": summary.average_reward,
+        "real_scale_verified_scenarios": summary.real_scale_verified_scenarios,
     }
 
 

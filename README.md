@@ -418,3 +418,45 @@ aiops-k8s-agents list-full-stack-experiments \
 ```
 
 자세한 실행 순서는 [docs/full_stack_experiment_guide.md](docs/full_stack_experiment_guide.md)를 보면 됩니다.
+
+## 최종 real 검증과 결과 요약
+
+개인 kind 클러스터에서만 실행합니다. 아래 명령은 네 장애 시나리오를 실제
+`kubectl scale` 모드로 실행하고, 각 시나리오 전후 replica를 1로 초기화합니다.
+
+```bash
+cd ~/geonhae/aiops_research
+git pull origin master
+conda activate aiops_research
+python -m pip install -e ".[dev,autogen]"
+
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG=~/geonhae/kubeconfigs/kind-geonhae-aiops.yaml
+
+CONFIRM_REAL_RUN=YES \
+ITERATIONS=3 \
+bash scripts/server_finalize_research.sh
+```
+
+AutoGen과 기본 모델 `gpt-5.5`를 사용한 최종 검증은 다음처럼 실행합니다.
+
+```bash
+CONFIRM_REAL_RUN=YES \
+USE_AUTOGEN=1 \
+ITERATIONS=3 \
+bash scripts/server_finalize_research.sh
+```
+
+결과는 실행 시각별 폴더에 저장됩니다.
+
+```text
+runs/final-real/<실행시각>/final_summary.md
+runs/final-real/<실행시각>/final_summary.csv
+```
+
+`final_summary.md`에서 다음 조건이 모두 확인되면 구현 검증을 완료한 것으로 봅니다.
+
+- 네 시나리오 모두 `passed == iterations`
+- `total_failed == 0`
+- `real_scale_verified_scenarios == 4`
+- 각 시나리오의 replica 변화가 `1 -> 3`
