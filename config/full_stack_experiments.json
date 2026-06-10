@@ -22,9 +22,9 @@
     {
       "id": "memory-stress",
       "fault": "Chaos Mesh StressChaos memory load on checkoutservice",
-      "metric": "memory",
-      "query": "sum(container_memory_working_set_bytes{namespace=\"online-boutique\",pod=~\"checkoutservice-.*\",container!=\"\",image!=\"\"}) / 1024 / 1024",
-      "threshold": 128,
+      "metric": "restart_count",
+      "query": "max(increase(kube_pod_container_status_restarts_total{namespace=\"online-boutique\",pod=~\"checkoutservice-.*\",container!=\"POD\"}[5m]))",
+      "threshold": 0.5,
       "service": "checkoutservice",
       "chaos_manifest": "k8s/chaos/checkoutservice-memory-stress.yaml"
     },

@@ -38,7 +38,7 @@ aiops-k8s-agents list-full-stack-experiments \
 | scenario | 장애 | metric | 대상 |
 | --- | --- | --- | --- |
 | `cpu-stress` | CPU 부하 | `cpu` | `paymentservice` |
-| `memory-stress` | memory 부하 | `memory` | `checkoutservice` |
+| `memory-stress` | memory 부하 | `restart_count` | `checkoutservice` |
 | `pod-kill` | pod kill | `availability` | `paymentservice` |
 | `network-delay` | network delay | `latency` | `paymentservice` |
 
@@ -163,6 +163,16 @@ runs/full-stack/
 ```bash
 ITERATIONS=3 \
 INTERVAL_SECONDS=10 \
+MODE=dry-run \
+bash scripts/server_full_stack_experiment_matrix.sh
+```
+
+중간에 한 scenario가 실패해도 스크립트는 cleanup을 수행하고 다음 scenario까지 계속 진행합니다.
+실패 scenario가 있어도 리포트 수집용으로 exit code를 0으로 유지하려면 아래처럼 실행합니다.
+
+```bash
+ALLOW_SCENARIO_FAILURES=1 \
+ITERATIONS=3 \
 MODE=dry-run \
 bash scripts/server_full_stack_experiment_matrix.sh
 ```

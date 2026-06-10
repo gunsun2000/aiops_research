@@ -34,9 +34,9 @@ case "$SCENARIO" in
     ;;
   memory-stress)
     set_default SERVICE "checkoutservice"
-    set_default METRIC "memory"
-    set_default THRESHOLD "128"
-    set_default QUERY 'sum(container_memory_working_set_bytes{namespace="online-boutique",pod=~"checkoutservice-.*",container!="",image!=""}) / 1024 / 1024'
+    set_default METRIC "restart_count"
+    set_default THRESHOLD "0.5"
+    set_default QUERY 'max(increase(kube_pod_container_status_restarts_total{namespace="online-boutique",pod=~"checkoutservice-.*",container!="POD"}[5m]))'
     ;;
   pod-kill)
     set_default SERVICE "paymentservice"

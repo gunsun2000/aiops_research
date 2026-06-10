@@ -44,6 +44,12 @@ def test_full_stack_queries_are_safe_for_feedback_loop_defaults():
     assert "kube_deployment_status_replicas_available" in pod_kill_query
     assert 'deployment="paymentservice"' in pod_kill_query
 
+    memory_stress = scenarios["memory-stress"]
+    assert memory_stress.metric == "restart_count"
+    assert memory_stress.threshold == 0.5
+    assert "kube_pod_container_status_restarts_total" in memory_stress.query
+    assert 'pod=~"checkoutservice-.*"' in memory_stress.query
+
 
 def test_full_stack_feedback_loop_script_keeps_promql_out_of_parameter_expansion():
     script = Path("scripts/server_full_stack_feedback_loop.sh").read_text(
@@ -53,7 +59,19 @@ def test_full_stack_feedback_loop_script_keeps_promql_out_of_parameter_expansion
     assert 'QUERY="${QUERY:-' not in script
     assert 'image!=""}[2m]' in script
     assert "max(kube_deployment_status_replicas_available" in script
+    assert "kube_pod_container_status_restarts_total" in script
     assert "wait_for_prometheus" in script
+
+
+def test_full_stack_matrix_continues_to_cleanup_after_scenario_failure():
+    script = Path("scripts/server_full_stack_experiment_matrix.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "matrix_failed=0" in script
+    assert "if !" in script
+    assert "ACTION=delete SCENARIO=\"$scenario\"" in script
+    assert "failed_scenarios" in script
 
 
 def test_full_stack_setup_script_has_reset_and_rollout_diagnostics():
