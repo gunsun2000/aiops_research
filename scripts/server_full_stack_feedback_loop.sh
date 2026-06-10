@@ -48,7 +48,7 @@ case "$SCENARIO" in
     set_default SERVICE "paymentservice"
     set_default METRIC "latency"
     set_default THRESHOLD "0.5"
-    set_default QUERY "up"
+    set_default QUERY "max(up)"
     ;;
   *)
     echo "Unsupported scenario: ${SCENARIO}" >&2

@@ -41,7 +41,7 @@
       "id": "network-delay",
       "fault": "Chaos Mesh NetworkChaos latency on paymentservice",
       "metric": "latency",
-      "query": "up",
+      "query": "max(up)",
       "threshold": 0.5,
       "service": "paymentservice",
       "chaos_manifest": "k8s/chaos/paymentservice-network-delay.yaml"

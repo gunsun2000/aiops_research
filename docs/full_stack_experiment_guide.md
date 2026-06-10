@@ -213,7 +213,7 @@ full-stack 환경 고정
 -> 어떤 변수 때문에 결과가 바뀌었는지 해석 불가
 ```
 
-`network-delay`의 기본 query는 안전한 placeholder인 `up`입니다. 실제 논문 실험에서는 Online Boutique 또는 ingress에서 latency metric을 노출한 뒤 `QUERY` 환경변수로 교체하는 것이 좋습니다.
+`network-delay`의 기본 query는 안전한 placeholder인 `max(up)`입니다. `up`을 그대로 쓰면 Prometheus가 `kube-system` 같은 다른 namespace series를 먼저 반환할 수 있어서, 기본값은 label을 제거하는 집계 query를 사용합니다. 실제 논문 실험에서는 Online Boutique 또는 ingress에서 latency metric을 노출한 뒤 `QUERY` 환경변수로 교체하는 것이 좋습니다.
 
 예시:
 
