@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,21 @@ class ScaleAction:
     deployment: str
     replicas: int
     reason: str
+
+
+class RecoveryActionKind(str, Enum):
+    OBSERVE_ONLY = "observe_only"
+    ROLLOUT_RESTART = "rollout_restart"
+    SCALE_OUT = "scale_out"
+
+
+@dataclass(frozen=True)
+class RecoveryAction:
+    namespace: str
+    deployment: str
+    kind: RecoveryActionKind
+    replicas: int | None = None
+    reason: str = ""
 
 
 @dataclass(frozen=True)

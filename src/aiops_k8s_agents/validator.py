@@ -4,13 +4,13 @@ import re
 import shlex
 from dataclasses import dataclass
 
-from aiops_k8s_agents.models import ScaleAction
+from aiops_k8s_agents.models import RecoveryAction, RecoveryActionKind, ScaleAction
 
 K8S_NAME_PATTERN = re.compile(r"^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$")
 
 
 class CommandValidationError(ValueError):
-    """액션이나 자유 형식 명령어가 실행하기에 안전하지 않을 때 발생합니다."""
+    """Raised when a structured action or command is unsafe to execute."""
 
 
 @dataclass(frozen=True)
@@ -21,20 +21,20 @@ class CommandValidator:
     max_replicas: int = 5
 
     def validate_scale_action(self, action: ScaleAction) -> ScaleAction:
-        self._validate_k8s_name("namespace", action.namespace)
-        self._validate_k8s_name("deployment", action.deployment)
-        if action.namespace not in self.allowed_namespaces:
-            raise CommandValidationError(f"namespace가 allowlist에 없습니다: {action.namespace}")
-        if action.deployment not in self.allowed_deployments:
-            raise CommandValidationError(
-                f"deployment가 allowlist에 없습니다: {action.deployment}"
-            )
-        if not isinstance(action.replicas, int):
-            raise CommandValidationError("replicas는 정수여야 합니다")
-        if action.replicas < self.min_replicas or action.replicas > self.max_replicas:
-            raise CommandValidationError(
-                f"replicas는 {self.min_replicas} 이상 {self.max_replicas} 이하여야 합니다"
-            )
+        self._validate_target(action.namespace, action.deployment)
+        self._validate_replicas(action.replicas)
+        return action
+
+    def validate_recovery_action(self, action: RecoveryAction) -> RecoveryAction:
+        self._validate_target(action.namespace, action.deployment)
+        if not isinstance(action.kind, RecoveryActionKind):
+            raise CommandValidationError("recovery action kind is not allowed")
+        if action.kind == RecoveryActionKind.SCALE_OUT:
+            if action.replicas is None:
+                raise CommandValidationError("scale_out requires replicas")
+            self._validate_replicas(action.replicas)
+        elif action.replicas is not None:
+            raise CommandValidationError("only scale_out accepts replicas")
         return action
 
     def validate_command(self, command: str) -> ScaleAction:
@@ -44,30 +44,48 @@ class CommandValidator:
             raise CommandValidationError(str(exc)) from exc
 
         if len(parts) != 7:
-            raise CommandValidationError("명령어가 승인된 scale 템플릿과 일치해야 합니다")
+            raise CommandValidationError("command must match the approved scale template")
         if parts[:3] != ["kubectl", "scale", "deployment"]:
-            raise CommandValidationError("kubectl scale deployment만 허용됩니다")
+            raise CommandValidationError("only kubectl scale deployment is allowed")
         if not parts[4].startswith("--replicas="):
-            raise CommandValidationError("replicas는 --replicas=<N> 형식이어야 합니다")
+            raise CommandValidationError("replicas must use --replicas=<N>")
         if parts[5] != "-n":
-            raise CommandValidationError("namespace는 -n <namespace> 형식이어야 합니다")
+            raise CommandValidationError("namespace must use -n <namespace>")
 
         replicas_text = parts[4].split("=", 1)[1]
         if not replicas_text.isdecimal():
-            raise CommandValidationError("replicas는 양의 정수여야 합니다")
+            raise CommandValidationError("replicas must be a positive integer")
 
         action = ScaleAction(
             namespace=parts[6],
             deployment=parts[3],
             replicas=int(replicas_text),
-            reason="명령어 텍스트에서 검증됨",
+            reason="validated from an approved command template",
         )
         return self.validate_scale_action(action)
+
+    def _validate_target(self, namespace: str, deployment: str) -> None:
+        self._validate_k8s_name("namespace", namespace)
+        self._validate_k8s_name("deployment", deployment)
+        if namespace not in self.allowed_namespaces:
+            raise CommandValidationError(f"namespace is not allowlisted: {namespace}")
+        if deployment not in self.allowed_deployments:
+            raise CommandValidationError(f"deployment is not allowlisted: {deployment}")
+
+    def _validate_replicas(self, replicas: object) -> None:
+        if not isinstance(replicas, int):
+            raise CommandValidationError("replicas must be an integer")
+        if replicas < self.min_replicas or replicas > self.max_replicas:
+            raise CommandValidationError(
+                f"replicas must be between {self.min_replicas} and {self.max_replicas}"
+            )
 
     @staticmethod
     def _validate_k8s_name(field: str, value: str) -> None:
         if not K8S_NAME_PATTERN.fullmatch(value):
-            raise CommandValidationError(f"{field}가 유효한 Kubernetes 이름이 아닙니다: {value}")
+            raise CommandValidationError(
+                f"{field} is not a valid Kubernetes name: {value}"
+            )
 
 
 def render_scale_command(action: ScaleAction) -> str:
@@ -75,3 +93,26 @@ def render_scale_command(action: ScaleAction) -> str:
         f"kubectl scale deployment {action.deployment} "
         f"--replicas={action.replicas} -n {action.namespace}"
     )
+
+
+def render_recovery_command(action: RecoveryAction) -> str:
+    if action.kind == RecoveryActionKind.OBSERVE_ONLY:
+        return (
+            f"kubectl get deployment {action.deployment} "
+            f"-n {action.namespace} -o json"
+        )
+    if action.kind == RecoveryActionKind.ROLLOUT_RESTART:
+        return (
+            f"kubectl rollout restart deployment {action.deployment} "
+            f"-n {action.namespace}"
+        )
+    if action.kind == RecoveryActionKind.SCALE_OUT and action.replicas is not None:
+        return render_scale_command(
+            ScaleAction(
+                namespace=action.namespace,
+                deployment=action.deployment,
+                replicas=action.replicas,
+                reason=action.reason,
+            )
+        )
+    raise CommandValidationError("unsupported recovery action")

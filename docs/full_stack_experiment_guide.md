@@ -2,6 +2,8 @@
 
 이 문서는 `minimal`, `AIOpsLab`, `full-stack`을 분리해서 운영하기 위한 실행 가이드입니다.
 
+실제 장애 4종에 대해 `observe_only`, `rollout_restart`, `scale_out`을 비교하고 reward 가중치 민감도를 분석하는 최종 절차는 [recovery_action_experiment_guide.md](recovery_action_experiment_guide.md)를 사용합니다. 해당 실험에는 CPU 95% 인공 알람을 사용하지 않습니다.
+
 핵심 원칙은 아래와 같습니다.
 
 ```text

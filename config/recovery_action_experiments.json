@@ -1,0 +1,59 @@
+{
+  "baseline_replicas": 1,
+  "scale_replicas": 3,
+  "fault_detection_timeout_seconds": 90,
+  "recovery_timeout_seconds": 90,
+  "poll_interval_seconds": 5,
+  "actions": [
+    "observe_only",
+    "rollout_restart",
+    "scale_out"
+  ],
+  "scenarios": [
+    {
+      "id": "pod-kill",
+      "namespace": "online-boutique",
+      "deployment": "paymentservice",
+      "chaos_manifest": "k8s/paymentservice-pod-kill.yaml",
+      "metric": "availability",
+      "evidence_source": "kubernetes_availability",
+      "metric_direction": "low",
+      "query": "max(kube_deployment_status_replicas_available{namespace=\"online-boutique\",deployment=\"paymentservice\"})",
+      "fault_threshold": 0,
+      "recovery_threshold": 1
+    },
+    {
+      "id": "cpu-stress",
+      "namespace": "online-boutique",
+      "deployment": "paymentservice",
+      "chaos_manifest": "k8s/chaos/paymentservice-cpu-stress.yaml",
+      "metric": "cpu_usage",
+      "metric_direction": "high",
+      "query": "sum(rate(container_cpu_usage_seconds_total{namespace=\"online-boutique\",pod=~\"paymentservice-.*\",container!=\"\",image!=\"\"}[30s])) * 100",
+      "fault_threshold": 0.5,
+      "recovery_threshold": 0.5
+    },
+    {
+      "id": "memory-stress",
+      "namespace": "online-boutique",
+      "deployment": "checkoutservice",
+      "chaos_manifest": "k8s/chaos/checkoutservice-memory-stress.yaml",
+      "metric": "memory_working_set_bytes",
+      "metric_direction": "high",
+      "query": "max(container_memory_working_set_bytes{namespace=\"online-boutique\",pod=~\"checkoutservice-.*\",container!=\"\",image!=\"\"})",
+      "fault_threshold": 100000000,
+      "recovery_threshold": 100000000
+    },
+    {
+      "id": "network-delay",
+      "namespace": "online-boutique",
+      "deployment": "paymentservice",
+      "chaos_manifest": "k8s/chaos/paymentservice-network-delay.yaml",
+      "metric": "latency",
+      "metric_direction": "high",
+      "query_env": "NETWORK_LATENCY_QUERY",
+      "fault_threshold": 0.15,
+      "recovery_threshold": 0.15
+    }
+  ]
+}

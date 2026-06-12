@@ -460,3 +460,9 @@ runs/final-real/<실행시각>/final_summary.csv
 - `total_failed == 0`
 - `real_scale_verified_scenarios == 4`
 - 각 시나리오의 replica 변화가 `1 -> 3`
+
+## 실제 장애별 Action 및 Reward 비교 실험
+
+CPU 95% 인공 알람이 아닌 Chaos Mesh 실제 장애 4종과 복구 action 3종을 비교하는 실험은 다음 문서를 따른다.
+
+- [실제 장애별 복구 Action 및 Reward 민감도 실험](docs/recovery_action_experiment_guide.md)

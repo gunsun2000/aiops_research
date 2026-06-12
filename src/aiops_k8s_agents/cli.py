@@ -18,7 +18,7 @@ from aiops_k8s_agents.autogen_groupchat import (
     AutoGenRoundRobinDecisionProvider,
     create_openai_model_client,
 )
-from aiops_k8s_agents.executor import ExecutionMode
+from aiops_k8s_agents.executor import ExecutionMode, KubernetesExecutor
 from aiops_k8s_agents.full_stack_experiments import (
     load_full_stack_experiment_plan,
     plan_to_dict,
@@ -32,7 +32,21 @@ from aiops_k8s_agents.aiopslab_results import (
     write_aiopslab_summary_files,
 )
 from aiops_k8s_agents.kubernetes_status import collect_kubernetes_snapshot
-from aiops_k8s_agents.models import AlertEvent, CommandResult
+from aiops_k8s_agents.models import (
+    AlertEvent,
+    CommandResult,
+    RecoveryAction,
+    RecoveryActionKind,
+)
+from aiops_k8s_agents.recovery_experiments import (
+    analyze_recovery_outcomes,
+    load_recovery_outcomes,
+    write_recovery_analysis,
+)
+from aiops_k8s_agents.recovery_runner import (
+    load_recovery_experiment_config,
+    run_recovery_matrix,
+)
 from aiops_k8s_agents.prometheus import (
     PrometheusAdapter,
     PrometheusAdapterError,
@@ -146,6 +160,59 @@ def build_parser() -> argparse.ArgumentParser:
     full_stack_summary_parser.add_argument("--output-md", default="")
     full_stack_summary_parser.add_argument("--output-csv", default="")
 
+    recovery_action_parser = subparsers.add_parser(
+        "execute-recovery-action",
+        help="Validate and execute one bounded recovery action.",
+    )
+    recovery_action_parser.add_argument(
+        "--mode", choices=[mode.value for mode in ExecutionMode], default="mock"
+    )
+    recovery_action_parser.add_argument(
+        "--action",
+        choices=[kind.value for kind in RecoveryActionKind],
+        required=True,
+    )
+    recovery_action_parser.add_argument("--namespace", required=True)
+    recovery_action_parser.add_argument("--deployment", required=True)
+    recovery_action_parser.add_argument("--replicas", type=int)
+    recovery_action_parser.add_argument("--reason", default="recovery experiment")
+    recovery_action_parser.add_argument(
+        "--allowed-namespace", action="append", required=True
+    )
+    recovery_action_parser.add_argument(
+        "--allowed-deployment", action="append", required=True
+    )
+    recovery_action_parser.add_argument("--min-replicas", type=int, default=1)
+    recovery_action_parser.add_argument("--max-replicas", type=int, default=5)
+    _add_result_logging_argument(recovery_action_parser)
+
+    recovery_score_parser = subparsers.add_parser(
+        "score-recovery-experiments",
+        help="Rank measured recovery actions under all reward policies.",
+    )
+    recovery_score_parser.add_argument("--input", required=True)
+    recovery_score_parser.add_argument("--output-dir", required=True)
+
+    recovery_matrix_parser = subparsers.add_parser(
+        "run-recovery-experiments",
+        help="Run the real Chaos Mesh fault/action treatment matrix.",
+    )
+    recovery_matrix_parser.add_argument(
+        "--config",
+        default="config/recovery_action_experiments.json",
+    )
+    recovery_matrix_parser.add_argument(
+        "--mode",
+        choices=[mode.value for mode in ExecutionMode],
+        default="real",
+    )
+    recovery_matrix_parser.add_argument("--repetitions", type=int, default=1)
+    recovery_matrix_parser.add_argument(
+        "--prometheus-url",
+        default="http://127.0.0.1:9090",
+    )
+    recovery_matrix_parser.add_argument("--output", required=True)
+
     return parser
 
 
@@ -240,6 +307,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit_json_report(args, report)
         return 0 if report["total_failed"] == 0 else 2
 
+    if args.command == "execute-recovery-action":
+        result = execute_recovery_action(args)
+        _emit_result(args, result)
+        return 0 if result.valid else 2
+
+    if args.command == "score-recovery-experiments":
+        report = score_recovery_experiments(args)
+        _emit_json_report(args, report)
+        return 0
+
+    if args.command == "run-recovery-experiments":
+        try:
+            report = run_recovery_experiment_matrix(args)
+        except ValueError as exc:
+            _emit_json_report(
+                args,
+                {
+                    "command": "run-recovery-experiments",
+                    "valid": False,
+                    "stdout": "",
+                    "stderr": str(exc),
+                },
+            )
+            return 2
+        _emit_json_report(args, report)
+        return 0 if report["valid_measurements"] == report["total_treatments"] else 2
+
     parser.error(f"unsupported command: {args.command}")
     return 2
 
@@ -296,6 +390,46 @@ def summarize_full_stack_runs(args: argparse.Namespace) -> dict[str, Any]:
         "average_reward": summary.average_reward,
         "real_scale_verified_scenarios": summary.real_scale_verified_scenarios,
     }
+
+
+def execute_recovery_action(args: argparse.Namespace) -> CommandResult:
+    validator = _validator_from_args(args)
+    action = RecoveryAction(
+        namespace=args.namespace,
+        deployment=args.deployment,
+        kind=RecoveryActionKind(args.action),
+        replicas=args.replicas,
+        reason=args.reason,
+    )
+    try:
+        return KubernetesExecutor(
+            validator=validator,
+            mode=ExecutionMode(args.mode),
+        ).execute_recovery(action)
+    except (CommandValidationError, ValueError) as exc:
+        return _error_result(
+            args.mode,
+            str(exc),
+            {"controller": "bounded-recovery-experiment"},
+        )
+
+
+def score_recovery_experiments(args: argparse.Namespace) -> dict[str, Any]:
+    outcomes = load_recovery_outcomes(args.input)
+    report = analyze_recovery_outcomes(outcomes)
+    write_recovery_analysis(report, args.output_dir)
+    return report
+
+
+def run_recovery_experiment_matrix(args: argparse.Namespace) -> dict[str, Any]:
+    config = load_recovery_experiment_config(args.config)
+    return run_recovery_matrix(
+        config=config,
+        repetitions=args.repetitions,
+        mode=args.mode,
+        prometheus_url=args.prometheus_url,
+        output_path=args.output,
+    )
 
 
 def run_feedback_loop(args: argparse.Namespace) -> dict[str, Any]:

@@ -260,6 +260,172 @@ def test_cli_autogen_run_can_show_agent_transcript(monkeypatch, capsys):
     assert output["metadata"]["transcript"] == "\n".join(FakeProvider.transcript_lines)
 
 
+def test_cli_executes_structured_recovery_action_in_mock_mode(capsys):
+    exit_code = main(
+        [
+            "execute-recovery-action",
+            "--mode",
+            "mock",
+            "--action",
+            "rollout_restart",
+            "--namespace",
+            "online-boutique",
+            "--deployment",
+            "paymentservice",
+            "--allowed-namespace",
+            "online-boutique",
+            "--allowed-deployment",
+            "paymentservice",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["valid"] is True
+    assert output["command"] == (
+        "kubectl rollout restart deployment paymentservice -n online-boutique"
+    )
+
+
+def test_cli_scores_recovery_outcomes_under_all_reward_policies(tmp_path, capsys):
+    input_path = tmp_path / "outcomes.jsonl"
+    records = [
+        {
+            "scenario": "cpu-stress",
+            "action": {
+                "namespace": "online-boutique",
+                "deployment": "paymentservice",
+                "kind": "scale_out",
+                "replicas": 3,
+                "reason": "pilot",
+            },
+            "recovery_success": True,
+            "availability_recovery": 1.0,
+            "metric_improvement": 0.95,
+            "recovery_seconds": 10.0,
+            "replica_delta": 2,
+            "command_count": 1,
+            "safety_valid": True,
+            "measurement_valid": True,
+        },
+        {
+            "scenario": "cpu-stress",
+            "action": {
+                "namespace": "online-boutique",
+                "deployment": "paymentservice",
+                "kind": "observe_only",
+                "replicas": None,
+                "reason": "pilot",
+            },
+            "recovery_success": True,
+            "availability_recovery": 0.8,
+            "metric_improvement": 0.6,
+            "recovery_seconds": 50.0,
+            "replica_delta": 0,
+            "command_count": 0,
+            "safety_valid": True,
+            "measurement_valid": True,
+        },
+    ]
+    input_path.write_text(
+        "\n".join(json.dumps(record) for record in records) + "\n",
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "analysis"
+
+    exit_code = main(
+        [
+            "score-recovery-experiments",
+            "--input",
+            str(input_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["policies"]["ha_first"]["cpu-stress"]["selected_action"] == "scale_out"
+    assert output["policies"]["cost_first"]["cpu-stress"]["selected_action"] == "observe_only"
+    assert (output_dir / "reward_policy_comparison.json").exists()
+    assert (output_dir / "reward_policy_comparison.csv").exists()
+    assert (output_dir / "reward_policy_comparison.md").exists()
+
+
+def test_cli_runs_real_recovery_experiment_matrix(monkeypatch, tmp_path, capsys):
+    def fake_run_matrix(**kwargs):
+        assert kwargs["repetitions"] == 1
+        assert kwargs["mode"] == "real"
+        assert kwargs["prometheus_url"] == "http://127.0.0.1:9090"
+        assert Path(kwargs["output_path"]).name == "outcomes.jsonl"
+        return {
+            "command": "recovery-action-experiment",
+            "mode": "real",
+            "repetitions": 1,
+            "total_treatments": 12,
+            "valid_measurements": 12,
+            "successful_recoveries": 10,
+            "output": str(kwargs["output_path"]),
+        }
+
+    monkeypatch.setattr(cli, "run_recovery_matrix", fake_run_matrix)
+    output_path = tmp_path / "outcomes.jsonl"
+
+    exit_code = main(
+        [
+            "run-recovery-experiments",
+            "--config",
+            "config/recovery_action_experiments.json",
+            "--mode",
+            "real",
+            "--repetitions",
+            "1",
+            "--prometheus-url",
+            "http://127.0.0.1:9090",
+            "--output",
+            str(output_path),
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["total_treatments"] == 12
+    assert output["valid_measurements"] == 12
+
+
+def test_cli_reports_recovery_matrix_preflight_error_as_json(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setattr(
+        cli,
+        "run_recovery_matrix",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            ValueError("NETWORK_LATENCY_QUERY is required")
+        ),
+    )
+
+    exit_code = main(
+        [
+            "run-recovery-experiments",
+            "--config",
+            "config/recovery_action_experiments.json",
+            "--mode",
+            "real",
+            "--repetitions",
+            "1",
+            "--output",
+            str(tmp_path / "outcomes.jsonl"),
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert output["valid"] is False
+    assert output["stderr"] == "NETWORK_LATENCY_QUERY is required"
+
+
 def test_cli_autogen_run_returns_json_error_when_model_client_fails(monkeypatch, capsys):
     def fail_model_client(_model):
         raise ValueError("OPENAI_API_KEY가 설정되지 않았습니다")
