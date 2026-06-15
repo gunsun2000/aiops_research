@@ -33,6 +33,7 @@ def test_real_pilot_matrix_has_four_faults_three_actions_and_no_cpu_95_alert():
         "scale_out",
     }
     assert len(matrix) == 12
+    assert config.recovery_timeout_seconds == 150
     assert "cpu 95" not in serialized
     assert '"value": 95' not in serialized
 

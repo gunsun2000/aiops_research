@@ -2,7 +2,7 @@
   "baseline_replicas": 1,
   "scale_replicas": 3,
   "fault_detection_timeout_seconds": 90,
-  "recovery_timeout_seconds": 90,
+  "recovery_timeout_seconds": 150,
   "poll_interval_seconds": 5,
   "actions": [
     "observe_only",
