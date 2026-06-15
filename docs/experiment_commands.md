@@ -3,6 +3,135 @@
 이 문서는 현재 프로토타입에서 바로 실행할 수 있는 테스트/실험 명령어를 한곳에
 모은 치트시트입니다. 기본 원칙은 `mock -> dry-run -> real` 순서입니다.
 
+## 가장 먼저 보기: 현재 서버 Real 실험 재현
+
+현재 연구의 주요 결과는 CPU 95% Smoke Test가 아니라 다음 두 실험입니다.
+
+```text
+AIOpsLab Hotel Reservation 자동 탐지 12회
+Chaos Mesh 실제 장애 4종 × Action 3종 × 반복 3회 = 36 treatments
+```
+
+### 1. 서버 환경 준비
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+git pull origin master
+python -m pip install -e ".[dev,autogen]"
+
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
+
+python -m pytest
+kubectl get nodes
+```
+
+2026년 6월 15일 기준 코드 검증 결과는 `92 passed`입니다.
+
+### 2. Full Prometheus Port-forward
+
+별도 서버 터미널에서 다음 명령을 계속 실행합니다.
+
+```bash
+kubectl port-forward \
+  -n monitoring-full \
+  service/kube-prometheus-stack-prometheus \
+  9091:9090
+```
+
+실험 터미널에서는 다음 환경 변수를 설정합니다.
+
+```bash
+export PROM=http://127.0.0.1:9091
+export NETWORK_LATENCY_QUERY='max(probe_duration_seconds{target="paymentservice"})'
+
+curl -sS "$PROM/-/ready"
+```
+
+정상 출력:
+
+```text
+Prometheus Server is Ready.
+```
+
+### 3. 12회 파일럿
+
+```bash
+MODE=real \
+REPETITIONS=1 \
+PROMETHEUS_URL="$PROM" \
+NETWORK_LATENCY_QUERY="$NETWORK_LATENCY_QUERY" \
+bash scripts/server_recovery_action_pilot.sh
+```
+
+검증된 결과:
+
+```text
+total_treatments: 12
+valid_measurements: 12
+successful_recoveries: 12
+```
+
+### 4. 36회 본 실험
+
+```bash
+MODE=real \
+REPETITIONS=3 \
+PROMETHEUS_URL="$PROM" \
+NETWORK_LATENCY_QUERY="$NETWORK_LATENCY_QUERY" \
+bash scripts/server_recovery_action_pilot.sh
+```
+
+검증된 결과:
+
+```text
+total_treatments: 36
+valid_measurements: 36
+successful_recoveries: 36
+```
+
+### 5. 최신 결과 확인
+
+```bash
+LATEST=$(ls -dt runs/recovery-action-pilot/*/ | head -1)
+
+echo "$LATEST"
+wc -l "${LATEST}outcomes.jsonl"
+cat "${LATEST}analysis/reward_policy_comparison.md"
+```
+
+유효하지 않은 Treatment가 있는지 확인합니다.
+
+```bash
+python - "$LATEST/outcomes.jsonl" <<'PY'
+import json, sys
+
+rows = [json.loads(line) for line in open(sys.argv[1], encoding="utf-8")]
+print("total:", len(rows))
+print("valid:", sum(row.get("measurement_valid", False) for row in rows))
+print("recovered:", sum(row.get("recovery_success", False) for row in rows))
+
+for row in rows:
+    if not row.get("measurement_valid"):
+        print("failed:", row["treatment_id"], row.get("error", ""))
+PY
+```
+
+### 6. 현재 결과 파일
+
+```text
+12회 파일럿:
+runs/recovery-action-pilot/20260615_121554/
+
+36회 본 실험:
+runs/recovery-action-pilot/20260615_123017/
+```
+
+상세한 설계와 해석은 [실제 장애별 복구 Action 및 Reward 정책 실험](recovery_action_experiment_guide.md)을 참고합니다.
+
+> 중요: 위 36회 실험은 실제 Chaos Mesh·Prometheus·Kubernetes `real` 실험이지만, AutoGen GroupChat이 Action을 직접 선택한 실험은 아닙니다. AutoGen real 비교는 후속 실험입니다.
+
 ## 0. 실험 가능 범위
 
 | 실험 | Docker 필요 | OpenAI API 필요 | 설명 |
