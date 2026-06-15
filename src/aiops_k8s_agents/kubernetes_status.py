@@ -104,6 +104,7 @@ def _summarize_pod(item: dict[str, Any]) -> dict[str, Any]:
     restarts = sum(int(status.get("restartCount", 0)) for status in statuses)
     return {
         "name": item.get("metadata", {}).get("name", ""),
+        "uid": item.get("metadata", {}).get("uid", ""),
         "phase": item.get("status", {}).get("phase", ""),
         "ready": f"{ready}/{len(statuses)}",
         "restarts": restarts,

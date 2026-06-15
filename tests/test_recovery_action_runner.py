@@ -37,7 +37,17 @@ def test_real_pilot_matrix_has_four_faults_three_actions_and_no_cpu_95_alert():
     assert '"value": 95' not in serialized
 
     pod_kill = next(item for item in config.scenarios if item.id == "pod-kill")
-    assert pod_kill.evidence_source == "kubernetes_availability"
+    assert pod_kill.evidence_source == "pod_replacement"
+
+    cpu = next(item for item in config.scenarios if item.id == "cpu-stress")
+    assert "[1m]" in (cpu.query or "")
+
+    memory = next(item for item in config.scenarios if item.id == "memory-stress")
+    assert memory.fault_threshold == 50_000_000
+    assert memory.recovery_threshold == 50_000_000
+    assert 'size: "80MB"' in Path(memory.chaos_manifest).read_text(
+        encoding="utf-8"
+    )
 
 
 def test_network_delay_requires_real_latency_evidence(monkeypatch):
@@ -49,7 +59,7 @@ def test_network_delay_requires_real_latency_evidence(monkeypatch):
         resolve_metric_query(scenario)
 
 
-def test_pod_kill_uses_kubernetes_availability_without_prometheus_query():
+def test_pod_kill_detects_replacement_uid_without_prometheus_query():
     config = load_recovery_experiment_config(CONFIG_PATH)
     treatment = next(
         item
@@ -57,21 +67,38 @@ def test_pod_kill_uses_kubernetes_availability_without_prometheus_query():
         if item.scenario.id == "pod-kill"
         and item.action.value == "observe_only"
     )
-    availability = iter([1, 1, 0, 0, 1, 1])
+    snapshots = iter(
+        [
+            (1, 1, ["old-uid"]),
+            (1, 1, ["old-uid"]),
+            (1, 1, ["new-uid"]),
+            (1, 1, ["new-uid"]),
+            (1, 1, ["new-uid"]),
+        ]
+    )
 
     def snapshot(_namespace: str, _deployment: str):
-        available = next(availability)
+        desired, available, uids = next(snapshots)
         return {
             "deployment_status": {
                 "ok": True,
-                "desired_replicas": 1,
+                "desired_replicas": desired,
                 "available_replicas": available,
             },
             "pods": {
                 "ok": True,
-                "count": available,
+                "count": len(uids),
                 "running": available,
-                "items": [],
+                "items": [
+                    {
+                        "name": f"paymentservice-{index}",
+                        "uid": uid,
+                        "phase": "Running",
+                        "ready": "1/1",
+                        "restarts": 0,
+                    }
+                    for index, uid in enumerate(uids)
+                ],
             },
         }
 
@@ -82,7 +109,7 @@ def test_pod_kill_uses_kubernetes_availability_without_prometheus_query():
         ),
         snapshot=snapshot,
         sleep=lambda _seconds: None,
-        monotonic=iter([0.0, 1.0, 2.0, 3.0]).__next__,
+        monotonic=iter([0.0, 1.0, 2.0, 3.0, 4.0]).__next__,
     )
 
     record = run_recovery_treatment(
@@ -96,6 +123,74 @@ def test_pod_kill_uses_kubernetes_availability_without_prometheus_query():
     assert record["measurement_valid"] is True
     assert record["metric_at_fault"] == 0.0
     assert record["metric_after_action"] == 1.0
+    assert record["fault"]["pods"]["items"][0]["uid"] == "new-uid"
+
+
+def test_pod_kill_scale_out_waits_until_all_desired_replicas_are_available():
+    config = load_recovery_experiment_config(CONFIG_PATH)
+    treatment = next(
+        item
+        for item in build_treatment_matrix(config, repetitions=1)
+        if item.scenario.id == "pod-kill"
+        and item.action.value == "scale_out"
+    )
+    snapshots = iter(
+        [
+            (1, 1, ["old-uid"]),
+            (1, 1, ["new-uid"]),
+            (3, 1, ["new-uid", "scale-a", "scale-b"]),
+            (3, 3, ["new-uid", "scale-a", "scale-b"]),
+            (3, 3, ["new-uid", "scale-a", "scale-b"]),
+        ]
+    )
+
+    def snapshot(_namespace: str, _deployment: str):
+        desired, available, uids = next(snapshots)
+        return {
+            "deployment_status": {
+                "ok": True,
+                "desired_replicas": desired,
+                "available_replicas": available,
+            },
+            "pods": {
+                "ok": True,
+                "count": len(uids),
+                "running": available,
+                "items": [
+                    {
+                        "name": f"paymentservice-{index}",
+                        "uid": uid,
+                        "phase": "Running",
+                        "ready": "1/1" if index < available else "0/1",
+                        "restarts": 0,
+                    }
+                    for index, uid in enumerate(uids)
+                ],
+            },
+        }
+
+    runtime = RecoveryExperimentRuntime(
+        kubectl=lambda _argv: (0, "ok", ""),
+        query_metric=lambda _url, _query: pytest.fail(
+            "pod-kill evidence must come from Kubernetes state"
+        ),
+        snapshot=snapshot,
+        sleep=lambda _seconds: None,
+        monotonic=iter([0.0, 1.0, 2.0, 3.0, 4.0, 5.0]).__next__,
+    )
+
+    record = run_recovery_treatment(
+        treatment=treatment,
+        config=config,
+        mode="real",
+        prometheus_url="http://127.0.0.1:9091",
+        runtime=runtime,
+    )
+
+    assert record["measurement_valid"] is True
+    assert record["metric_after_action"] == 1.0
+    assert record["availability_recovery"] == 1.0
+    assert record["replica_delta"] == 2
 
 
 def test_network_delay_rejects_prometheus_up_as_latency_evidence(tmp_path):

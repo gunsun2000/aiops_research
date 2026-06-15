@@ -224,30 +224,49 @@ def run_recovery_treatment(
         record["before"] = runtime.snapshot(
             scenario.namespace, scenario.deployment
         )
-        record["metric_before_fault"] = _sample_evidence(
-            runtime, scenario, prometheus_url, query
-        )
+        if scenario.evidence_source in {
+            "kubernetes_availability",
+            "pod_replacement",
+        }:
+            record["metric_before_fault"] = _availability_evidence(
+                record["before"]
+            )
+        else:
+            record["metric_before_fault"] = _sample_evidence(
+                runtime, scenario, prometheus_url, query
+            )
 
         _kubectl_or_raise(
             runtime,
             ["kubectl", "apply", "-f", scenario.chaos_manifest],
         )
-        fault_value, fault_seconds = _wait_for_evidence(
-            runtime=runtime,
-            scenario=scenario,
-            prometheus_url=prometheus_url,
-            query=query,
-            timeout_seconds=config.fault_detection_timeout_seconds,
-            poll_interval_seconds=config.poll_interval_seconds,
-            predicate=lambda value: metric_is_faulted(
-                value, scenario.fault_threshold, scenario.metric_direction
-            ),
-        )
+        if scenario.evidence_source == "pod_replacement":
+            fault_snapshot, fault_seconds = _wait_for_pod_replacement(
+                runtime=runtime,
+                scenario=scenario,
+                baseline_uids=_pod_uids(record["before"]),
+                timeout_seconds=config.fault_detection_timeout_seconds,
+                poll_interval_seconds=config.poll_interval_seconds,
+            )
+            fault_value = 0.0
+            record["fault"] = fault_snapshot
+        else:
+            fault_value, fault_seconds = _wait_for_evidence(
+                runtime=runtime,
+                scenario=scenario,
+                prometheus_url=prometheus_url,
+                query=query,
+                timeout_seconds=config.fault_detection_timeout_seconds,
+                poll_interval_seconds=config.poll_interval_seconds,
+                predicate=lambda value: metric_is_faulted(
+                    value, scenario.fault_threshold, scenario.metric_direction
+                ),
+            )
+            record["fault"] = runtime.snapshot(
+                scenario.namespace, scenario.deployment
+            )
         record["metric_at_fault"] = fault_value
         record["fault_detection_seconds"] = round(fault_seconds, 6)
-        record["fault"] = runtime.snapshot(
-            scenario.namespace, scenario.deployment
-        )
 
         validator = CommandValidator(
             allowed_namespaces={scenario.namespace},
@@ -388,18 +407,48 @@ def _wait_for_evidence(
         runtime.sleep(poll_interval_seconds)
 
 
+def _wait_for_pod_replacement(
+    runtime: RecoveryExperimentRuntime,
+    scenario: RecoveryScenario,
+    baseline_uids: set[str],
+    timeout_seconds: int,
+    poll_interval_seconds: int,
+) -> tuple[dict[str, Any], float]:
+    if not baseline_uids:
+        raise ValueError("pod replacement evidence requires baseline pod UIDs")
+
+    started = runtime.monotonic()
+    last_error = "pod UID did not change"
+    while True:
+        try:
+            snapshot = runtime.snapshot(scenario.namespace, scenario.deployment)
+            current_uids = _pod_uids(snapshot)
+            if current_uids and current_uids != baseline_uids:
+                return snapshot, runtime.monotonic() - started
+            last_error = f"current pod UIDs were {sorted(current_uids)}"
+        except Exception as exc:
+            last_error = str(exc)
+        elapsed = runtime.monotonic() - started
+        if elapsed >= timeout_seconds:
+            raise ValueError(
+                f"pod replacement wait timed out after {timeout_seconds}s: "
+                f"{last_error}"
+            )
+        runtime.sleep(poll_interval_seconds)
+
+
 def _sample_evidence(
     runtime: RecoveryExperimentRuntime,
     scenario: RecoveryScenario,
     prometheus_url: str,
     query: str,
 ) -> float:
-    if scenario.evidence_source == "kubernetes_availability":
+    if scenario.evidence_source in {
+        "kubernetes_availability",
+        "pod_replacement",
+    }:
         snapshot = runtime.snapshot(scenario.namespace, scenario.deployment)
-        status = snapshot.get("deployment_status", {})
-        if not status.get("ok"):
-            raise ValueError("Kubernetes deployment availability is unavailable")
-        return float(status.get("available_replicas", 0) or 0)
+        return _availability_evidence(snapshot)
     return runtime.query_metric(prometheus_url, query)
 
 
@@ -499,6 +548,28 @@ def _desired_replicas(snapshot: dict[str, Any]) -> int:
     return int(status.get("desired_replicas", 0) or 0)
 
 
+def _availability_evidence(snapshot: dict[str, Any]) -> float:
+    status = snapshot.get("deployment_status", {})
+    if not status.get("ok"):
+        raise ValueError("Kubernetes deployment availability is unavailable")
+    desired = int(status.get("desired_replicas", 0) or 0)
+    available = int(status.get("available_replicas", 0) or 0)
+    if desired < 1:
+        raise ValueError("Kubernetes deployment has no desired replicas")
+    return min(max(available / desired, 0.0), 1.0)
+
+
+def _pod_uids(snapshot: dict[str, Any]) -> set[str]:
+    pods = snapshot.get("pods", {})
+    if not pods.get("ok"):
+        raise ValueError("Kubernetes pod identity is unavailable")
+    return {
+        str(item.get("uid"))
+        for item in pods.get("items", [])
+        if item.get("uid")
+    }
+
+
 def _scenario_from_dict(data: dict[str, object]) -> RecoveryScenario:
     scenario = RecoveryScenario(
         id=str(data["id"]),
@@ -523,6 +594,7 @@ def _scenario_from_dict(data: dict[str, object]) -> RecoveryScenario:
     if scenario.evidence_source not in {
         "prometheus",
         "kubernetes_availability",
+        "pod_replacement",
     }:
         raise ValueError(
             f"unsupported evidence source for {scenario.id}: "

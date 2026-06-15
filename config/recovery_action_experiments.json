@@ -16,7 +16,7 @@
       "deployment": "paymentservice",
       "chaos_manifest": "k8s/paymentservice-pod-kill.yaml",
       "metric": "availability",
-      "evidence_source": "kubernetes_availability",
+      "evidence_source": "pod_replacement",
       "metric_direction": "low",
       "query": "max(kube_deployment_status_replicas_available{namespace=\"online-boutique\",deployment=\"paymentservice\"})",
       "fault_threshold": 0,
@@ -29,7 +29,7 @@
       "chaos_manifest": "k8s/chaos/paymentservice-cpu-stress.yaml",
       "metric": "cpu_usage",
       "metric_direction": "high",
-      "query": "sum(rate(container_cpu_usage_seconds_total{namespace=\"online-boutique\",pod=~\"paymentservice-.*\",container!=\"\",image!=\"\"}[30s])) * 100",
+      "query": "sum(rate(container_cpu_usage_seconds_total{namespace=\"online-boutique\",pod=~\"paymentservice-.*\",container!=\"\",image!=\"\"}[1m])) * 100",
       "fault_threshold": 0.5,
       "recovery_threshold": 0.5
     },
@@ -41,8 +41,8 @@
       "metric": "memory_working_set_bytes",
       "metric_direction": "high",
       "query": "max(container_memory_working_set_bytes{namespace=\"online-boutique\",pod=~\"checkoutservice-.*\",container!=\"\",image!=\"\"})",
-      "fault_threshold": 100000000,
-      "recovery_threshold": 100000000
+      "fault_threshold": 50000000,
+      "recovery_threshold": 50000000
     },
     {
       "id": "network-delay",

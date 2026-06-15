@@ -27,7 +27,10 @@ def test_collect_kubernetes_snapshot_summarizes_deployment_and_pods():
                 {
                     "items": [
                         {
-                            "metadata": {"name": "paymentservice-a"},
+                            "metadata": {
+                                "name": "paymentservice-a",
+                                "uid": "uid-a",
+                            },
                             "status": {
                                 "phase": "Running",
                                 "containerStatuses": [
@@ -36,7 +39,10 @@ def test_collect_kubernetes_snapshot_summarizes_deployment_and_pods():
                             },
                         },
                         {
-                            "metadata": {"name": "paymentservice-b"},
+                            "metadata": {
+                                "name": "paymentservice-b",
+                                "uid": "uid-b",
+                            },
                             "status": {
                                 "phase": "Running",
                                 "containerStatuses": [
@@ -59,6 +65,7 @@ def test_collect_kubernetes_snapshot_summarizes_deployment_and_pods():
     assert snapshot["deployment_status"]["ready_replicas"] == 3
     assert snapshot["pods"]["count"] == 2
     assert snapshot["pods"]["running"] == 2
+    assert snapshot["pods"]["items"][0]["uid"] == "uid-a"
     assert snapshot["pods"]["items"][1]["restarts"] == 1
 
 
