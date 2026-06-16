@@ -87,7 +87,7 @@ func BuildKubectlArgs(req Request) ([]string, error) {
 
 	switch req.Action {
 	case ActionObserveOnly:
-		return []string{"kubectl", "get", "deployment", req.Deployment, "-n", req.Namespace}, nil
+		return []string{"kubectl", "get", "deployment", req.Deployment, "-n", req.Namespace, "-o", "json"}, nil
 	case ActionRolloutRestart:
 		args := []string{"kubectl", "rollout", "restart", "deployment", req.Deployment, "-n", req.Namespace}
 		if req.Mode == ModeDryRun {
@@ -127,6 +127,9 @@ func Validate(req Request) error {
 
 	switch req.Action {
 	case ActionObserveOnly, ActionRolloutRestart:
+		if req.Replicas != nil {
+			return fmt.Errorf("only %s accepts replicas", ActionScaleOut)
+		}
 		return nil
 	case ActionScaleOut:
 		if req.Replicas == nil {

@@ -150,7 +150,9 @@ LLM / Coding Agent B
 | GitHub Actions에서 Go 테스트 실행 | 완료 |
 | JSON action 계약 예시 추가 | 완료 |
 | 2종 LLM 검증 절차 문서화 | 완료 |
-| 실제 두 번째 LLM/코딩 에이전트 리뷰 수행 | 미완료 |
+| 실제 두 번째 LLM/코딩 에이전트 리뷰 수행 | 완료 |
 | Python runner가 Go guard를 자동 호출하도록 통합 | 다음 단계 |
 
 정리하면, 이번 변경은 연구 방향을 “Python만으로 만든 AIOps prototype”에서 “Python 4-Agent 판단 + Go 안전 실행 계층 + 2종 코딩 에이전트 교차 검증 가능한 구조”로 확장한 것입니다.
+
+2026-06-16에는 `gpt-5.4`와 `gpt-5.4-mini` 기반 코딩 에이전트 2종이 독립적으로 Go guard와 Python validator를 검토했습니다. 두 리뷰어 모두 Python-Go action 계약 불일치를 지적했고, 해당 지적을 반영해 `observe_only` JSON 출력 계약, non-scale action의 `replicas` 거부, recovery/dry-run 명령 재검증을 수정했습니다. 상세 결과는 [2종 LLM / 코딩 에이전트 교차 검증 결과](llm_cross_validation_report_20260616.md)에 정리했습니다.

@@ -43,7 +43,7 @@ class CommandValidator:
         except ValueError as exc:
             raise CommandValidationError(str(exc)) from exc
 
-        if len(parts) != 7:
+        if len(parts) not in {7, 8}:
             raise CommandValidationError("command must match the approved scale template")
         if parts[:3] != ["kubectl", "scale", "deployment"]:
             raise CommandValidationError("only kubectl scale deployment is allowed")
@@ -51,6 +51,8 @@ class CommandValidator:
             raise CommandValidationError("replicas must use --replicas=<N>")
         if parts[5] != "-n":
             raise CommandValidationError("namespace must use -n <namespace>")
+        if len(parts) == 8 and parts[7] != "--dry-run=server":
+            raise CommandValidationError("dry-run must use --dry-run=server")
 
         replicas_text = parts[4].split("=", 1)[1]
         if not replicas_text.isdecimal():
@@ -116,3 +118,71 @@ def render_recovery_command(action: RecoveryAction) -> str:
             )
         )
     raise CommandValidationError("unsupported recovery action")
+
+
+def validate_recovery_command(
+    command: str, validator: CommandValidator
+) -> RecoveryAction:
+    try:
+        parts = shlex.split(command)
+    except ValueError as exc:
+        raise CommandValidationError(str(exc)) from exc
+
+    if _is_observe_command(parts):
+        action = RecoveryAction(
+            namespace=parts[5],
+            deployment=parts[3],
+            kind=RecoveryActionKind.OBSERVE_ONLY,
+            reason="validated from an approved observe command template",
+        )
+        return validator.validate_recovery_action(action)
+
+    if _is_rollout_restart_command(parts):
+        action = RecoveryAction(
+            namespace=parts[6],
+            deployment=parts[4],
+            kind=RecoveryActionKind.ROLLOUT_RESTART,
+            reason="validated from an approved rollout restart command template",
+        )
+        return validator.validate_recovery_action(action)
+
+    if _is_scale_command(parts):
+        scale_action = validator.validate_command(command)
+        return RecoveryAction(
+            namespace=scale_action.namespace,
+            deployment=scale_action.deployment,
+            kind=RecoveryActionKind.SCALE_OUT,
+            replicas=scale_action.replicas,
+            reason="validated from an approved scale command template",
+        )
+
+    raise CommandValidationError("command must match an approved recovery template")
+
+
+def _is_observe_command(parts: list[str]) -> bool:
+    return (
+        len(parts) == 8
+        and parts[:3] == ["kubectl", "get", "deployment"]
+        and parts[4] == "-n"
+        and parts[6:] == ["-o", "json"]
+    )
+
+
+def _is_rollout_restart_command(parts: list[str]) -> bool:
+    if len(parts) not in {7, 8}:
+        return False
+    if parts[:4] != ["kubectl", "rollout", "restart", "deployment"]:
+        return False
+    if parts[5] != "-n":
+        return False
+    return len(parts) == 7 or parts[7] == "--dry-run=server"
+
+
+def _is_scale_command(parts: list[str]) -> bool:
+    return (
+        len(parts) in {7, 8}
+        and parts[:3] == ["kubectl", "scale", "deployment"]
+        and parts[4].startswith("--replicas=")
+        and parts[5] == "-n"
+        and (len(parts) == 7 or parts[7] == "--dry-run=server")
+    )

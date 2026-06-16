@@ -121,7 +121,7 @@ func TestObserveOnlyRendersReadOnlyKubectlCommand(t *testing.T) {
 
 	result := Execute(req, func(name string, args ...string) (string, string, int) {
 		got := name + " " + strings.Join(args, " ")
-		want := "kubectl get deployment paymentservice -n online-boutique"
+		want := "kubectl get deployment paymentservice -n online-boutique -o json"
 		if got != want {
 			t.Fatalf("command mismatch\nwant: %s\n got: %s", want, got)
 		}
@@ -130,5 +130,42 @@ func TestObserveOnlyRendersReadOnlyKubectlCommand(t *testing.T) {
 
 	if !result.Valid {
 		t.Fatalf("expected observe success, got stderr=%q", result.Stderr)
+	}
+}
+
+func TestRejectsReplicasOnNonScaleActions(t *testing.T) {
+	for _, action := range []string{"observe_only", "rollout_restart"} {
+		req := validScaleRequest()
+		req.Action = action
+		req.Replicas = ptr(3)
+
+		result := Execute(req, nil)
+
+		if result.Valid {
+			t.Fatalf("expected invalid result for replicas on %s", action)
+		}
+		if !strings.Contains(result.Stderr, "only scale_out accepts replicas") {
+			t.Fatalf("unexpected stderr for %s: %q", action, result.Stderr)
+		}
+	}
+}
+
+func TestRolloutRestartDryRunCommand(t *testing.T) {
+	req := validScaleRequest()
+	req.Mode = "dry-run"
+	req.Action = "rollout_restart"
+	req.Replicas = nil
+
+	result := Execute(req, func(name string, args ...string) (string, string, int) {
+		got := name + " " + strings.Join(args, " ")
+		want := "kubectl rollout restart deployment paymentservice -n online-boutique --dry-run=server"
+		if got != want {
+			t.Fatalf("command mismatch\nwant: %s\n got: %s", want, got)
+		}
+		return "deployment.apps/paymentservice restarted (server dry run)", "", 0
+	})
+
+	if !result.Valid {
+		t.Fatalf("expected rollout restart dry-run success, got stderr=%q", result.Stderr)
 	}
 }

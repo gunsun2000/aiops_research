@@ -4,6 +4,7 @@ from aiops_k8s_agents.models import RecoveryAction, RecoveryActionKind, ScaleAct
 from aiops_k8s_agents.validator import (
     CommandValidationError,
     CommandValidator,
+    validate_recovery_command,
     render_recovery_command,
     render_scale_command,
 )
@@ -137,3 +138,62 @@ def test_recovery_action_rejects_missing_scale_replicas_and_non_allowlisted_targ
                 reason="not allowlisted",
             )
         )
+
+
+@pytest.mark.parametrize(
+    ("command", "expected_kind", "expected_replicas"),
+    [
+        (
+            "kubectl get deployment paymentservice -n online-boutique -o json",
+            RecoveryActionKind.OBSERVE_ONLY,
+            None,
+        ),
+        (
+            "kubectl rollout restart deployment paymentservice -n online-boutique --dry-run=server",
+            RecoveryActionKind.ROLLOUT_RESTART,
+            None,
+        ),
+        (
+            "kubectl scale deployment paymentservice --replicas=3 -n online-boutique --dry-run=server",
+            RecoveryActionKind.SCALE_OUT,
+            3,
+        ),
+    ],
+)
+def test_validates_recovery_commands_from_go_guard(
+    command, expected_kind, expected_replicas
+):
+    validator = CommandValidator(
+        allowed_namespaces={"online-boutique"},
+        allowed_deployments={"paymentservice"},
+        min_replicas=1,
+        max_replicas=5,
+    )
+
+    action = validate_recovery_command(command, validator)
+
+    assert action.kind == expected_kind
+    assert action.namespace == "online-boutique"
+    assert action.deployment == "paymentservice"
+    assert action.replicas == expected_replicas
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "kubectl get deployment paymentservice -n online-boutique",
+        "kubectl rollout restart deployment paymentservice -n online-boutique --dry-run=client",
+        "kubectl scale deployment paymentservice --replicas=3 -n online-boutique --dry-run=client",
+        "kubectl rollout restart deployment frontend -n online-boutique --dry-run=server",
+    ],
+)
+def test_rejects_recovery_commands_that_drift_from_go_contract(command):
+    validator = CommandValidator(
+        allowed_namespaces={"online-boutique"},
+        allowed_deployments={"paymentservice"},
+        min_replicas=1,
+        max_replicas=5,
+    )
+
+    with pytest.raises(CommandValidationError):
+        validate_recovery_command(command, validator)
