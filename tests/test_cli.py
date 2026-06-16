@@ -288,6 +288,57 @@ def test_cli_executes_structured_recovery_action_in_mock_mode(capsys):
     )
 
 
+def test_cli_lists_registered_agents(capsys):
+    exit_code = main(["list-agents", "--registry", "config/agent_registry.json"])
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["command"] == "list-agents"
+    assert "AIApplicationManagementAgent" in [
+        agent["name"] for agent in output["agents"]
+    ]
+
+
+def test_cli_validates_registered_agent_action(capsys):
+    exit_code = main(
+        [
+            "validate-agent-action",
+            "--registry",
+            "config/agent_registry.json",
+            "--agent",
+            "AIApplicationManagementAgent",
+            "--action",
+            "app_scale_deployment",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["valid"] is True
+    assert output["agent"] == "AIApplicationManagementAgent"
+
+
+def test_cli_recommends_inference_placement(capsys):
+    exit_code = main(
+        [
+            "recommend-inference-placement",
+            "--config",
+            "config/inference_optimization.json",
+            "--workload",
+            "llm-chat-inference",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["valid"] is True
+    assert output["selected_resource"] == "gpu-vm-l4"
+    assert output["action"] == "deploy_on_gpu_vm"
+
+
 def test_cli_passes_go_guard_backend_to_recovery_executor(monkeypatch, capsys):
     captured = {}
 

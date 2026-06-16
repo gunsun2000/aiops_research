@@ -12,6 +12,13 @@ from pathlib import Path
 from typing import Any, Sequence
 
 from aiops_k8s_agents.agents import AIMCMPCoordinator
+from aiops_k8s_agents.agent_registry import (
+    AgentProfile,
+    AgentRegistry,
+    AgentRegistryError,
+    load_agent_registry,
+    save_agent_registry,
+)
 from aiops_k8s_agents.autogen_groupchat import (
     AutoGenDecisionError,
     AutoGenGroupChatCoordinator,
@@ -34,6 +41,11 @@ from aiops_k8s_agents.full_stack_results import (
 from aiops_k8s_agents.aiopslab_results import (
     summarize_aiopslab_reports,
     write_aiopslab_summary_files,
+)
+from aiops_k8s_agents.inference_optimizer import (
+    InferenceOptimizationError,
+    load_inference_optimization_config,
+    recommend_inference_placement,
 )
 from aiops_k8s_agents.kubernetes_status import collect_kubernetes_snapshot
 from aiops_k8s_agents.models import (
@@ -61,6 +73,8 @@ from aiops_k8s_agents.prometheus import (
 from aiops_k8s_agents.validator import CommandValidationError, CommandValidator
 
 DEFAULT_OPENAI_MODEL = os.environ.get("AIOPS_OPENAI_MODEL", "gpt-5.5")
+DEFAULT_AGENT_REGISTRY = "config/agent_registry.json"
+DEFAULT_INFERENCE_OPTIMIZATION_CONFIG = "config/inference_optimization.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -220,6 +234,65 @@ def build_parser() -> argparse.ArgumentParser:
     )
     recovery_matrix_parser.add_argument("--output", required=True)
 
+    list_agents_parser = subparsers.add_parser(
+        "list-agents",
+        help="List registered 4-Agent research roles and bounded actions.",
+    )
+    list_agents_parser.add_argument("--registry", default=DEFAULT_AGENT_REGISTRY)
+    _add_result_logging_argument(list_agents_parser)
+
+    show_agent_parser = subparsers.add_parser(
+        "show-agent",
+        help="Show one registered agent profile.",
+    )
+    show_agent_parser.add_argument("--registry", default=DEFAULT_AGENT_REGISTRY)
+    show_agent_parser.add_argument("--agent", required=True)
+    _add_result_logging_argument(show_agent_parser)
+
+    validate_agent_parser = subparsers.add_parser(
+        "validate-agent-action",
+        help="Validate that a bounded action belongs to a registered agent.",
+    )
+    validate_agent_parser.add_argument("--registry", default=DEFAULT_AGENT_REGISTRY)
+    validate_agent_parser.add_argument("--agent", required=True)
+    validate_agent_parser.add_argument("--action", required=True)
+    _add_result_logging_argument(validate_agent_parser)
+
+    register_agent_parser = subparsers.add_parser(
+        "register-agent",
+        help="Register or update an AI service-control agent profile.",
+    )
+    register_agent_parser.add_argument("--registry", default=DEFAULT_AGENT_REGISTRY)
+    register_agent_parser.add_argument("--name", required=True)
+    register_agent_parser.add_argument("--korean-name", required=True)
+    register_agent_parser.add_argument("--role", required=True)
+    register_agent_parser.add_argument("--responsibility", action="append", required=True)
+    register_agent_parser.add_argument("--action", action="append", required=True)
+    register_agent_parser.add_argument("--reward-signal", action="append", required=True)
+    register_agent_parser.add_argument("--overwrite", action="store_true")
+    _add_result_logging_argument(register_agent_parser)
+
+    list_inference_parser = subparsers.add_parser(
+        "list-inference-workloads",
+        help="List CPU/GPU VM inference workloads and candidate resources.",
+    )
+    list_inference_parser.add_argument(
+        "--config",
+        default=DEFAULT_INFERENCE_OPTIMIZATION_CONFIG,
+    )
+    _add_result_logging_argument(list_inference_parser)
+
+    inference_parser = subparsers.add_parser(
+        "recommend-inference-placement",
+        help="Recommend a CPU/GPU VM placement for one inference workload.",
+    )
+    inference_parser.add_argument(
+        "--config",
+        default=DEFAULT_INFERENCE_OPTIMIZATION_CONFIG,
+    )
+    inference_parser.add_argument("--workload", required=True)
+    _add_result_logging_argument(inference_parser)
+
     return parser
 
 
@@ -359,8 +432,156 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit_json_report(args, report)
         return 0 if report["valid_measurements"] == report["total_treatments"] else 2
 
+    if args.command == "list-agents":
+        report = list_registered_agents(args)
+        _emit_json_report(args, report)
+        return 0
+
+    if args.command == "show-agent":
+        report = show_registered_agent(args)
+        _emit_json_report(args, report)
+        return 0 if report["valid"] else 2
+
+    if args.command == "validate-agent-action":
+        report = validate_registered_agent_action(args)
+        _emit_json_report(args, report)
+        return 0 if report["valid"] else 2
+
+    if args.command == "register-agent":
+        report = register_agent_profile(args)
+        _emit_json_report(args, report)
+        return 0 if report["valid"] else 2
+
+    if args.command == "list-inference-workloads":
+        report = list_inference_workloads(args)
+        _emit_json_report(args, report)
+        return 0
+
+    if args.command == "recommend-inference-placement":
+        report = recommend_inference_placement_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report["valid"] else 2
+
     parser.error(f"unsupported command: {args.command}")
     return 2
+
+
+def list_registered_agents(args: argparse.Namespace) -> dict[str, Any]:
+    registry = load_agent_registry(args.registry)
+    return {
+        "command": "list-agents",
+        "registry": args.registry,
+        "version": registry.version,
+        "agents": [registry.agents[name].to_dict() for name in registry.agent_names()],
+    }
+
+
+def show_registered_agent(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        profile = load_agent_registry(args.registry).get(args.agent)
+    except AgentRegistryError as exc:
+        return {
+            "command": "show-agent",
+            "valid": False,
+            "registry": args.registry,
+            "agent": args.agent,
+            "stderr": str(exc),
+        }
+    return {
+        "command": "show-agent",
+        "valid": True,
+        "registry": args.registry,
+        "agent": profile.to_dict(),
+    }
+
+
+def validate_registered_agent_action(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        registry = load_agent_registry(args.registry)
+        valid = registry.validate_action(args.agent, args.action)
+        stderr = "" if valid else "action is not allowed for the selected agent"
+    except AgentRegistryError as exc:
+        valid = False
+        stderr = str(exc)
+    return {
+        "command": "validate-agent-action",
+        "valid": valid,
+        "registry": args.registry,
+        "agent": args.agent,
+        "action": args.action,
+        "stderr": stderr,
+    }
+
+
+def register_agent_profile(args: argparse.Namespace) -> dict[str, Any]:
+    registry_path = Path(args.registry)
+    try:
+        registry = (
+            load_agent_registry(registry_path)
+            if registry_path.exists()
+            else AgentRegistry(version="1", agents={})
+        )
+        profile = AgentProfile(
+            name=args.name,
+            korean_name=args.korean_name,
+            role=args.role,
+            responsibilities=tuple(args.responsibility),
+            bounded_actions=tuple(args.action),
+            reward_signals=tuple(args.reward_signal),
+        )
+        registry.upsert(profile, overwrite=args.overwrite)
+        save_agent_registry(registry, registry_path)
+    except AgentRegistryError as exc:
+        return {
+            "command": "register-agent",
+            "valid": False,
+            "registry": args.registry,
+            "agent": args.name,
+            "stderr": str(exc),
+        }
+    return {
+        "command": "register-agent",
+        "valid": True,
+        "registry": args.registry,
+        "agent": profile.to_dict(),
+        "stderr": "",
+    }
+
+
+def list_inference_workloads(args: argparse.Namespace) -> dict[str, Any]:
+    config = load_inference_optimization_config(args.config)
+    return {
+        "command": "list-inference-workloads",
+        "config": args.config,
+        "version": config.version,
+        "weights": asdict(config.weights),
+        "resources": [
+            config.resources[resource_id].to_dict()
+            for resource_id in sorted(config.resources)
+        ],
+        "workloads": [
+            config.workloads[workload_id].to_dict()
+            for workload_id in sorted(config.workloads)
+        ],
+    }
+
+
+def recommend_inference_placement_cli(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        config = load_inference_optimization_config(args.config)
+        decision = recommend_inference_placement(config, args.workload)
+    except InferenceOptimizationError as exc:
+        return {
+            "command": "recommend-inference-placement",
+            "valid": False,
+            "config": args.config,
+            "workload": args.workload,
+            "stderr": str(exc),
+        }
+    report = decision.to_dict()
+    report["command"] = "recommend-inference-placement"
+    report["config"] = args.config
+    return report
 
 
 def list_full_stack_experiments(args: argparse.Namespace) -> dict[str, Any]:

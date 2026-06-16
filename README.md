@@ -1,122 +1,169 @@
 # AIOps 4-Agent Kubernetes 자동화 연구
 
-Kubernetes 마이크로서비스 환경에서 실제 장애를 관측하고, 역할이 다른 4개 Agent가 복구 Action을 평가한 뒤 안전하게 실행하는 AIOps 연구 프로젝트입니다.
+이 프로젝트는 Kubernetes 기반 서비스 장애 상황에서 4개의 AI Agent가 서로 다른 운영 관점을 나누어 판단하고, 검증된 action만 안전하게 실행하는 AIOps 연구 프로토타입입니다.
 
-현재 프로젝트는 아이디어나 Mock 단계가 아닙니다. 연구실 서버의 개인용 kind 클러스터에서 AIOpsLab, Online Boutique, Chaos Mesh, full Prometheus를 연결하고 실제 Kubernetes 제어 실험까지 수행했습니다.
+현재 중심은 **AIOpsLab 자체 개발**이 아니라, AIOpsLab/Chaos Mesh/Prometheus/Kubernetes 환경 위에서 동작하는 **4-Agent 서비스 제어 및 관리 자동화 구조**입니다.
 
-## 한눈에 보는 현재 결과
+## 현재까지 완료된 핵심
 
-| 실험 | 실행 환경 | 결과 |
-| --- | --- | ---: |
-| Python 자동 테스트 | 로컬·서버 | `92 passed` |
-| AIOpsLab Hotel Reservation 탐지 | 서버 kind | Correct detection `12/12` |
-| 실제 장애별 Action 파일럿 | Chaos Mesh + Kubernetes real | 유효 측정·복구 `12/12` |
-| 실제 장애별 Action 본 실험 | 4장애 × 3Action × 3회 | 유효 측정·복구 `36/36` |
+| 구분 | 상태 |
+| --- | --- |
+| 4-Agent 역할, action, reward 정책 | 완료 |
+| AutoGen GroupChat 기반 Agent 대화 경로 | 완료 |
+| Prometheus metric 입력 | 완료 |
+| Chaos Mesh 장애 4종 실험 | 완료 |
+| AIOpsLab Hotel Reservation 탐지 benchmark | 완료 |
+| Kubernetes dry-run/real 실행 | 완료 |
+| Go 언어 기반 최종 action guard | 완료 |
+| 2종 코딩/LLM 관점 교차 검증 문서 | 완료 |
+| Agent 등록 관리 프로토타입 | 완료 |
+| CPU/GPU VM 기반 추론 배치 최적화 프로토타입 | 완료 |
+| Reward 정책 변화와 장애별 action ranking 실험 | 완료 |
 
-본 실험 결과는 다음 파일에 저장됐습니다.
+## 전체 구조
 
 ```text
-runs/recovery-action-pilot/20260615_123017/outcomes.jsonl
-runs/recovery-action-pilot/20260615_123017/analysis/reward_policy_comparison.md
+AIOpsLab / Chaos Mesh 장애
+-> Prometheus / Kubernetes 상태 관측
+-> AI-MCMP Coordinator
+-> 4-Agent 판단
+   - HA 지원 Agent
+   - 응용관리 Agent
+   - AI반도체 인프라 운용 Agent
+   - 비용 최적화 Agent
+-> Action / Reward 교차 검증
+-> Python Validator + Go Guard
+-> kubectl dry-run 또는 real 실행
+-> before / after 상태와 metric 저장
 ```
 
-`runs/`는 서버에서 생성되는 실험 결과 디렉터리이므로 Git 저장소에는 없을 수 있습니다.
+## 4-Agent 역할
 
-## 연구 시스템
+| Agent | 담당 내용 |
+| --- | --- |
+| `AIServiceHASupportAgent` | 서비스 장애 진단, 가용성 판단, 자율 복구 필요성 평가 |
+| `AIApplicationManagementAgent` | 응용 배포, 복구 action 선택, Kubernetes 제어 절차 관리 |
+| `AISemiconductorInfraOpsAgent` | CPU/GPU/NPU 자원 수용성, replica 증가, VM 배치 가능성 검증 |
+| `CostOptimizationAgent` | 자원 증가 비용, 과잉 action, 비용 우선 정책 검증 |
+
+Agent 정의 파일:
 
 ```text
-AIOpsLab / Chaos Mesh 실제 장애
--> Prometheus 및 Kubernetes 상태 관측
--> HA·응용관리·인프라·비용 Agent 평가
--> Reward 정책에 따른 후보 Action 순위 계산
--> Validator 안전 검증
--> kubectl real Action 실행
--> 복구 상태와 Metric 재측정
--> JSONL·CSV·Markdown 결과 저장
+config/agent_registry.json
 ```
 
-### 4개 Agent의 역할
+## 실행 환경 구분
 
-| Agent | 주요 판단 |
+| 환경 | 용도 |
 | --- | --- |
-| HA 지원 Agent | 장애 복구 성공과 서비스 가용성 |
-| 응용관리 Agent | 복구 속도와 애플리케이션 상태 개선 |
-| 인프라 운용 Agent | Replica·노드·가속기 자원 부담 |
-| 비용 최적화 Agent | 추가 자원과 불필요한 Action 비용 |
+| `base` | Anaconda 기본 환경 |
+| `aiops_research` | 우리 프로젝트 실행, pytest, 4-Agent CLI, Go guard |
+| `aiopslab` | 외부 AIOpsLab 공식 코드 실행 |
 
-Agent 판단을 모으는 AI-MCMP Coordinator와, 허용된 Action만 실행하는 Validator가 함께 동작합니다.
+보통 우리 프로젝트 작업은 다음 환경에서 한다.
 
-## 실제 장애 및 Action
+```bash
+conda activate aiops_research
+cd ~/geonhae/aiops_research
+```
 
-### 장애 4종
+## 설치 및 테스트
 
-| 장애 | 대상 | 관측값 |
-| --- | --- | --- |
-| `pod-kill` | `paymentservice` | Pod UID 교체 및 가용 Replica |
-| `cpu-stress` | `paymentservice` | Container CPU 사용량 |
-| `memory-stress` | `checkoutservice` | Memory working set |
-| `network-delay` | `paymentservice` | Blackbox TCP probe 지연시간 |
-
-### 후보 Action 3종
-
-| Action | 실행 내용 |
-| --- | --- |
-| `observe_only` | Kubernetes 자체 복구를 관찰하고 변경하지 않음 |
-| `rollout_restart` | 대상 Deployment를 안전하게 재시작 |
-| `scale_out` | Replica를 1개에서 3개로 확장 |
-
-## 36회 본 실험 결과
-
-다음 표는 동일한 실제 측정 결과에 Reward 가중치를 다르게 적용했을 때 선택된 Action입니다.
-
-| Reward 정책 | CPU stress | Memory stress | Network delay | Pod kill |
-| --- | --- | --- | --- | --- |
-| Balanced | 관찰 | 재시작 | 재시작 | 관찰 |
-| HA 우선 | 관찰 | 재시작 | 재시작 | 관찰 |
-| 비용 우선 | 관찰 | 관찰 | 관찰 | 관찰 |
-| 인프라 우선 | 관찰 | 재시작 | 재시작 | 관찰 |
-
-이 결과로 확인한 내용은 다음과 같습니다.
-
-1. 장애 유형에 따라 높은 Reward를 받는 Action이 달라집니다.
-2. 동일한 장애라도 Reward 정책에 따라 선택 Action이 달라질 수 있습니다.
-3. 짧은 CPU stress와 Pod kill에서는 Kubernetes 자체 복구를 기다리는 것이 과잉 제어보다 유리했습니다.
-4. Memory stress와 Network delay에서는 Balanced·HA·Infra 정책이 `rollout_restart`를 선택했습니다.
-
-Reward는 강화학습의 학습 보상이 아닙니다. 실제 복구 결과를 HA, 응용관리, 인프라, 비용 관점에서 재평가하는 정책 점수입니다.
-
-## 중요한 실험 구분
-
-| 경로 | 상태 | 의미 |
-| --- | --- | --- |
-| Deterministic 4-Agent | 구현·real 실험 완료 | 구조화된 정책으로 실제 장애와 Action을 비교 |
-| AutoGen GroupChat | 구현·Mock/Dry-run 검증 완료 | OpenAI LLM 기반 4-Agent 대화 및 구조화 응답 |
-| AutoGen GroupChat real Action 선택 | 미완료 | 실제 Chaos Mesh 장애를 보고 LLM 대화가 Action을 직접 선택하는 비교 실험 |
-
-따라서 `36/36` 결과는 실제 Chaos Mesh·Prometheus·Kubernetes 실험이지만, AutoGen 자유 대화가 Action을 직접 선택한 결과는 아닙니다.
-
-CPU 95% 입력 시나리오는 명령 생성과 Validator를 빠르게 확인하는 선택적 Smoke Test이며, 현재 연구의 실제 장애 결과에는 포함하지 않습니다.
-
-## 서버에서 가장 많이 사용하는 명령
-
-### 1. 환경 준비와 코드 검증
+### 서버
 
 ```bash
 cd ~/geonhae/aiops_research
 conda activate aiops_research
 git pull origin master
 python -m pip install -e ".[dev,autogen]"
+python -m pytest
+```
 
+Go guard 테스트:
+
+```bash
+cd ~/geonhae/aiops_research/go/aiops-guard
+go test ./...
+go run ./cmd/aiops-guard --input ../../examples/go_guard_scale_action.json
+```
+
+### Windows 로컬
+
+```powershell
+cd C:\Users\geonhae\Documents\aiops_research
+.\.venv\Scripts\python.exe -m pytest
+```
+
+## 기본 명령
+
+### 1. Agent 등록 관리
+
+```bash
+aiops-k8s-agents list-agents \
+  --registry config/agent_registry.json
+```
+
+```bash
+aiops-k8s-agents validate-agent-action \
+  --registry config/agent_registry.json \
+  --agent AIApplicationManagementAgent \
+  --action app_scale_deployment
+```
+
+### 2. CPU/GPU VM 추론 배치 추천
+
+```bash
+aiops-k8s-agents recommend-inference-placement \
+  --config config/inference_optimization.json \
+  --workload llm-chat-inference
+```
+
+기대 결과:
+
+```text
+selected_resource = gpu-vm-l4
+action = deploy_on_gpu_vm
+```
+
+가벼운 텍스트 모델:
+
+```bash
+aiops-k8s-agents recommend-inference-placement \
+  --config config/inference_optimization.json \
+  --workload text-classifier
+```
+
+기대 결과:
+
+```text
+selected_resource = cpu-vm-standard
+action = deploy_on_cpu_vm
+```
+
+### 3. Kubernetes recovery action 실행
+
+```bash
+aiops-k8s-agents execute-recovery-action \
+  --mode real \
+  --guard-backend go \
+  --action rollout_restart \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --allowed-namespace online-boutique \
+  --allowed-deployment paymentservice
+```
+
+## 서버 real 실험
+
+전제:
+
+```bash
 export PATH="$HOME/bin:$PATH"
 export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
-
-python -m pytest
 kubectl get nodes
 ```
 
-### 2. Prometheus 연결 확인
-
-별도 터미널에서 다음 명령을 계속 실행합니다.
+Prometheus port-forward는 별도 터미널에서 계속 켜둔다.
 
 ```bash
 kubectl port-forward \
@@ -125,7 +172,7 @@ kubectl port-forward \
   9091:9090
 ```
 
-실험 터미널에서는 다음을 설정합니다.
+실험 터미널:
 
 ```bash
 export PROM=http://127.0.0.1:9091
@@ -133,44 +180,73 @@ export NETWORK_LATENCY_QUERY='max(probe_duration_seconds{target="paymentservice"
 curl -sS "$PROM/-/ready"
 ```
 
-### 3. 12회 파일럿 또는 36회 본 실험
+36회 recovery action 실험:
 
 ```bash
+GUARD_BACKEND=go \
 MODE=real \
-REPETITIONS=1 \
+REPETITIONS=3 \
 PROMETHEUS_URL="$PROM" \
 NETWORK_LATENCY_QUERY="$NETWORK_LATENCY_QUERY" \
 bash scripts/server_recovery_action_pilot.sh
 ```
 
-`REPETITIONS=3`으로 바꾸면 36회 본 실험을 수행합니다.
+결과 확인:
 
-## 현재 연구 단계
+```bash
+LATEST=$(ls -dt runs/recovery-action-pilot/*/ | head -1)
+wc -l "$LATEST/outcomes.jsonl"
+cat "$LATEST/analysis/reward_policy_comparison.md"
+```
 
-| 구분 | 상태 |
-| --- | --- |
-| 4-Agent 시스템 설계와 통합 가능성 검증 | 완료 |
-| AIOpsLab 자동 탐지 반복 실험 | 완료 |
-| 실제 장애별 Action 비교 | 완료 |
-| Reward 정책 변화 비교 | 완료 |
-| 36회 반복 real 실험 | 완료 |
-| 평균·표준편차·그래프와 통계 검정 | 다음 작업 |
-| Single-Agent baseline 비교 | 미완료 |
-| Agent 제거 Ablation | 미완료 |
-| AutoGen multi-round real 제어 | 미완료 |
-| GPU/NPU 실제 스케줄링 최적화 | 향후 확장 |
+성공 기준:
 
-현재 상태는 **1차 시스템 연구 완료 + 2차 정량 비교 실험의 핵심 항목 완료**로 정리할 수 있습니다.
+```text
+36 outcomes.jsonl
+```
 
-## 문서 안내
+## 실제 장애 시나리오
+
+| 장애 | 도구 | 대상 |
+| --- | --- | --- |
+| `pod-kill` | Chaos Mesh | `paymentservice` |
+| `cpu-stress` | Chaos Mesh | `paymentservice` |
+| `memory-stress` | Chaos Mesh | `checkoutservice` |
+| `network-delay` | Chaos Mesh + blackbox exporter | `paymentservice` |
+
+CPU 95% 입력은 초기 smoke test용 mock 시나리오다. 현재 연구 결과의 중심은 위의 실제 Chaos Mesh/AIOpsLab 기반 실험이다.
+
+## 주요 문서
 
 | 문서 | 내용 |
 | --- | --- |
-| [설치 및 실행 가이드](docs/install_and_run_guide.md) | `base`, `aiops_research`, `aiopslab` 환경과 설치 방법 |
-| [현재 연구 완료 범위](docs/first_stage_research_completion.md) | 완료·미완료 항목과 실험 근거 |
-| [실제 장애별 Action 실험](docs/recovery_action_experiment_guide.md) | 실험 설계, 실행 방법, 36회 결과 해석 |
-| [전체 실험 명령어](docs/experiment_commands.md) | 서버·로컬 명령어 모음 |
-| [AutoGen GroupChat](docs/autogen_groupchat.md) | LLM 기반 Agent 대화 구조 |
-| [Agent Action/Reward 정책](docs/agent_action_reward_policy.md) | Agent별 Action과 Reward 정의 |
-| [Full-stack 실험 가이드](docs/full_stack_experiment_guide.md) | Online Boutique·Prometheus·Chaos Mesh 환경 |
-| [서버 이관 Runbook](docs/server_migration_runbook.md) | 서버 환경 구성과 이관 절차 |
+| `docs/requirements_definition.md` | 요구사항 정의서 |
+| `docs/agent_registry_guide.md` | AI Agent 등록 관리 가이드 |
+| `docs/inference_optimization_guide.md` | CPU/GPU VM 추론 최적화 가이드 |
+| `docs/functional_api_guide.md` | 기능/API 사용 가이드 |
+| `docs/test_guide.md` | 시험 검증 가이드 |
+| `docs/go_and_llm_cross_validation.md` | Go 언어 및 LLM 교차 검증 정리 |
+| `docs/recovery_action_experiment_guide.md` | 장애별 action/reward 실험 가이드 |
+| `docs/first_stage_research_completion.md` | 1차 연구 완료 범위 정리 |
+
+## 현재 연구 단계
+
+현재 단계는 **1차 통합 프로토타입 구현 및 실험 검증 완료**로 볼 수 있다.
+
+완료된 내용:
+
+- 4-Agent 구조 구현
+- 실제 장애 주입과 metric 관측
+- Kubernetes real action 실행
+- Go guard 기반 최종 action 검증
+- Agent 등록 관리
+- CPU/GPU VM 기반 추론 최적화 정책
+- Reward 정책 변화에 따른 장애별 action ranking 비교
+
+다음 연구 확장:
+
+- single-agent baseline 비교
+- Agent 제거 ablation 실험
+- AutoGen multi-round real action 선택
+- 실제 GPU/NPU 스케줄링과 모델 추론 서비스 연동
+- 통계 검정과 그래프 기반 정량 평가

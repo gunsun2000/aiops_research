@@ -1,0 +1,100 @@
+{
+  "version": "1",
+  "agents": [
+    {
+      "name": "AIServiceHASupportAgent",
+      "korean_name": "AI서비스 HA 지원 에이전트",
+      "role": "서비스 장애 진단, 가용성 판단, 자율 복구 필요성 평가",
+      "responsibilities": [
+        "Prometheus, Kubernetes 상태, AIOpsLab 관측 결과를 기반으로 서비스 가용성 위험을 판단한다.",
+        "장애 영향도가 높으면 복구 action 필요성을 승인한다.",
+        "Kubernetes가 이미 자동 복구한 경우 과잉 조치를 억제한다."
+      ],
+      "bounded_actions": [
+        "ha_collect_logs",
+        "ha_anomaly_detected",
+        "ha_no_log_anomaly",
+        "ha_submit_anomaly_yes",
+        "ha_submit_anomaly_no",
+        "ha_scale_out_required",
+        "ha_no_action"
+      ],
+      "reward_signals": [
+        "복구 필요 판단이 실제 장애 상태와 일치하면 양의 reward",
+        "불필요한 복구를 요구하면 패널티",
+        "장애를 놓치면 큰 패널티"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "AIApplicationManagementAgent",
+      "korean_name": "AI응용관리 자동화 에이전트",
+      "role": "응용 배포, Kubernetes 제어 action 선택, 복구 절차 관리",
+      "responsibilities": [
+        "장애 유형에 따라 observe_only, rollout_restart, scale_out 등 후보 action을 선택한다.",
+        "배포 대상 namespace, deployment, replicas를 구조화 action으로 만든다.",
+        "CPU/GPU VM 기반 AI 응용 배포와 제어 흐름을 관리한다."
+      ],
+      "bounded_actions": [
+        "app_observe_service_logs",
+        "app_collect_metrics",
+        "app_submit_detection_result",
+        "app_scale_deployment",
+        "app_rollout_restart",
+        "app_observe_only",
+        "app_select_inference_vm"
+      ],
+      "reward_signals": [
+        "장애별 적절한 action 선택 시 양의 reward",
+        "복구 시간을 줄이면 추가 reward",
+        "불필요한 재시작 또는 scale-out은 비용 패널티"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "AISemiconductorInfraOpsAgent",
+      "korean_name": "AI반도체 인프라 운용 자동화 에이전트",
+      "role": "CPU/GPU/NPU 자원 수용성 판단, 인프라 제약 검증",
+      "responsibilities": [
+        "replica 증가, rollout restart, 추론 VM 선택이 현재 인프라 용량 안에서 가능한지 검토한다.",
+        "GPU/NPU 가속기 필요 여부와 VM 후보의 지연시간, 처리량, 메모리 조건을 검증한다.",
+        "자원 부족 또는 정책 위반 action을 거부한다."
+      ],
+      "bounded_actions": [
+        "infra_capacity_approved",
+        "infra_capacity_rejected",
+        "infra_observe_only",
+        "infra_select_cpu_gpu_vm",
+        "scale_deployment"
+      ],
+      "reward_signals": [
+        "용량 제약을 정확히 반영하면 양의 reward",
+        "불가능한 자원 배치를 승인하면 패널티",
+        "가속기 요구 워크로드를 적절한 VM에 배치하면 추가 reward"
+      ],
+      "enabled": true
+    },
+    {
+      "name": "CostOptimizationAgent",
+      "korean_name": "비용 최적화 지원 에이전트",
+      "role": "자원 사용량, replica 증가, VM 비용 정책 검증",
+      "responsibilities": [
+        "scale-out, rollout restart, CPU/GPU VM 배치가 비용 정책을 만족하는지 검토한다.",
+        "장애 복구와 비용 절감 사이의 균형을 평가한다.",
+        "비용 우선 정책에서는 과잉 조치를 억제한다."
+      ],
+      "bounded_actions": [
+        "cost_budget_approved",
+        "cost_budget_rejected",
+        "cost_observation_only",
+        "scale_deployment"
+      ],
+      "reward_signals": [
+        "복구 성공을 유지하면서 비용을 줄이면 양의 reward",
+        "불필요한 replica 증가 또는 고비용 GPU 사용은 패널티",
+        "비용 절감을 이유로 실제 장애 대응을 막으면 패널티"
+      ],
+      "enabled": true
+    }
+  ]
+}

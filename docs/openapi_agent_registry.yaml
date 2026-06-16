@@ -1,0 +1,111 @@
+openapi: 3.0.3
+info:
+  title: AIOps 4-Agent Registry API Draft
+  version: "0.1.0"
+  description: >
+    Future HTTP API draft for managing AIOps service-control agents.
+    The current prototype exposes the same behavior through CLI commands.
+paths:
+  /agents:
+    get:
+      summary: List registered agents
+      responses:
+        "200":
+          description: Registered agent list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  command:
+                    type: string
+                    example: list-agents
+                  agents:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/AgentProfile"
+    post:
+      summary: Register or update an agent
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentProfile"
+      responses:
+        "200":
+          description: Agent registered
+  /agents/{agentName}:
+    get:
+      summary: Show one agent
+      parameters:
+        - name: agentName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Agent profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentProfile"
+  /agents/{agentName}/actions/{actionName}/validate:
+    get:
+      summary: Validate whether an action is allowed for an agent
+      parameters:
+        - name: agentName
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: actionName
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  valid:
+                    type: boolean
+components:
+  schemas:
+    AgentProfile:
+      type: object
+      required:
+        - name
+        - korean_name
+        - role
+        - responsibilities
+        - bounded_actions
+        - reward_signals
+      properties:
+        name:
+          type: string
+          example: AIApplicationManagementAgent
+        korean_name:
+          type: string
+          example: AI응용관리 자동화 에이전트
+        role:
+          type: string
+        responsibilities:
+          type: array
+          items:
+            type: string
+        bounded_actions:
+          type: array
+          items:
+            type: string
+        reward_signals:
+          type: array
+          items:
+            type: string
+        enabled:
+          type: boolean
