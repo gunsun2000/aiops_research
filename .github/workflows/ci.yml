@@ -18,6 +18,11 @@ jobs:
         with:
           python-version: "3.13"
 
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
       - name: Install package
         run: |
           python -m pip install --upgrade pip
@@ -25,6 +30,11 @@ jobs:
 
       - name: Run unit tests
         run: python -m pytest
+
+      - name: Run Go guard tests
+        run: |
+          cd go/aiops-guard
+          go test ./...
 
       - name: Check CLI entrypoint
         run: aiops-k8s-agents run --help
