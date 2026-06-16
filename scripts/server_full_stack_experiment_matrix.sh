@@ -10,6 +10,7 @@ SCENARIOS="${SCENARIOS:-pod-kill cpu-stress memory-stress network-delay}"
 ITERATIONS="${ITERATIONS:-3}"
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-10}"
 MODE="${MODE:-dry-run}"
+GUARD_BACKEND="${GUARD_BACKEND:-go}"
 BASE_RUN_DIR="${BASE_RUN_DIR:-runs/full-stack-matrix}"
 ALLOW_SCENARIO_FAILURES="${ALLOW_SCENARIO_FAILURES:-0}"
 RESET_BETWEEN_SCENARIOS="${RESET_BETWEEN_SCENARIOS:-1}"
@@ -45,6 +46,7 @@ for scenario in $SCENARIOS; do
       ITERATIONS="$ITERATIONS" \
       INTERVAL_SECONDS="$INTERVAL_SECONDS" \
       MODE="$MODE" \
+      GUARD_BACKEND="$GUARD_BACKEND" \
       RUN_DIR="${BASE_RUN_DIR}/${scenario}" \
       bash scripts/server_full_stack_feedback_loop.sh; then
       echo "Scenario ${scenario} failed during feedback loop." >&2

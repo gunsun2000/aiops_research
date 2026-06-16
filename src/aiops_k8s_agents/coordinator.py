@@ -5,7 +5,11 @@ from dataclasses import dataclass, replace
 from aiops_k8s_agents.agent_decision import AgentDecision
 from aiops_k8s_agents.application_agent import AIApplicationManagementAgent
 from aiops_k8s_agents.cost_agent import CostOptimizationAgent
-from aiops_k8s_agents.executor import ExecutionMode, KubernetesExecutor
+from aiops_k8s_agents.executor import (
+    ExecutionBackend,
+    ExecutionMode,
+    KubernetesExecutor,
+)
 from aiops_k8s_agents.executor_agent import ExecutorAgent
 from aiops_k8s_agents.ha_agent import AIServiceHASupportAgent
 from aiops_k8s_agents.infra_agent import AISemiconductorInfraOpsAgent
@@ -19,6 +23,7 @@ class AIMCMPCoordinator:
 
     validator: CommandValidator
     mode: ExecutionMode = ExecutionMode.MOCK
+    backend: ExecutionBackend = ExecutionBackend.PYTHON
     ha_agent: AIServiceHASupportAgent = AIServiceHASupportAgent()
     app_agent: AIApplicationManagementAgent = AIApplicationManagementAgent()
     infra_agent: AISemiconductorInfraOpsAgent = AISemiconductorInfraOpsAgent()
@@ -27,8 +32,14 @@ class AIMCMPCoordinator:
     def __post_init__(self) -> None:
         if isinstance(self.mode, str):
             self.mode = ExecutionMode(self.mode)
+        if isinstance(self.backend, str):
+            self.backend = ExecutionBackend(self.backend)
         self.executor_agent = ExecutorAgent(
-            KubernetesExecutor(validator=self.validator, mode=self.mode)
+            KubernetesExecutor(
+                validator=self.validator,
+                mode=self.mode,
+                backend=self.backend,
+            )
         )
 
     def run(self, alert: AlertEvent) -> CommandResult:

@@ -953,3 +953,43 @@ bash scripts/server_full_stack_experiment_matrix.sh
 ```
 
 자세한 설명은 `docs/full_stack_experiment_guide.md`를 보면 됩니다.
+
+## Go guard 통합 실행
+
+현재 프로젝트는 Python 4-Agent 판단과 Go 기반 최종 안전 검증기를 하나의 실행 경로로 연결합니다.
+서버 실험 스크립트는 기본적으로 `GUARD_BACKEND=go`를 사용하므로, 4-Agent가 만든 action은 Go `aiops-guard`를 한 번 더 통과한 뒤 `kubectl` 명령으로 실행됩니다.
+
+단일 recovery action 검증:
+
+```bash
+aiops-k8s-agents execute-recovery-action \
+  --mode dry-run \
+  --guard-backend go \
+  --action rollout_restart \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --allowed-namespace online-boutique \
+  --allowed-deployment paymentservice
+```
+
+실제 Chaos Mesh 반복 실험:
+
+```bash
+GUARD_BACKEND=go \
+MODE=real \
+REPETITIONS=3 \
+PROMETHEUS_URL=http://127.0.0.1:9091 \
+bash scripts/server_recovery_action_pilot.sh
+```
+
+full-stack feedback loop:
+
+```bash
+GUARD_BACKEND=go \
+MODE=dry-run \
+SCENARIO=cpu-stress \
+ITERATIONS=3 \
+bash scripts/server_full_stack_feedback_loop.sh
+```
+
+`GUARD_BACKEND=python`으로 바꾸면 기존 Python validator-only 경로로 되돌릴 수 있습니다.

@@ -10,6 +10,7 @@ PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
 ITERATIONS="${ITERATIONS:-3}"
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-10}"
 MODE="${MODE:-dry-run}"
+GUARD_BACKEND="${GUARD_BACKEND:-go}"
 RUN_DIR="${RUN_DIR:-runs}"
 
 mkdir -p "$RUN_DIR"
@@ -35,6 +36,7 @@ fi
 
 aiops-k8s-agents feedback-loop \
   --mode "$MODE" \
+  --guard-backend "$GUARD_BACKEND" \
   --prometheus-url "http://127.0.0.1:${PROMETHEUS_PORT}" \
   --query up \
   --metric cpu \

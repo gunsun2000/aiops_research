@@ -9,6 +9,7 @@ export PATH="$HOME/bin:$PATH"
 export KUBECONFIG="${KUBECONFIG:-$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml}"
 
 MODE="${MODE:-real}"
+GUARD_BACKEND="${GUARD_BACKEND:-go}"
 REPETITIONS="${REPETITIONS:-1}"
 PROMETHEUS_URL="${PROMETHEUS_URL:-http://127.0.0.1:9091}"
 RUN_ID="${RUN_ID:-$(date +%Y%m%d_%H%M%S)}"
@@ -26,6 +27,7 @@ mkdir -p "$RUN_DIR"
 
 echo "== Recovery action experiment =="
 echo "mode: ${MODE}"
+echo "guard_backend: ${GUARD_BACKEND}"
 echo "repetitions: ${REPETITIONS}"
 echo "matrix: 4 real faults x 3 bounded actions x ${REPETITIONS}"
 echo "output: ${OUTCOMES}"
@@ -34,6 +36,7 @@ set +e
 aiops-k8s-agents run-recovery-experiments \
   --config config/recovery_action_experiments.json \
   --mode "$MODE" \
+  --guard-backend "$GUARD_BACKEND" \
   --repetitions "$REPETITIONS" \
   --prometheus-url "$PROMETHEUS_URL" \
   --output "$OUTCOMES"

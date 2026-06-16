@@ -5,7 +5,11 @@ from dataclasses import dataclass, field, replace
 from typing import Any, Awaitable, Callable
 
 from aiops_k8s_agents.agent_decision import AgentDecision
-from aiops_k8s_agents.executor import ExecutionMode, KubernetesExecutor
+from aiops_k8s_agents.executor import (
+    ExecutionBackend,
+    ExecutionMode,
+    KubernetesExecutor,
+)
 from aiops_k8s_agents.models import AlertEvent, CommandResult, ScaleAction
 from aiops_k8s_agents.validator import CommandValidator
 
@@ -97,12 +101,15 @@ def build_autogen_task(alert: AlertEvent) -> str:
 class AutoGenGroupChatCoordinator:
     validator: CommandValidator
     mode: ExecutionMode = ExecutionMode.MOCK
+    backend: ExecutionBackend = ExecutionBackend.PYTHON
     decision_provider: DecisionProvider | None = None
     include_transcript: bool = False
 
     def __post_init__(self) -> None:
         if isinstance(self.mode, str):
             self.mode = ExecutionMode(self.mode)
+        if isinstance(self.backend, str):
+            self.backend = ExecutionBackend(self.backend)
 
     async def run(self, alert: AlertEvent) -> CommandResult:
         if self.decision_provider is None:
@@ -118,7 +125,11 @@ class AutoGenGroupChatCoordinator:
 
         app_decision = _find_decision(decisions, "AIApplicationManagementAgent")
         action = _scale_action_from_app_decision(alert, app_decision)
-        result = KubernetesExecutor(self.validator, self.mode).execute_scale(action)
+        result = KubernetesExecutor(
+            validator=self.validator,
+            mode=self.mode,
+            backend=self.backend,
+        ).execute_scale(action)
         return replace(result, metadata=self._metadata("approved", decisions))
 
     def _rejected_result(self, decisions: list[AgentDecision]) -> CommandResult:

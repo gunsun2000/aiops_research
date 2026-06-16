@@ -288,6 +288,53 @@ def test_cli_executes_structured_recovery_action_in_mock_mode(capsys):
     )
 
 
+def test_cli_passes_go_guard_backend_to_recovery_executor(monkeypatch, capsys):
+    captured = {}
+
+    class FakeExecutor:
+        def __init__(self, validator, mode, backend):
+            captured["mode"] = mode.value
+            captured["backend"] = backend.value
+
+        def execute_recovery(self, action):
+            return CommandResult(
+                command="kubectl rollout restart deployment paymentservice -n online-boutique --dry-run=server",
+                mode=captured["mode"],
+                valid=True,
+                stdout="deployment.apps/paymentservice restarted (server dry run)",
+                stderr="",
+                metadata={"guard_backend": captured["backend"]},
+            )
+
+    monkeypatch.setattr(cli, "KubernetesExecutor", FakeExecutor)
+
+    exit_code = main(
+        [
+            "execute-recovery-action",
+            "--mode",
+            "dry-run",
+            "--guard-backend",
+            "go",
+            "--action",
+            "rollout_restart",
+            "--namespace",
+            "online-boutique",
+            "--deployment",
+            "paymentservice",
+            "--allowed-namespace",
+            "online-boutique",
+            "--allowed-deployment",
+            "paymentservice",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["metadata"]["guard_backend"] == "go"
+    assert captured == {"mode": "dry-run", "backend": "go"}
+
+
 def test_cli_scores_recovery_outcomes_under_all_reward_policies(tmp_path, capsys):
     input_path = tmp_path / "outcomes.jsonl"
     records = [

@@ -2,7 +2,11 @@ from unittest.mock import Mock
 
 import pytest
 
-from aiops_k8s_agents.executor import ExecutionMode, KubernetesExecutor
+from aiops_k8s_agents.executor import (
+    ExecutionBackend,
+    ExecutionMode,
+    KubernetesExecutor,
+)
 from aiops_k8s_agents.models import RecoveryAction, RecoveryActionKind, ScaleAction
 from aiops_k8s_agents.validator import CommandValidationError, CommandValidator
 
@@ -136,3 +140,73 @@ def test_dry_run_restart_uses_server_validation_and_observe_is_read_only():
         "-o",
         "json",
     ]
+
+
+def test_go_guard_backend_sends_structured_request_and_returns_guard_result():
+    captured = {}
+
+    def guard_runner(argv, input_text, cwd):
+        captured["argv"] = argv
+        captured["input_text"] = input_text
+        captured["cwd"] = cwd
+        return (
+            0,
+            '{"command":"kubectl scale deployment paymentservice --replicas=3 -n online-boutique --dry-run=server","mode":"dry-run","valid":true,"stdout":"deployment.apps/paymentservice scaled (server dry run)","stderr":""}',
+            "",
+        )
+
+    executor = KubernetesExecutor(
+        validator=CommandValidator(
+            allowed_namespaces={"online-boutique"},
+            allowed_deployments={"paymentservice"},
+            min_replicas=1,
+            max_replicas=5,
+        ),
+        mode=ExecutionMode.DRY_RUN,
+        backend=ExecutionBackend.GO,
+        go_guard_runner=guard_runner,
+    )
+
+    result = executor.execute_scale(
+        ScaleAction("online-boutique", "paymentservice", 3, "CPU above threshold")
+    )
+
+    assert result.valid is True
+    assert result.command.endswith("--dry-run=server")
+    assert result.stdout == "deployment.apps/paymentservice scaled (server dry run)"
+    assert result.metadata["guard_backend"] == "go"
+    assert captured["argv"] == ["go", "run", "./cmd/aiops-guard", "--input", "-"]
+    assert '"action": "scale_out"' in captured["input_text"]
+    assert '"allowed_namespaces": [' in captured["input_text"]
+
+
+def test_go_guard_backend_rejects_guard_output_that_fails_python_cross_check():
+    def guard_runner(_argv, _input_text, _cwd):
+        return (
+            0,
+            '{"command":"kubectl get deployment paymentservice -n online-boutique","mode":"dry-run","valid":true,"stdout":"paymentservice 3/3","stderr":""}',
+            "",
+        )
+
+    executor = KubernetesExecutor(
+        validator=CommandValidator(
+            allowed_namespaces={"online-boutique"},
+            allowed_deployments={"paymentservice"},
+        ),
+        mode=ExecutionMode.DRY_RUN,
+        backend=ExecutionBackend.GO,
+        go_guard_runner=guard_runner,
+    )
+
+    result = executor.execute_recovery(
+        RecoveryAction(
+            "online-boutique",
+            "paymentservice",
+            RecoveryActionKind.OBSERVE_ONLY,
+            reason="pilot candidate",
+        )
+    )
+
+    assert result.valid is False
+    assert "approved recovery template" in result.stderr
+    assert result.metadata["guard_backend"] == "go"

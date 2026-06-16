@@ -18,7 +18,11 @@ from aiops_k8s_agents.autogen_groupchat import (
     AutoGenRoundRobinDecisionProvider,
     create_openai_model_client,
 )
-from aiops_k8s_agents.executor import ExecutionMode, KubernetesExecutor
+from aiops_k8s_agents.executor import (
+    ExecutionBackend,
+    ExecutionMode,
+    KubernetesExecutor,
+)
 from aiops_k8s_agents.full_stack_experiments import (
     load_full_stack_experiment_plan,
     plan_to_dict,
@@ -85,6 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Read one Prometheus query result and run it through the coordinator.",
     )
     prometheus_parser.add_argument("--mode", choices=[mode.value for mode in ExecutionMode], default="mock")
+    _add_guard_backend_argument(prometheus_parser)
     prometheus_parser.add_argument("--prometheus-url", default="")
     prometheus_parser.add_argument("--mock-response-file", default="")
     prometheus_parser.add_argument("--query", required=True)
@@ -167,6 +172,7 @@ def build_parser() -> argparse.ArgumentParser:
     recovery_action_parser.add_argument(
         "--mode", choices=[mode.value for mode in ExecutionMode], default="mock"
     )
+    _add_guard_backend_argument(recovery_action_parser)
     recovery_action_parser.add_argument(
         "--action",
         choices=[kind.value for kind in RecoveryActionKind],
@@ -206,6 +212,7 @@ def build_parser() -> argparse.ArgumentParser:
         choices=[mode.value for mode in ExecutionMode],
         default="real",
     )
+    _add_guard_backend_argument(recovery_matrix_parser)
     recovery_matrix_parser.add_argument("--repetitions", type=int, default=1)
     recovery_matrix_parser.add_argument(
         "--prometheus-url",
@@ -218,6 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _add_alert_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--mode", choices=[mode.value for mode in ExecutionMode], default="mock")
+    _add_guard_backend_argument(parser)
     parser.add_argument("--namespace", required=True)
     parser.add_argument("--service", required=True)
     parser.add_argument("--metric", required=True)
@@ -233,6 +241,7 @@ def _add_alert_arguments(parser: argparse.ArgumentParser) -> None:
 
 def _add_prometheus_arguments(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--mode", choices=[mode.value for mode in ExecutionMode], default="mock")
+    _add_guard_backend_argument(parser)
     parser.add_argument("--prometheus-url", default="")
     parser.add_argument("--mock-response-file", default="")
     parser.add_argument("--query", required=True)
@@ -252,6 +261,22 @@ def _add_result_logging_argument(parser: argparse.ArgumentParser) -> None:
         "--save-result-dir",
         default="",
         help="Optional directory where the final CommandResult JSON is saved.",
+    )
+
+
+def _add_guard_backend_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--guard-backend",
+        choices=[backend.value for backend in ExecutionBackend],
+        default=os.environ.get(
+            "AIOPS_GUARD_BACKEND",
+            ExecutionBackend.PYTHON.value,
+        ),
+        help=(
+            "Final Kubernetes action guard backend. Use python for the original "
+            "in-process validator, or go to route final execution through "
+            "go/aiops-guard."
+        ),
     )
 
 
@@ -405,6 +430,7 @@ def execute_recovery_action(args: argparse.Namespace) -> CommandResult:
         return KubernetesExecutor(
             validator=validator,
             mode=ExecutionMode(args.mode),
+            backend=ExecutionBackend(args.guard_backend),
         ).execute_recovery(action)
     except (CommandValidationError, ValueError) as exc:
         return _error_result(
@@ -427,6 +453,7 @@ def run_recovery_experiment_matrix(args: argparse.Namespace) -> dict[str, Any]:
         config=config,
         repetitions=args.repetitions,
         mode=args.mode,
+        guard_backend=args.guard_backend,
         prometheus_url=args.prometheus_url,
         output_path=args.output,
     )
@@ -495,6 +522,7 @@ def _run_alert_with_validator(
     coordinator = AIMCMPCoordinator(
         validator=validator,
         mode=ExecutionMode(args.mode),
+        backend=ExecutionBackend(args.guard_backend),
     )
     try:
         return coordinator.run(alert)
@@ -520,6 +548,7 @@ async def run_autogen_groupchat(args: argparse.Namespace) -> CommandResult:
         coordinator = AutoGenGroupChatCoordinator(
             validator=validator,
             mode=ExecutionMode(args.mode),
+            backend=ExecutionBackend(args.guard_backend),
             decision_provider=provider,
             include_transcript=args.show_transcript,
         )
@@ -572,6 +601,7 @@ async def run_autogen_prometheus_alert(args: argparse.Namespace) -> CommandResul
         coordinator = AutoGenGroupChatCoordinator(
             validator=validator,
             mode=ExecutionMode(args.mode),
+            backend=ExecutionBackend(args.guard_backend),
             decision_provider=provider,
             include_transcript=args.show_transcript,
         )

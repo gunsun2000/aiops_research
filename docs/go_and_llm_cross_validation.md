@@ -6,6 +6,35 @@
 - 최소 2종 이상 LLM 또는 코딩 에이전트 활용 필수
 - 생성된 Kubernetes 제어 action에 대한 교차 검증 필수
 
+## 0. 현재 통합 상태
+
+이제 Go 모듈은 별도 데모가 아니라 Python 기반 AIOps 4-Agent 실행 경로의 최종 안전 검증기로 연결되어 있습니다.
+
+```text
+Prometheus / AIOpsLab / Chaos Mesh
+-> Python 4-Agent 판단
+-> 구조화된 RecoveryAction / ScaleAction
+-> Python validator 1차 검증
+-> Go aiops-guard 2차 검증 및 kubectl 렌더링
+-> mock / dry-run / real 실행
+-> Kubernetes 상태 및 실험 결과 저장
+```
+
+실행 시 `--guard-backend go`를 주면 Python runner가 내부에서 `go/aiops-guard`를 호출합니다.
+
+```bash
+aiops-k8s-agents execute-recovery-action \
+  --mode dry-run \
+  --guard-backend go \
+  --action rollout_restart \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --allowed-namespace online-boutique \
+  --allowed-deployment paymentservice
+```
+
+서버 반복 실험 스크립트는 기본값을 `GUARD_BACKEND=go`로 사용합니다.
+
 ## 1. 왜 Go 계층을 추가했는가
 
 기존 구조에서는 Python 기반 4-Agent가 장애 상태를 보고 action을 판단하고, Python validator가 `kubectl` 명령을 검증했습니다.

@@ -14,6 +14,7 @@ SCENARIO="${SCENARIO:-cpu-stress}"
 ITERATIONS="${ITERATIONS:-3}"
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-10}"
 MODE="${MODE:-dry-run}"
+GUARD_BACKEND="${GUARD_BACKEND:-go}"
 RUN_DIR="${RUN_DIR:-runs/full-stack}"
 
 set_default() {
@@ -124,11 +125,13 @@ echo "== Full-stack feedback loop =="
 echo "scenario=${SCENARIO}"
 echo "metric=${METRIC}"
 echo "service=${SERVICE}"
+echo "guard_backend=${GUARD_BACKEND}"
 echo "query=${QUERY}"
 echo "threshold=${THRESHOLD}"
 
 aiops-k8s-agents feedback-loop \
   --mode "$MODE" \
+  --guard-backend "$GUARD_BACKEND" \
   --prometheus-url "http://127.0.0.1:${PROMETHEUS_PORT}" \
   --query "$QUERY" \
   --metric "$METRIC" \

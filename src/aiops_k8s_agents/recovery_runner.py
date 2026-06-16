@@ -9,7 +9,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
-from aiops_k8s_agents.executor import ExecutionMode, KubernetesExecutor, subprocess_runner
+from aiops_k8s_agents.executor import (
+    ExecutionBackend,
+    ExecutionMode,
+    KubernetesExecutor,
+    subprocess_runner,
+)
 from aiops_k8s_agents.kubernetes_status import collect_kubernetes_snapshot
 from aiops_k8s_agents.models import RecoveryActionKind
 from aiops_k8s_agents.models import RecoveryAction
@@ -200,6 +205,7 @@ def run_recovery_treatment(
     config: RecoveryExperimentConfig,
     mode: str,
     prometheus_url: str,
+    guard_backend: str = ExecutionBackend.PYTHON.value,
     runtime: RecoveryExperimentRuntime | None = None,
     environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
@@ -277,6 +283,7 @@ def run_recovery_treatment(
         executor = KubernetesExecutor(
             validator=validator,
             mode=ExecutionMode(mode),
+            backend=ExecutionBackend(guard_backend),
             runner=runtime.kubectl,
         )
         result = executor.execute_recovery(action)
@@ -339,6 +346,7 @@ def run_recovery_matrix(
     mode: str,
     prometheus_url: str,
     output_path: str | Path,
+    guard_backend: str = ExecutionBackend.PYTHON.value,
     treatment_runner: TreatmentRunner = run_recovery_treatment,
     runtime: RecoveryExperimentRuntime | None = None,
     environ: Mapping[str, str] | None = None,
@@ -357,6 +365,7 @@ def run_recovery_matrix(
                 treatment=treatment,
                 config=config,
                 mode=mode,
+                guard_backend=guard_backend,
                 prometheus_url=prometheus_url,
                 runtime=runtime,
                 environ=environ,
@@ -368,6 +377,7 @@ def run_recovery_matrix(
     return {
         "command": "recovery-action-experiment",
         "mode": mode,
+        "guard_backend": guard_backend,
         "repetitions": repetitions,
         "total_treatments": len(records),
         "valid_measurements": sum(
