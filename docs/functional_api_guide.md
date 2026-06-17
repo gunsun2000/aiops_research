@@ -118,8 +118,11 @@ quantitative_summary.md
 scenario_action_statistics.csv
 policy_reward_statistics.csv
 mean_recovery_seconds_by_action.svg
+mean_recovery_seconds_by_action.png
 success_rate_by_action.svg
+success_rate_by_action.png
 reward_by_policy.svg
+reward_by_policy.png
 ```
 
 ## 6. OpenAPI 문서

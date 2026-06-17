@@ -110,7 +110,7 @@ def test_summarize_recovery_statistics_computes_mean_and_success_rate(tmp_path):
     assert report["overall"]["success_rate"] == 0.75
 
 
-def test_write_recovery_statistics_outputs_tables_and_svg_graphs(tmp_path):
+def test_write_recovery_statistics_outputs_tables_and_graphs(tmp_path):
     input_path = tmp_path / "outcomes.jsonl"
     output_dir = tmp_path / "statistics"
     _write_outcomes(input_path)
@@ -124,8 +124,11 @@ def test_write_recovery_statistics_outputs_tables_and_svg_graphs(tmp_path):
         "policy_reward_statistics.csv",
         "quantitative_summary.md",
         "mean_recovery_seconds_by_action.svg",
+        "mean_recovery_seconds_by_action.png",
         "success_rate_by_action.svg",
+        "success_rate_by_action.png",
         "reward_by_policy.svg",
+        "reward_by_policy.png",
     }
     assert expected_files.issubset({path.name for path in output_dir.iterdir()})
 
@@ -148,3 +151,6 @@ def test_write_recovery_statistics_outputs_tables_and_svg_graphs(tmp_path):
     svg = (output_dir / "reward_by_policy.svg").read_text(encoding="utf-8")
     assert "<svg" in svg
     assert "balanced" in svg
+
+    png = output_dir / "reward_by_policy.png"
+    assert png.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")

@@ -49,8 +49,11 @@ statistics/
   policy_reward_statistics.csv
   quantitative_summary.md
   mean_recovery_seconds_by_action.svg
+  mean_recovery_seconds_by_action.png
   success_rate_by_action.svg
+  success_rate_by_action.png
   reward_by_policy.svg
+  reward_by_policy.png
 ```
 
 | 파일 | 내용 |
@@ -60,26 +63,29 @@ statistics/
 | `policy_reward_statistics.csv` | reward 정책별 action ranking |
 | `quantitative_summary.md` | 발표/보고서용 요약 |
 | `mean_recovery_seconds_by_action.svg` | 평균 복구 시간 그래프 |
+| `mean_recovery_seconds_by_action.png` | 평균 복구 시간 발표 삽입용 PNG |
 | `success_rate_by_action.svg` | 복구 성공률 그래프 |
+| `success_rate_by_action.png` | 복구 성공률 발표 삽입용 PNG |
 | `reward_by_policy.svg` | reward 정책별 선택 점수 그래프 |
+| `reward_by_policy.png` | reward 정책별 선택 점수 발표 삽입용 PNG |
 
 ## 해석 방법
 
 ### 평균 복구 시간
 
-`mean_recovery_seconds_by_action.svg`는 각 장애와 action 조합별 평균 복구 시간을 보여준다.
+`mean_recovery_seconds_by_action.svg`와 `.png`는 각 장애와 action 조합별 평균 복구 시간을 보여준다.
 
 복구 시간이 짧을수록 빠른 대응이다. 다만 복구 시간이 짧다고 항상 좋은 action은 아니다. 예를 들어 `observe_only`가 빠르게 성공하는 경우는 Kubernetes가 자체 복구한 상황일 수 있다.
 
 ### 성공률
 
-`success_rate_by_action.svg`는 각 장애와 action 조합별 복구 성공률을 보여준다.
+`success_rate_by_action.svg`와 `.png`는 각 장애와 action 조합별 복구 성공률을 보여준다.
 
 성공률이 높고 복구 시간이 낮은 action은 강한 후보가 된다. 반대로 성공률이 높더라도 replica 증가량이나 command 수가 크면 비용/인프라 관점에서 불리할 수 있다.
 
 ### Reward 정책 차이
 
-`reward_by_policy.svg`와 `policy_reward_statistics.csv`는 reward 정책을 바꿨을 때 action 선택이 어떻게 달라지는지 보여준다.
+`reward_by_policy.svg`, `.png`, `policy_reward_statistics.csv`는 reward 정책을 바꿨을 때 action 선택이 어떻게 달라지는지 보여준다.
 
 | 정책 | 해석 |
 | --- | --- |
@@ -98,9 +104,8 @@ statistics/
 
 발표자료에는 다음 3개를 추천한다.
 
-1. `mean_recovery_seconds_by_action.svg`
-2. `success_rate_by_action.svg`
-3. `reward_by_policy.svg`
+1. `mean_recovery_seconds_by_action.png`
+2. `success_rate_by_action.png`
+3. `reward_by_policy.png`
 
 이 3개만 넣어도 “빠른가”, “성공했는가”, “reward 정책에 따라 판단이 달라지는가”를 설명할 수 있다.
-

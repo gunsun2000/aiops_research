@@ -19,5 +19,8 @@ aiops-k8s-agents summarize-recovery-statistics \
 echo "Markdown: ${OUTPUT_DIR}/quantitative_summary.md"
 echo "CSV: ${OUTPUT_DIR}/scenario_action_statistics.csv"
 echo "SVG: ${OUTPUT_DIR}/mean_recovery_seconds_by_action.svg"
+echo "PNG: ${OUTPUT_DIR}/mean_recovery_seconds_by_action.png"
 echo "SVG: ${OUTPUT_DIR}/success_rate_by_action.svg"
+echo "PNG: ${OUTPUT_DIR}/success_rate_by_action.png"
 echo "SVG: ${OUTPUT_DIR}/reward_by_policy.svg"
+echo "PNG: ${OUTPUT_DIR}/reward_by_policy.png"

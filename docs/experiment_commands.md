@@ -126,8 +126,11 @@ ${LATEST}statistics/quantitative_summary.md
 ${LATEST}statistics/scenario_action_statistics.csv
 ${LATEST}statistics/policy_reward_statistics.csv
 ${LATEST}statistics/mean_recovery_seconds_by_action.svg
+${LATEST}statistics/mean_recovery_seconds_by_action.png
 ${LATEST}statistics/success_rate_by_action.svg
+${LATEST}statistics/success_rate_by_action.png
 ${LATEST}statistics/reward_by_policy.svg
+${LATEST}statistics/reward_by_policy.png
 ```
 
 자세한 해석은 `docs/recovery_quantitative_analysis_guide.md`를 참고합니다.

@@ -123,8 +123,11 @@ aiops-k8s-agents summarize-recovery-statistics \
 - `statistics/scenario_action_statistics.csv`가 생성되어야 한다.
 - `statistics/policy_reward_statistics.csv`가 생성되어야 한다.
 - `statistics/mean_recovery_seconds_by_action.svg`가 생성되어야 한다.
+- `statistics/mean_recovery_seconds_by_action.png`가 생성되어야 한다.
 - `statistics/success_rate_by_action.svg`가 생성되어야 한다.
+- `statistics/success_rate_by_action.png`가 생성되어야 한다.
 - `statistics/reward_by_policy.svg`가 생성되어야 한다.
+- `statistics/reward_by_policy.png`가 생성되어야 한다.
 
 ## 7. CI/CD
 

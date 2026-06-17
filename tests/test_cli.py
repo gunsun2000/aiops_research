@@ -577,6 +577,7 @@ def test_cli_summarizes_recovery_statistics(tmp_path, capsys):
     assert output["overall"]["success_rate"] == 1.0
     assert (output_dir / "quantitative_summary.md").exists()
     assert (output_dir / "mean_recovery_seconds_by_action.svg").exists()
+    assert (output_dir / "mean_recovery_seconds_by_action.png").exists()
 
 
 def test_cli_runs_real_recovery_experiment_matrix(monkeypatch, tmp_path, capsys):

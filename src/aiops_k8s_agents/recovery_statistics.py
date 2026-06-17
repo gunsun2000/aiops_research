@@ -73,29 +73,32 @@ def write_recovery_statistics(report: dict[str, Any], output_dir: str | Path) ->
         _render_markdown(report),
         encoding="utf-8",
     )
-    (output_path / "mean_recovery_seconds_by_action.svg").write_text(
-        _render_bar_svg(
-            title="Mean Recovery Seconds by Scenario and Action",
-            rows=report["scenario_action_statistics"],
-            value_key="mean_recovery_seconds",
-            value_label="seconds",
-            lower_is_better=True,
-        ),
-        encoding="utf-8",
+    _write_bar_chart_files(
+        output_path=output_path,
+        stem="mean_recovery_seconds_by_action",
+        title="Mean Recovery Seconds by Scenario and Action",
+        rows=report["scenario_action_statistics"],
+        value_key="mean_recovery_seconds",
+        value_label="seconds",
+        lower_is_better=True,
     )
-    (output_path / "success_rate_by_action.svg").write_text(
-        _render_bar_svg(
-            title="Recovery Success Rate by Scenario and Action",
-            rows=report["scenario_action_statistics"],
-            value_key="success_rate",
-            value_label="success rate",
-            lower_is_better=False,
-        ),
-        encoding="utf-8",
+    _write_bar_chart_files(
+        output_path=output_path,
+        stem="success_rate_by_action",
+        title="Recovery Success Rate by Scenario and Action",
+        rows=report["scenario_action_statistics"],
+        value_key="success_rate",
+        value_label="success rate",
+        lower_is_better=False,
     )
-    (output_path / "reward_by_policy.svg").write_text(
-        _render_reward_svg(report["policy_reward_statistics"]),
-        encoding="utf-8",
+    _write_bar_chart_files(
+        output_path=output_path,
+        stem="reward_by_policy",
+        title="Selected Reward by Policy and Scenario",
+        rows=_reward_chart_rows(report["policy_reward_statistics"]),
+        value_key="selected_reward",
+        value_label="selected reward",
+        lower_is_better=False,
     )
 
 
@@ -275,22 +278,124 @@ def _render_bar_svg(
     return "\n".join(parts)
 
 
-def _render_reward_svg(rows: list[dict[str, Any]]) -> str:
-    selected_rows = [row for row in rows if int(row["rank"]) == 1]
-    return _render_bar_svg(
-        title="Selected Reward by Policy and Scenario",
-        rows=[
-            {
-                "scenario": row["policy"],
-                "action": row["scenario"],
-                "selected_reward": row["selected_reward"],
-            }
-            for row in selected_rows
-        ],
-        value_key="selected_reward",
-        value_label="selected reward",
-        lower_is_better=False,
+def _write_bar_chart_files(
+    *,
+    output_path: Path,
+    stem: str,
+    title: str,
+    rows: list[dict[str, Any]],
+    value_key: str,
+    value_label: str,
+    lower_is_better: bool,
+) -> None:
+    (output_path / f"{stem}.svg").write_text(
+        _render_bar_svg(
+            title=title,
+            rows=rows,
+            value_key=value_key,
+            value_label=value_label,
+            lower_is_better=lower_is_better,
+        ),
+        encoding="utf-8",
     )
+    _write_bar_png(
+        path=output_path / f"{stem}.png",
+        title=title,
+        rows=rows,
+        value_key=value_key,
+        value_label=value_label,
+        lower_is_better=lower_is_better,
+    )
+
+
+def _write_bar_png(
+    *,
+    path: Path,
+    title: str,
+    rows: list[dict[str, Any]],
+    value_key: str,
+    value_label: str,
+    lower_is_better: bool,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    width = 1400
+    row_height = 38
+    top = 90
+    left = 410
+    chart_width = 860
+    height = max(320, top + len(rows) * row_height + 72)
+    max_value = max([float(row[value_key]) for row in rows] + [1.0])
+    palette = {
+        "observe_only": "#2f6fdd",
+        "rollout_restart": "#12805c",
+        "scale_out": "#b7791f",
+    }
+
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    title_font = _load_png_font(size=26, bold=True)
+    text_font = _load_png_font(size=16)
+    small_font = _load_png_font(size=14)
+
+    draw.text((24, 24), str(title), fill="#111111", font=title_font)
+    draw.text((left, 62), str(value_label), fill="#444444", font=small_font)
+
+    for index, row in enumerate(rows):
+        y = top + index * row_height
+        label = f"{row['scenario']} / {row['action']}"
+        value = float(row[value_key])
+        bar_width = 0 if max_value == 0 else int((value / max_value) * chart_width)
+        color = palette.get(str(row["action"]), "#4a5568")
+        draw.text((24, y + 9), label, fill="#222222", font=text_font)
+        if bar_width > 0:
+            draw.rectangle(
+                (left, y + 7, left + bar_width, y + 28),
+                fill=color,
+            )
+        draw.text(
+            (left + bar_width + 10, y + 9),
+            f"{value:.3f}",
+            fill="#222222",
+            font=text_font,
+        )
+
+    suffix = " lower is better" if lower_is_better else ""
+    draw.text(
+        (24, height - 34),
+        f"Generated from recovery experiment outcomes.{suffix}",
+        fill="#555555",
+        font=small_font,
+    )
+    image.save(path, format="PNG")
+
+
+def _load_png_font(*, size: int, bold: bool = False) -> Any:
+    from PIL import ImageFont
+
+    candidates = (
+        ["DejaVuSans-Bold.ttf", "arialbd.ttf", "Arial Bold.ttf"]
+        if bold
+        else ["DejaVuSans.ttf", "arial.ttf", "Arial.ttf"]
+    )
+    for candidate in candidates:
+        try:
+            return ImageFont.truetype(candidate, size=size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
+
+
+def _reward_chart_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    selected_rows = [row for row in rows if int(row["rank"]) == 1]
+    return [
+        {
+            "scenario": row["policy"],
+            "action": row["scenario"],
+            "selected_reward": row["selected_reward"],
+        }
+        for row in selected_rows
+    ]
 
 
 def _mean(values: Iterable[float]) -> float:

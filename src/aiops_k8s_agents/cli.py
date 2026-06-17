@@ -226,7 +226,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     recovery_statistics_parser = subparsers.add_parser(
         "summarize-recovery-statistics",
-        help="Create quantitative tables and SVG charts from recovery outcomes.",
+        help="Create quantitative tables plus SVG/PNG charts from recovery outcomes.",
     )
     recovery_statistics_parser.add_argument("--input", required=True)
     recovery_statistics_parser.add_argument("--output-dir", required=True)

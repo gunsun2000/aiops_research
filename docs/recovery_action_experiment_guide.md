@@ -295,8 +295,11 @@ aiops-k8s-agents summarize-recovery-statistics \
 | `scenario_action_statistics.csv` | 장애/action별 평균 복구 시간과 성공률 |
 | `policy_reward_statistics.csv` | reward 정책별 action ranking |
 | `mean_recovery_seconds_by_action.svg` | 평균 복구 시간 그래프 |
+| `mean_recovery_seconds_by_action.png` | 발표 삽입용 평균 복구 시간 그래프 |
 | `success_rate_by_action.svg` | 성공률 그래프 |
+| `success_rate_by_action.png` | 발표 삽입용 성공률 그래프 |
 | `reward_by_policy.svg` | reward 정책별 점수 그래프 |
+| `reward_by_policy.png` | 발표 삽입용 reward 정책별 점수 그래프 |
 
 자세한 해석은 `docs/recovery_quantitative_analysis_guide.md`에 정리한다.
 
