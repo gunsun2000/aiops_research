@@ -133,7 +133,7 @@ ${LATEST}statistics/reward_by_policy.svg
 ${LATEST}statistics/reward_by_policy.png
 ```
 
-자세한 해석은 `docs/recovery_quantitative_analysis_guide.md`를 참고합니다.
+자세한 해석은 `docs/experiments/recovery_quantitative_analysis_guide.md`를 참고합니다.
 
 유효하지 않은 Treatment가 있는지 확인합니다.
 
@@ -986,7 +986,7 @@ MODE=dry-run \
 bash scripts/server_full_stack_experiment_matrix.sh
 ```
 
-자세한 설명은 `docs/full_stack_experiment_guide.md`를 보면 됩니다.
+자세한 설명은 `docs/experiments/full_stack_experiment_guide.md`를 보면 됩니다.
 
 ## Go guard 통합 실행
 

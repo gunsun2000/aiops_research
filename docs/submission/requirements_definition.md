@@ -59,8 +59,8 @@
 - `src/aiops_k8s_agents/agent_registry.py`: Agent registry 모듈
 - `src/aiops_k8s_agents/inference_optimizer.py`: 추론 최적화 모듈
 - `go/aiops-guard`: Go 기반 Kubernetes action guard
-- `docs/functional_api_guide.md`: 기능/API 가이드
-- `docs/test_guide.md`: 시험 검증 가이드
+- `docs/submission/functional_api_guide.md`: 기능/API 가이드
+- `docs/submission/test_guide.md`: 시험 검증 가이드
 
 ## 6. 현재 연구 단계의 의미
 

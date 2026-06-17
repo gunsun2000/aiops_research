@@ -99,7 +99,7 @@ aiops-k8s-agents plan-inference-deployment \
 
 | 산출물 | 파일 |
 | --- | --- |
-| AI 응용 배포·제어 추론 최적화 전략 설계서 | `docs/ai_application_deployment_strategy.md` |
+| AI 응용 배포·제어 추론 최적화 전략 설계서 | `docs/design/ai_application_deployment_strategy.md` |
 | CPU/GPU VM 자원 및 workload 설정 | `config/inference_optimization.json` |
 | 배치 추천 CLI | `aiops-k8s-agents recommend-inference-placement` |
 | 배포/제어 계획 CLI | `aiops-k8s-agents plan-inference-deployment` |

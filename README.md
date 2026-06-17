@@ -220,14 +220,14 @@ CPU 95% 입력은 초기 smoke test용 mock 시나리오다. 현재 연구 결�
 
 | 문서 | 내용 |
 | --- | --- |
-| `docs/requirements_definition.md` | 요구사항 정의서 |
-| `docs/agent_registry_guide.md` | AI Agent 등록 관리 가이드 |
-| `docs/inference_optimization_guide.md` | CPU/GPU VM 추론 최적화 가이드 |
-| `docs/functional_api_guide.md` | 기능/API 사용 가이드 |
-| `docs/test_guide.md` | 시험 검증 가이드 |
-| `docs/go_and_llm_cross_validation.md` | Go 언어 및 LLM 교차 검증 정리 |
-| `docs/recovery_action_experiment_guide.md` | 장애별 action/reward 실험 가이드 |
-| `docs/first_stage_research_completion.md` | 1차 연구 완료 범위 정리 |
+| `docs/submission/requirements_definition.md` | 요구사항 정의서 |
+| `docs/design/agent_registry_guide.md` | AI Agent 등록 관리 가이드 |
+| `docs/design/inference_optimization_guide.md` | CPU/GPU VM 추론 최적화 가이드 |
+| `docs/submission/functional_api_guide.md` | 기능/API 사용 가이드 |
+| `docs/submission/test_guide.md` | 시험 검증 가이드 |
+| `docs/design/go_and_llm_cross_validation.md` | Go 언어 및 LLM 교차 검증 정리 |
+| `docs/experiments/recovery_action_experiment_guide.md` | 장애별 action/reward 실험 가이드 |
+| `docs/archive/first_stage_research_completion.md` | 1차 연구 완료 범위 정리 |
 
 ## 현재 연구 단계
 
@@ -257,8 +257,8 @@ CPU 95% 입력은 초기 smoke test용 mock 시나리오다. 현재 연구 결�
 
 | 개발 항목 | 완료 산출물 |
 | --- | --- |
-| Ops 분석 시험 및 최적 LLM 선정 | `config/ops_llm_benchmark.json`, `docs/ops_llm_selection_guide.md`, `aiops-k8s-agents select-ops-llm` |
-| CPU/GPU VM 기반 AI 응용 배포/제어 추론 최적화 전략 | `config/inference_optimization.json`, `docs/ai_application_deployment_strategy.md`, `aiops-k8s-agents plan-inference-deployment` |
+| Ops 분석 시험 및 최적 LLM 선정 | `config/ops_llm_benchmark.json`, `docs/design/ops_llm_selection_guide.md`, `aiops-k8s-agents select-ops-llm` |
+| CPU/GPU VM 기반 AI 응용 배포/제어 추론 최적화 전략 | `config/inference_optimization.json`, `docs/design/ai_application_deployment_strategy.md`, `aiops-k8s-agents plan-inference-deployment` |
 
 실행 명령:
 

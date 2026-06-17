@@ -130,5 +130,5 @@ reward_by_policy.png
 향후 API 서버화를 위한 인터페이스 초안은 다음 파일에 정리되어 있다.
 
 ```bash
-docs/openapi_agent_registry.yaml
+docs/submission/openapi_agent_registry.yaml
 ```

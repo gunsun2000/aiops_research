@@ -21,7 +21,7 @@
 ### Task 2: Update the research completion report
 
 **Files:**
-- Modify: `docs/first_stage_research_completion.md`
+- Modify: `docs/archive/first_stage_research_completion.md`
 
 - [x] Add the AIOpsLab 12-run detection result.
 - [x] Add the 12-treatment pilot and 36-treatment real recovery results.
@@ -31,7 +31,7 @@
 ### Task 3: Complete the recovery experiment guide
 
 **Files:**
-- Modify: `docs/recovery_action_experiment_guide.md`
+- Modify: `docs/experiments/recovery_action_experiment_guide.md`
 
 - [x] Record the verified Prometheus blackbox latency query and the final commands.
 - [x] Add the 36-run selected-action table for all four reward policies.
@@ -40,7 +40,7 @@
 ### Task 4: Put current server commands first
 
 **Files:**
-- Modify: `docs/experiment_commands.md`
+- Modify: `docs/experiments/experiment_commands.md`
 
 - [x] Add a top-level quick-start section for environment setup, Prometheus readiness, 12-run pilot, 36-run experiment, and result inspection.
 - [x] Keep older local/mock commands as reference material below the current real-experiment workflow.
@@ -49,9 +49,9 @@
 
 **Files:**
 - Verify: `README.md`
-- Verify: `docs/first_stage_research_completion.md`
-- Verify: `docs/recovery_action_experiment_guide.md`
-- Verify: `docs/experiment_commands.md`
+- Verify: `docs/archive/first_stage_research_completion.md`
+- Verify: `docs/experiments/recovery_action_experiment_guide.md`
+- Verify: `docs/experiments/experiment_commands.md`
 
 - [x] Run `python -m pytest` and confirm all tests pass.
 - [x] Search the updated documents for the expected `36/36`, AutoGen boundary, and result paths.

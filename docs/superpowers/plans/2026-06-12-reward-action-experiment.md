@@ -91,7 +91,7 @@
 ### Task 7: Documentation and verification
 
 **Files:**
-- Modify: `docs/full_stack_experiment_guide.md`
+- Modify: `docs/experiments/full_stack_experiment_guide.md`
 - Modify: `README.md`
 
 - [ ] Document the 12-treatment pilot command and the 36-treatment main experiment command.

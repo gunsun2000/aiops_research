@@ -13,7 +13,7 @@
 | Go 언어 개발 필수 | 완료 | `go/aiops-guard` |
 | 최소 2종 이상 LLM/코딩 에이전트 활용 | 완료 | AutoGen 4-Agent 경로, Codex 기반 코드 작성/검증, LLM 교차 검증 문서 |
 | 교차 검증 | 완료 | Python validator + Go guard 이중 검증, Agent action/reward 합의 구조 |
-| 프레임워크/프롬프트 중심 문서 작성 | 완료 | `docs/agent_registry_guide.md`, `docs/go_and_llm_cross_validation.md`, `docs/ops_llm_selection_guide.md` |
+| 프레임워크/프롬프트 중심 문서 작성 | 완료 | `docs/design/agent_registry_guide.md`, `docs/design/go_and_llm_cross_validation.md`, `docs/design/ops_llm_selection_guide.md` |
 | 산출물 문서 최소화 | 정리 완료 | 이 문서 기준으로 핵심 산출물만 설명 |
 | 로그 및 에러 메시지 최대화 | 완료 | `runs/`, `outcomes.jsonl`, `statistics/`, pytest 로그, kubectl 결과 |
 | 개발은 코딩 에이전트, 사람은 시험 검증 위주 | 완료 | Codex가 구현/테스트 작성, 연구자는 서버 실험 실행 및 결과 검증 |
@@ -23,8 +23,8 @@
 | 구분 | 구현 내용 | 대표 파일 |
 | --- | --- | --- |
 | 4-Agent 구조 | HA, 응용관리, 인프라, 비용 최적화 Agent 역할 분리 | `src/aiops_k8s_agents/agents.py`, `config/agent_registry.json` |
-| Agent 등록 관리 | Agent별 역할, action, reward, 승인/거부 조건 관리 | `config/agent_registry.json`, `docs/agent_registry_guide.md` |
-| Action/Reward 정책 | 장애별 후보 action 평가 및 reward 정책별 action ranking | `config/recovery_action_experiments.json`, `docs/agent_action_reward_policy.md` |
+| Agent 등록 관리 | Agent별 역할, action, reward, 승인/거부 조건 관리 | `config/agent_registry.json`, `docs/design/agent_registry_guide.md` |
+| Action/Reward 정책 | 장애별 후보 action 평가 및 reward 정책별 action ranking | `config/recovery_action_experiments.json`, `docs/design/agent_action_reward_policy.md` |
 | Kubernetes 안전 실행 | allowlist, replica 범위, namespace/deployment 검증 | `src/aiops_k8s_agents/validator.py`, `src/aiops_k8s_agents/executor.py` |
 | Go 기반 Guard | 최종 action을 Go 언어로 한 번 더 검증 | `go/aiops-guard` |
 | Prometheus 연동 | metric 기반 상태 관측 및 실험 입력 | `src/aiops_k8s_agents/prometheus_adapter.py` |
@@ -76,16 +76,16 @@
 
 | 산출물 요구 | 현재 파일 |
 | --- | --- |
-| 요구사항 정의서 | `docs/requirements_definition.md`, `docs/requirements_definition.docx` |
-| 기능/API 가이드 | `docs/functional_api_guide.md`, `docs/openapi_agent_registry.yaml` |
-| 설치 활용 가이드 | `docs/install_and_run_guide.md` |
-| 시험 가이드 | `docs/test_guide.md` |
-| Go 개발 설명 | `docs/go_and_llm_cross_validation.md`, `go/aiops-guard/README.md` |
-| Agent 등록 관리 설명 | `docs/agent_registry_guide.md` |
-| LLM 선정 설명 | `docs/ops_llm_selection_guide.md` |
-| 추론 배포 최적화 전략 | `docs/inference_optimization_guide.md`, `docs/ai_application_deployment_strategy.md` |
-| Recovery 실험 설명 | `docs/recovery_action_experiment_guide.md` |
-| 정량 분석 설명 | `docs/recovery_quantitative_analysis_guide.md` |
+| 요구사항 정의서 | `docs/submission/requirements_definition.md`, `docs/submission/requirements_definition.docx` |
+| 기능/API 가이드 | `docs/submission/functional_api_guide.md`, `docs/submission/openapi_agent_registry.yaml` |
+| 설치 활용 가이드 | `docs/submission/install_and_run_guide.md` |
+| 시험 가이드 | `docs/submission/test_guide.md` |
+| Go 개발 설명 | `docs/design/go_and_llm_cross_validation.md`, `go/aiops-guard/README.md` |
+| Agent 등록 관리 설명 | `docs/design/agent_registry_guide.md` |
+| LLM 선정 설명 | `docs/design/ops_llm_selection_guide.md` |
+| 추론 배포 최적화 전략 | `docs/design/inference_optimization_guide.md`, `docs/design/ai_application_deployment_strategy.md` |
+| Recovery 실험 설명 | `docs/experiments/recovery_action_experiment_guide.md` |
+| 정량 분석 설명 | `docs/experiments/recovery_quantitative_analysis_guide.md` |
 
 ## 7. 발표에서 뒤로 빼도 되는 내용
 

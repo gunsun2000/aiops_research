@@ -115,5 +115,5 @@ aiops-k8s-agents plan-inference-deployment \
 더 자세한 산출물 문서는 다음 파일을 기준으로 한다.
 
 ```text
-docs/ai_application_deployment_strategy.md
+docs/design/ai_application_deployment_strategy.md
 ```

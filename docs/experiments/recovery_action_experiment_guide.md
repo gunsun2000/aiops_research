@@ -301,7 +301,7 @@ aiops-k8s-agents summarize-recovery-statistics \
 | `reward_by_policy.svg` | reward 정책별 점수 그래프 |
 | `reward_by_policy.png` | 발표 삽입용 reward 정책별 점수 그래프 |
 
-자세한 해석은 `docs/recovery_quantitative_analysis_guide.md`에 정리한다.
+자세한 해석은 `docs/experiments/recovery_quantitative_analysis_guide.md`에 정리한다.
 
 유효하지 않은 Treatment 확인:
 

@@ -93,7 +93,7 @@ aiops-k8s-agents select-ops-llm \
 
 | 산출물 | 파일 |
 | --- | --- |
-| LLM 운영 관리 구조 설계서 | `docs/ops_llm_selection_guide.md` |
+| LLM 운영 관리 구조 설계서 | `docs/design/ops_llm_selection_guide.md` |
 | LLM 후보 및 평가 설정 | `config/ops_llm_benchmark.json` |
 | LLM 선정 CLI | `aiops-k8s-agents select-ops-llm` |
 | 테스트 코드 | `tests/test_ops_llm_selection.py` |
