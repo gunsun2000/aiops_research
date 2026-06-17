@@ -275,6 +275,31 @@ wc -l "${LATEST}outcomes.jsonl"
 cat "${LATEST}analysis/reward_policy_comparison.md"
 ```
 
+## 정량 그래프 및 통계 분석
+
+reward ranking뿐 아니라 평균 복구 시간, 성공률, metric 개선도, reward 정책별 선택 점수를 보고서 형태로 정리하려면 다음 명령을 사용한다.
+
+```bash
+LATEST=$(ls -dt runs/recovery-action-pilot/*/ | head -1)
+
+aiops-k8s-agents summarize-recovery-statistics \
+  --input "${LATEST}outcomes.jsonl" \
+  --output-dir "${LATEST}statistics"
+```
+
+생성되는 핵심 산출물은 다음과 같다.
+
+| 산출물 | 설명 |
+| --- | --- |
+| `quantitative_summary.md` | 정량 분석 요약 |
+| `scenario_action_statistics.csv` | 장애/action별 평균 복구 시간과 성공률 |
+| `policy_reward_statistics.csv` | reward 정책별 action ranking |
+| `mean_recovery_seconds_by_action.svg` | 평균 복구 시간 그래프 |
+| `success_rate_by_action.svg` | 성공률 그래프 |
+| `reward_by_policy.svg` | reward 정책별 점수 그래프 |
+
+자세한 해석은 `docs/recovery_quantitative_analysis_guide.md`에 정리한다.
+
 유효하지 않은 Treatment 확인:
 
 ```bash

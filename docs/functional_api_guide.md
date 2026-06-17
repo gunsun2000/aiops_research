@@ -99,7 +99,30 @@ wc -l "$LATEST/outcomes.jsonl"
 cat "$LATEST/analysis/reward_policy_comparison.md"
 ```
 
-## 5. OpenAPI 문서
+## 5. Recovery 정량 통계/그래프 생성
+
+평균 복구 시간, 성공률, reward 정책별 선택 점수 그래프를 생성한다.
+
+```bash
+LATEST=$(ls -dt runs/recovery-action-pilot/*/ | head -1)
+
+aiops-k8s-agents summarize-recovery-statistics \
+  --input "$LATEST/outcomes.jsonl" \
+  --output-dir "$LATEST/statistics"
+```
+
+출력 산출물:
+
+```text
+quantitative_summary.md
+scenario_action_statistics.csv
+policy_reward_statistics.csv
+mean_recovery_seconds_by_action.svg
+success_rate_by_action.svg
+reward_by_policy.svg
+```
+
+## 6. OpenAPI 문서
 
 향후 API 서버화를 위한 인터페이스 초안은 다음 파일에 정리되어 있다.
 

@@ -273,3 +273,26 @@ aiops-k8s-agents plan-inference-deployment \
   --config config/inference_optimization.json \
   --workload llm-chat-inference
 ```
+
+## 추가 완료 항목: 정량 그래프/통계 분석
+
+Recovery action 실험 결과를 이용해 평균 복구 시간, 성공률, reward 정책 차이를 표와 SVG 그래프로 생성하는 기능을 추가했다.
+
+```bash
+LATEST=$(ls -dt runs/recovery-action-pilot/*/ | head -1)
+
+aiops-k8s-agents summarize-recovery-statistics \
+  --input "${LATEST}outcomes.jsonl" \
+  --output-dir "${LATEST}statistics"
+```
+
+산출물:
+
+```text
+statistics/quantitative_summary.md
+statistics/scenario_action_statistics.csv
+statistics/policy_reward_statistics.csv
+statistics/mean_recovery_seconds_by_action.svg
+statistics/success_rate_by_action.svg
+statistics/reward_by_policy.svg
+```

@@ -65,6 +65,10 @@ from aiops_k8s_agents.recovery_experiments import (
     load_recovery_outcomes,
     write_recovery_analysis,
 )
+from aiops_k8s_agents.recovery_statistics import (
+    summarize_recovery_statistics,
+    write_recovery_statistics,
+)
 from aiops_k8s_agents.recovery_runner import (
     load_recovery_experiment_config,
     run_recovery_matrix,
@@ -219,6 +223,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     recovery_score_parser.add_argument("--input", required=True)
     recovery_score_parser.add_argument("--output-dir", required=True)
+
+    recovery_statistics_parser = subparsers.add_parser(
+        "summarize-recovery-statistics",
+        help="Create quantitative tables and SVG charts from recovery outcomes.",
+    )
+    recovery_statistics_parser.add_argument("--input", required=True)
+    recovery_statistics_parser.add_argument("--output-dir", required=True)
 
     recovery_matrix_parser = subparsers.add_parser(
         "run-recovery-experiments",
@@ -453,6 +464,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         report = score_recovery_experiments(args)
         _emit_json_report(args, report)
         return 0
+
+    if args.command == "summarize-recovery-statistics":
+        report = summarize_recovery_statistics_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report["valid"] else 2
 
     if args.command == "run-recovery-experiments":
         try:
@@ -772,6 +788,13 @@ def score_recovery_experiments(args: argparse.Namespace) -> dict[str, Any]:
     outcomes = load_recovery_outcomes(args.input)
     report = analyze_recovery_outcomes(outcomes)
     write_recovery_analysis(report, args.output_dir)
+    return report
+
+
+def summarize_recovery_statistics_cli(args: argparse.Namespace) -> dict[str, Any]:
+    report = summarize_recovery_statistics(args.input)
+    write_recovery_statistics(report, args.output_dir)
+    report["output_dir"] = args.output_dir
     return report
 
 

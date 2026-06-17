@@ -509,6 +509,76 @@ def test_cli_scores_recovery_outcomes_under_all_reward_policies(tmp_path, capsys
     assert (output_dir / "reward_policy_comparison.md").exists()
 
 
+def test_cli_summarizes_recovery_statistics(tmp_path, capsys):
+    input_path = tmp_path / "outcomes.jsonl"
+    input_path.write_text(
+        "\n".join(
+            [
+                json.dumps(
+                    {
+                        "scenario": "pod-kill",
+                        "action": {
+                            "namespace": "online-boutique",
+                            "deployment": "paymentservice",
+                            "kind": "observe_only",
+                            "replicas": None,
+                            "reason": "test",
+                        },
+                        "recovery_success": True,
+                        "availability_recovery": 1.0,
+                        "metric_improvement": 1.0,
+                        "recovery_seconds": 8.0,
+                        "replica_delta": 0,
+                        "command_count": 0,
+                        "safety_valid": True,
+                        "measurement_valid": True,
+                    }
+                ),
+                json.dumps(
+                    {
+                        "scenario": "pod-kill",
+                        "action": {
+                            "namespace": "online-boutique",
+                            "deployment": "paymentservice",
+                            "kind": "scale_out",
+                            "replicas": 3,
+                            "reason": "test",
+                        },
+                        "recovery_success": True,
+                        "availability_recovery": 1.0,
+                        "metric_improvement": 0.7,
+                        "recovery_seconds": 20.0,
+                        "replica_delta": 2,
+                        "command_count": 1,
+                        "safety_valid": True,
+                        "measurement_valid": True,
+                    }
+                ),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "statistics"
+
+    exit_code = main(
+        [
+            "summarize-recovery-statistics",
+            "--input",
+            str(input_path),
+            "--output-dir",
+            str(output_dir),
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["valid"] is True
+    assert output["overall"]["success_rate"] == 1.0
+    assert (output_dir / "quantitative_summary.md").exists()
+    assert (output_dir / "mean_recovery_seconds_by_action.svg").exists()
+
+
 def test_cli_runs_real_recovery_experiment_matrix(monkeypatch, tmp_path, capsys):
     def fake_run_matrix(**kwargs):
         assert kwargs["repetitions"] == 1

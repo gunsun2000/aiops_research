@@ -105,7 +105,28 @@ bash scripts/server_recovery_action_pilot.sh
 - `analysis/reward_policy_comparison.md`가 생성되어야 한다.
 - 장애별 action ranking이 기록되어야 한다.
 
-## 6. CI/CD
+## 6. Recovery 정량 그래프/통계 검증
+
+Recovery action 실험 결과에서 평균 복구 시간, 성공률, reward 정책 차이 그래프를 생성한다.
+
+```bash
+LATEST=$(ls -dt runs/recovery-action-pilot/*/ | head -1)
+
+aiops-k8s-agents summarize-recovery-statistics \
+  --input "$LATEST/outcomes.jsonl" \
+  --output-dir "$LATEST/statistics"
+```
+
+성공 기준:
+
+- `statistics/quantitative_summary.md`가 생성되어야 한다.
+- `statistics/scenario_action_statistics.csv`가 생성되어야 한다.
+- `statistics/policy_reward_statistics.csv`가 생성되어야 한다.
+- `statistics/mean_recovery_seconds_by_action.svg`가 생성되어야 한다.
+- `statistics/success_rate_by_action.svg`가 생성되어야 한다.
+- `statistics/reward_by_policy.svg`가 생성되어야 한다.
+
+## 7. CI/CD
 
 GitHub Actions는 push 또는 pull request 시 다음을 검증한다.
 

@@ -101,6 +101,37 @@ wc -l "${LATEST}outcomes.jsonl"
 cat "${LATEST}analysis/reward_policy_comparison.md"
 ```
 
+## Recovery 정량 그래프/통계 분석
+
+36회 real recovery action 실험이 끝난 뒤 평균 복구 시간, 성공률, reward 차이를 그래프로 만들려면 다음을 실행합니다.
+
+```bash
+LATEST=$(ls -dt runs/recovery-action-pilot/*/ | head -1)
+
+aiops-k8s-agents summarize-recovery-statistics \
+  --input "${LATEST}outcomes.jsonl" \
+  --output-dir "${LATEST}statistics"
+```
+
+또는 서버 스크립트로 실행합니다.
+
+```bash
+bash scripts/server_recovery_statistics.sh
+```
+
+생성 파일:
+
+```text
+${LATEST}statistics/quantitative_summary.md
+${LATEST}statistics/scenario_action_statistics.csv
+${LATEST}statistics/policy_reward_statistics.csv
+${LATEST}statistics/mean_recovery_seconds_by_action.svg
+${LATEST}statistics/success_rate_by_action.svg
+${LATEST}statistics/reward_by_policy.svg
+```
+
+자세한 해석은 `docs/recovery_quantitative_analysis_guide.md`를 참고합니다.
+
 유효하지 않은 Treatment가 있는지 확인합니다.
 
 ```bash
