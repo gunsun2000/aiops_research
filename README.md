@@ -250,3 +250,26 @@ CPU 95% 입력은 초기 smoke test용 mock 시나리오다. 현재 연구 결�
 - AutoGen multi-round real action 선택
 - 실제 GPU/NPU 스케줄링과 모델 추론 서비스 연동
 - 통계 검정과 그래프 기반 정량 평가
+
+## 추가 완료 항목: LLM 선정 및 AI 응용 배포/제어 전략
+
+다음 두 항목도 코드, CLI, 테스트, 문서 산출물로 정리했다.
+
+| 개발 항목 | 완료 산출물 |
+| --- | --- |
+| Ops 분석 시험 및 최적 LLM 선정 | `config/ops_llm_benchmark.json`, `docs/ops_llm_selection_guide.md`, `aiops-k8s-agents select-ops-llm` |
+| CPU/GPU VM 기반 AI 응용 배포/제어 추론 최적화 전략 | `config/inference_optimization.json`, `docs/ai_application_deployment_strategy.md`, `aiops-k8s-agents plan-inference-deployment` |
+
+실행 명령:
+
+```bash
+aiops-k8s-agents select-ops-llm \
+  --config config/ops_llm_benchmark.json \
+  --policy quality_first
+```
+
+```bash
+aiops-k8s-agents plan-inference-deployment \
+  --config config/inference_optimization.json \
+  --workload llm-chat-inference
+```

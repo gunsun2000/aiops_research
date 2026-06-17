@@ -99,3 +99,21 @@ aiops-k8s-agents recommend-inference-placement \
 - GPU memory usage metric 반영
 - NPU 또는 AI 반도체 가속기 resource profile 추가
 - Online Boutique가 아닌 실제 AI inference service 배포와 연결
+
+## 추가 구현: 배포/제어 계획 생성
+
+배치 추천 결과를 Kubernetes 배포/제어 계획으로 변환하는 명령을 추가했다.
+
+```bash
+aiops-k8s-agents plan-inference-deployment \
+  --config config/inference_optimization.json \
+  --workload llm-chat-inference
+```
+
+이 명령은 선택된 CPU/GPU VM 후보, namespace, deployment 이름, node selector, resource request/limit, 제어 action 목록을 JSON으로 출력한다.
+
+더 자세한 산출물 문서는 다음 파일을 기준으로 한다.
+
+```text
+docs/ai_application_deployment_strategy.md
+```

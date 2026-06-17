@@ -17,6 +17,10 @@
       "expected_throughput_rps": 60,
       "cost_per_hour": 0.45,
       "available_replicas": 4,
+      "node_selector": {
+        "aiops.resource/accelerator": "cpu"
+      },
+      "resource_limits": {},
       "supported_model_types": [
         "text-classification",
         "embedding"
@@ -32,6 +36,13 @@
       "expected_throughput_rps": 140,
       "cost_per_hour": 1.2,
       "available_replicas": 2,
+      "node_selector": {
+        "aiops.resource/accelerator": "gpu",
+        "aiops.resource/gpu-class": "l4"
+      },
+      "resource_limits": {
+        "nvidia.com/gpu": "1"
+      },
       "supported_model_types": [
         "llm",
         "vision",
@@ -48,6 +59,13 @@
       "expected_throughput_rps": 260,
       "cost_per_hour": 4.0,
       "available_replicas": 1,
+      "node_selector": {
+        "aiops.resource/accelerator": "gpu",
+        "aiops.resource/gpu-class": "a100"
+      },
+      "resource_limits": {
+        "nvidia.com/gpu": "1"
+      },
       "supported_model_types": [
         "llm",
         "vision"
@@ -62,7 +80,11 @@
       "estimated_vram_gb": 16,
       "latency_slo_ms": 100,
       "min_throughput_rps": 100,
-      "batch_size": 8
+      "batch_size": 8,
+      "service_name": "llm-chat-inference",
+      "namespace": "ai-inference",
+      "container_image": "ghcr.io/gunsun2000/aiops-llm-chat:latest",
+      "replicas": 1
     },
     {
       "id": "text-classifier",
@@ -71,7 +93,11 @@
       "estimated_vram_gb": 0,
       "latency_slo_ms": 180,
       "min_throughput_rps": 30,
-      "batch_size": 16
+      "batch_size": 16,
+      "service_name": "text-classifier",
+      "namespace": "ai-inference",
+      "container_image": "ghcr.io/gunsun2000/aiops-text-classifier:latest",
+      "replicas": 1
     }
   ]
 }

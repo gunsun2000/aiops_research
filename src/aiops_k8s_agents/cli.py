@@ -44,6 +44,7 @@ from aiops_k8s_agents.aiopslab_results import (
 )
 from aiops_k8s_agents.inference_optimizer import (
     InferenceOptimizationError,
+    build_inference_deployment_plan,
     load_inference_optimization_config,
     recommend_inference_placement,
 )
@@ -53,6 +54,11 @@ from aiops_k8s_agents.models import (
     CommandResult,
     RecoveryAction,
     RecoveryActionKind,
+)
+from aiops_k8s_agents.ops_llm_selection import (
+    OpsLLMSelectionError,
+    load_ops_llm_benchmark_config,
+    select_ops_llm,
 )
 from aiops_k8s_agents.recovery_experiments import (
     analyze_recovery_outcomes,
@@ -75,6 +81,7 @@ from aiops_k8s_agents.validator import CommandValidationError, CommandValidator
 DEFAULT_OPENAI_MODEL = os.environ.get("AIOPS_OPENAI_MODEL", "gpt-5.5")
 DEFAULT_AGENT_REGISTRY = "config/agent_registry.json"
 DEFAULT_INFERENCE_OPTIMIZATION_CONFIG = "config/inference_optimization.json"
+DEFAULT_OPS_LLM_BENCHMARK_CONFIG = "config/ops_llm_benchmark.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -293,6 +300,38 @@ def build_parser() -> argparse.ArgumentParser:
     inference_parser.add_argument("--workload", required=True)
     _add_result_logging_argument(inference_parser)
 
+    inference_plan_parser = subparsers.add_parser(
+        "plan-inference-deployment",
+        help="Build a CPU/GPU VM Kubernetes deployment/control plan for one inference workload.",
+    )
+    inference_plan_parser.add_argument(
+        "--config",
+        default=DEFAULT_INFERENCE_OPTIMIZATION_CONFIG,
+    )
+    inference_plan_parser.add_argument("--workload", required=True)
+    _add_result_logging_argument(inference_plan_parser)
+
+    list_ops_llm_parser = subparsers.add_parser(
+        "list-ops-llm-candidates",
+        help="List Ops LLM benchmark candidates and selection policies.",
+    )
+    list_ops_llm_parser.add_argument(
+        "--config",
+        default=DEFAULT_OPS_LLM_BENCHMARK_CONFIG,
+    )
+    _add_result_logging_argument(list_ops_llm_parser)
+
+    select_ops_llm_parser = subparsers.add_parser(
+        "select-ops-llm",
+        help="Select the best LLM for Ops analysis under a benchmark policy.",
+    )
+    select_ops_llm_parser.add_argument(
+        "--config",
+        default=DEFAULT_OPS_LLM_BENCHMARK_CONFIG,
+    )
+    select_ops_llm_parser.add_argument("--policy", default="quality_first")
+    _add_result_logging_argument(select_ops_llm_parser)
+
     return parser
 
 
@@ -462,6 +501,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit_json_report(args, report)
         return 0 if report["valid"] else 2
 
+    if args.command == "plan-inference-deployment":
+        report = plan_inference_deployment_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report["valid"] else 2
+
+    if args.command == "list-ops-llm-candidates":
+        report = list_ops_llm_candidates(args)
+        _emit_json_report(args, report)
+        return 0
+
+    if args.command == "select-ops-llm":
+        report = select_ops_llm_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report["valid"] else 2
+
     parser.error(f"unsupported command: {args.command}")
     return 2
 
@@ -580,6 +634,59 @@ def recommend_inference_placement_cli(args: argparse.Namespace) -> dict[str, Any
         }
     report = decision.to_dict()
     report["command"] = "recommend-inference-placement"
+    report["config"] = args.config
+    return report
+
+
+def plan_inference_deployment_cli(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        config = load_inference_optimization_config(args.config)
+        plan = build_inference_deployment_plan(config, args.workload)
+    except InferenceOptimizationError as exc:
+        return {
+            "command": "plan-inference-deployment",
+            "valid": False,
+            "config": args.config,
+            "workload": args.workload,
+            "stderr": str(exc),
+        }
+    report = plan.to_dict()
+    report["command"] = "plan-inference-deployment"
+    report["config"] = args.config
+    return report
+
+
+def list_ops_llm_candidates(args: argparse.Namespace) -> dict[str, Any]:
+    config = load_ops_llm_benchmark_config(args.config)
+    return {
+        "command": "list-ops-llm-candidates",
+        "config": args.config,
+        "version": config.version,
+        "candidates": [
+            config.candidates[model].to_dict()
+            for model in sorted(config.candidates)
+        ],
+        "policies": {
+            name: config.policies[name].to_dict()
+            for name in sorted(config.policies)
+        },
+    }
+
+
+def select_ops_llm_cli(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        config = load_ops_llm_benchmark_config(args.config)
+        result = select_ops_llm(config, policy_name=args.policy)
+    except OpsLLMSelectionError as exc:
+        return {
+            "command": "select-ops-llm",
+            "valid": False,
+            "config": args.config,
+            "policy": args.policy,
+            "stderr": str(exc),
+        }
+    report = result.to_dict()
+    report["command"] = "select-ops-llm"
     report["config"] = args.config
     return report
 

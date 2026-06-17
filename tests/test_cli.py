@@ -339,6 +339,63 @@ def test_cli_recommends_inference_placement(capsys):
     assert output["action"] == "deploy_on_gpu_vm"
 
 
+def test_cli_builds_inference_deployment_plan(capsys):
+    exit_code = main(
+        [
+            "plan-inference-deployment",
+            "--config",
+            "config/inference_optimization.json",
+            "--workload",
+            "llm-chat-inference",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["valid"] is True
+    assert output["selected_resource"] == "gpu-vm-l4"
+    assert output["deployment_plan"]["kubernetes"]["namespace"] == "ai-inference"
+    assert output["deployment_plan"]["kubernetes"]["resources"]["limits"][
+        "nvidia.com/gpu"
+    ] == "1"
+
+
+def test_cli_selects_ops_llm_under_quality_policy(capsys):
+    exit_code = main(
+        [
+            "select-ops-llm",
+            "--config",
+            "config/ops_llm_benchmark.json",
+            "--policy",
+            "quality_first",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["valid"] is True
+    assert output["selected_model"] == "gpt-5.5"
+    assert output["ranking"][0]["model"] == "gpt-5.5"
+
+
+def test_cli_lists_ops_llm_candidates(capsys):
+    exit_code = main(
+        [
+            "list-ops-llm-candidates",
+            "--config",
+            "config/ops_llm_benchmark.json",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["command"] == "list-ops-llm-candidates"
+    assert "gpt-5.5" in [candidate["model"] for candidate in output["candidates"]]
+
+
 def test_cli_passes_go_guard_backend_to_recovery_executor(monkeypatch, capsys):
     captured = {}
 

@@ -1,4 +1,5 @@
 from aiops_k8s_agents.inference_optimizer import (
+    build_inference_deployment_plan,
     load_inference_optimization_config,
     recommend_inference_placement,
 )
@@ -76,3 +77,25 @@ def test_optimizer_reports_no_candidate_when_constraints_cannot_be_met(tmp_path)
     assert decision.valid is False
     assert decision.selected_resource == ""
     assert "cpu-only" in decision.rejected_resources
+
+
+def test_build_gpu_inference_deployment_plan_contains_kubernetes_controls():
+    config = load_inference_optimization_config(
+        "config/inference_optimization.json"
+    )
+
+    plan = build_inference_deployment_plan(config, "llm-chat-inference")
+
+    assert plan.valid is True
+    assert plan.selected_resource == "gpu-vm-l4"
+    assert plan.deployment_plan["kubernetes"]["namespace"] == "ai-inference"
+    assert plan.deployment_plan["kubernetes"]["deployment"] == "llm-chat-inference"
+    assert plan.deployment_plan["kubernetes"]["resources"]["limits"][
+        "nvidia.com/gpu"
+    ] == "1"
+    assert plan.deployment_plan["control_actions"] == [
+        "deploy_on_gpu_vm",
+        "scale_replicas",
+        "monitor_latency",
+        "rollback_on_slo_violation",
+    ]

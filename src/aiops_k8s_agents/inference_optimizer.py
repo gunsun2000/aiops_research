@@ -39,6 +39,8 @@ class InferenceResourceProfile:
     cost_per_hour: float
     available_replicas: int
     supported_model_types: tuple[str, ...]
+    node_selector: dict[str, str]
+    resource_limits: dict[str, str]
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> InferenceResourceProfile:
@@ -61,6 +63,14 @@ class InferenceResourceProfile:
             cost_per_hour=float(data.get("cost_per_hour", 0)),
             available_replicas=int(data.get("available_replicas", 0)),
             supported_model_types=supported,
+            node_selector={
+                str(key): str(value)
+                for key, value in dict(data.get("node_selector", {})).items()
+            },
+            resource_limits={
+                str(key): str(value)
+                for key, value in dict(data.get("resource_limits", {})).items()
+            },
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -78,6 +88,10 @@ class InferenceWorkload:
     latency_slo_ms: float
     min_throughput_rps: float
     batch_size: int
+    service_name: str
+    namespace: str
+    container_image: str
+    replicas: int
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> InferenceWorkload:
@@ -92,6 +106,15 @@ class InferenceWorkload:
             latency_slo_ms=float(data.get("latency_slo_ms", 0)),
             min_throughput_rps=float(data.get("min_throughput_rps", 0)),
             batch_size=int(data.get("batch_size", 1)),
+            service_name=str(data.get("service_name", workload_id)),
+            namespace=str(data.get("namespace", "ai-inference")),
+            container_image=str(
+                data.get(
+                    "container_image",
+                    "ghcr.io/example/ai-inference:latest",
+                )
+            ),
+            replicas=int(data.get("replicas", 1)),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -170,6 +193,21 @@ class InferencePlacementDecision:
     reason: str
     rejected_resources: dict[str, str]
     ranked_candidates: list[dict[str, Any]]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class InferenceDeploymentPlan:
+    valid: bool
+    workload: str
+    selected_resource: str
+    action: str
+    score: float
+    reason: str
+    deployment_plan: dict[str, Any]
+    rejected_resources: dict[str, str]
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -260,6 +298,67 @@ def recommend_inference_placement(
     )
 
 
+def build_inference_deployment_plan(
+    config: InferenceOptimizationConfig,
+    workload_id: str,
+) -> InferenceDeploymentPlan:
+    workload = config.get_workload(workload_id)
+    decision = recommend_inference_placement(config, workload_id)
+    if not decision.valid:
+        return InferenceDeploymentPlan(
+            valid=False,
+            workload=workload.id,
+            selected_resource="",
+            action="",
+            score=0.0,
+            reason=decision.reason,
+            deployment_plan={},
+            rejected_resources=decision.rejected_resources,
+        )
+
+    resource = config.resources[decision.selected_resource]
+    deployment_plan = {
+        "service_name": workload.service_name,
+        "container_image": workload.container_image,
+        "target_resource": resource.id,
+        "target_accelerator": resource.accelerator,
+        "kubernetes": {
+            "namespace": workload.namespace,
+            "deployment": workload.service_name,
+            "replicas": workload.replicas,
+            "node_selector": resource.node_selector
+            or {"aiops.resource/accelerator": resource.accelerator},
+            "resources": _kubernetes_resource_spec(resource, workload),
+        },
+        "control_actions": [
+            decision.action,
+            "scale_replicas",
+            "monitor_latency",
+            "rollback_on_slo_violation",
+        ],
+        "monitoring_metrics": [
+            "inference_latency_ms",
+            "inference_throughput_rps",
+            "gpu_memory_utilization",
+            "cost_per_hour",
+        ],
+        "slo": {
+            "latency_ms": workload.latency_slo_ms,
+            "min_throughput_rps": workload.min_throughput_rps,
+        },
+    }
+    return InferenceDeploymentPlan(
+        valid=True,
+        workload=workload.id,
+        selected_resource=resource.id,
+        action=decision.action,
+        score=decision.score,
+        reason=decision.reason,
+        deployment_plan=deployment_plan,
+        rejected_resources=decision.rejected_resources,
+    )
+
+
 def _rejection_reason(
     resource: InferenceResourceProfile,
     workload: InferenceWorkload,
@@ -319,3 +418,21 @@ def _action_for_resource(resource: InferenceResourceProfile) -> str:
     if resource.accelerator == "npu":
         return "deploy_on_npu_vm"
     return "deploy_on_cpu_vm"
+
+
+def _kubernetes_resource_spec(
+    resource: InferenceResourceProfile,
+    workload: InferenceWorkload,
+) -> dict[str, dict[str, str]]:
+    requests = {
+        "cpu": str(max(1, min(resource.cpu_cores, 8))),
+        "memory": f"{max(1, min(int(resource.memory_gb), 32))}Gi",
+    }
+    limits = dict(resource.resource_limits)
+    if resource.accelerator == "gpu" and "nvidia.com/gpu" not in limits:
+        limits["nvidia.com/gpu"] = "1"
+    if resource.accelerator == "npu" and "aiops.dev/npu" not in limits:
+        limits["aiops.dev/npu"] = "1"
+    if workload.estimated_vram_gb > 0 and resource.accelerator != "cpu":
+        limits.setdefault("aiops.dev/vram-gb", str(int(workload.estimated_vram_gb)))
+    return {"requests": requests, "limits": limits}
