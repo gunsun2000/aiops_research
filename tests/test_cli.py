@@ -380,6 +380,37 @@ def test_cli_selects_ops_llm_under_quality_policy(capsys):
     assert output["ranking"][0]["model"] == "gpt-5.5"
 
 
+def test_cli_runs_service_operations_pipeline_in_mock_mode(capsys):
+    exit_code = main(
+        [
+            "run-service-operations",
+            "--mode",
+            "mock",
+            "--guard-backend",
+            "go",
+            "--llm-policy",
+            "quality_first",
+            "--workload",
+            "llm-chat-inference",
+            "--namespace",
+            "online-boutique",
+            "--deployment",
+            "paymentservice",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["command"] == "run-service-operations"
+    assert output["selected_llm"] == "gpt-5.5"
+    assert output["selected_resource"] == "gpu-vm-l4"
+    assert output["deployment_manifest"]["kind"] == "Deployment"
+    assert output["deployment_dry_run"]["valid"] is True
+    assert output["recovery_pipeline_ready"] is True
+    assert output["guard_backend"] == "go"
+
+
 def test_cli_lists_ops_llm_candidates(capsys):
     exit_code = main(
         [

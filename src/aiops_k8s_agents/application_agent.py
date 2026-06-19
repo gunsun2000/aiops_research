@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from aiops_k8s_agents.agent_decision import AgentDecision
 from aiops_k8s_agents.models import AlertEvent, Diagnosis, ScaleAction
@@ -43,6 +44,45 @@ class AIApplicationManagementAgent:
                 "namespace": action.namespace,
                 "deployment": action.deployment,
                 "replicas": str(action.replicas),
+            },
+        )
+
+    def plan_deployment(
+        self,
+        deployment_plan: Any,
+        placement_decision: Any | None = None,
+    ) -> AgentDecision:
+        if not getattr(deployment_plan, "valid", False):
+            return AgentDecision(
+                agent=self.name,
+                action="app_deployment_plan_rejected",
+                reward=-0.80,
+                approved=False,
+                reason=str(getattr(deployment_plan, "reason", "invalid deployment plan")),
+            )
+
+        plan = dict(getattr(deployment_plan, "deployment_plan", {}))
+        kubernetes = dict(plan.get("kubernetes", {}))
+        selected_resource = str(getattr(deployment_plan, "selected_resource", ""))
+        if placement_decision is not None:
+            selected_resource = str(
+                getattr(placement_decision, "selected_resource", selected_resource)
+            )
+
+        return AgentDecision(
+            agent=self.name,
+            action="app_plan_deployment",
+            reward=0.80,
+            approved=True,
+            reason=(
+                "AI application deployment plan is ready for Kubernetes manifest "
+                "generation and dry-run validation."
+            ),
+            parameters={
+                "workload": str(getattr(deployment_plan, "workload", "")),
+                "namespace": str(kubernetes.get("namespace", "")),
+                "deployment": str(kubernetes.get("deployment", "")),
+                "selected_resource": selected_resource,
             },
         )
 

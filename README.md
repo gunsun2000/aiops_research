@@ -1,5 +1,60 @@
 # AIOps 4-Agent Kubernetes 자동화 연구
 
+## Agent 중심 통합 파이프라인 실행
+
+이번 통합으로 기존에 따로 돌던 기능들이 하나의 운영 흐름으로 연결됐다.
+
+```text
+Ops LLM 선정
+-> CPU/GPU VM 배치 계획
+-> Kubernetes Deployment manifest 생성
+-> manifest mock/dry-run 검증
+-> Application / Infrastructure / Cost Agent 검토
+-> 필요 시 AI-MCMP 4-Agent 복구 판단
+-> Python Validator + Go Guard 실행 준비
+```
+
+가장 먼저 확인할 명령:
+
+```bash
+aiops-k8s-agents run-service-operations \
+  --llm-policy quality_first \
+  --workload llm-chat-inference \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --mode mock \
+  --guard-backend go
+```
+
+정상 결과 핵심:
+
+```text
+selected_llm = gpt-5.5
+selected_resource = gpu-vm-l4
+deployment_manifest.kind = Deployment
+deployment_dry_run.valid = true
+agent_reviews.application.approved = true
+agent_reviews.infrastructure.approved = true
+agent_reviews.cost.approved = true
+recovery_pipeline_ready = true
+guard_backend = go
+```
+
+복구 판단까지 같이 연결하려면 장애 입력을 함께 준다.
+
+```bash
+aiops-k8s-agents run-service-operations \
+  --llm-policy quality_first \
+  --workload llm-chat-inference \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --metric cpu \
+  --value 95 \
+  --threshold 80 \
+  --mode mock \
+  --guard-backend go
+```
+
 이 프로젝트는 Kubernetes 기반 서비스 장애 상황에서 4개의 AI Agent가 서로 다른 운영 관점을 나누어 판단하고, 검증된 action만 안전하게 실행하는 AIOps 연구 프로토타입입니다.
 
 현재 중심은 **AIOpsLab 자체 개발**이 아니라, AIOpsLab/Chaos Mesh/Prometheus/Kubernetes 환경 위에서 동작하는 **4-Agent 서비스 제어 및 관리 자동화 구조**입니다.
