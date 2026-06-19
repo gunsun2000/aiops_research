@@ -10,6 +10,7 @@
 | `submission/requirements_definition.md` | 요구사항 정의서 |
 | `submission/functional_api_guide.md` | 기능/API 사용 가이드 |
 | `submission/install_and_run_guide.md` | 설치 및 실행 가이드 |
+| `submission/execution_code_guide.md` | 실행 코드 설명서 |
 | `submission/test_guide.md` | 시험 검증 가이드 |
 
 ## 폴더 구조
@@ -37,6 +38,7 @@ docs/
 | `functional_api_guide.md` | CLI/API 기능 사용법 |
 | `openapi_agent_registry.yaml` | Agent 등록 관리 OpenAPI 초안 |
 | `install_and_run_guide.md` | 로컬/서버 설치 및 실행 방법 |
+| `execution_code_guide.md` | 교수님 요청 연구와 과제 요구별 실행 코드 설명 |
 | `test_guide.md` | pytest, Go test, real experiment 검증 방법 |
 
 ## design
@@ -48,6 +50,7 @@ docs/
 | `agent_registry_guide.md` | 4-Agent 등록 관리 구조 |
 | `agent_action_reward_policy.md` | Agent별 action/reward 정책 |
 | `go_and_llm_cross_validation.md` | Go guard와 LLM/코딩 에이전트 교차 검증 |
+| `research_task_integration_design.md` | 교수님 요청 연구와 대학원/ETRI 과제 요구의 범위 구분 및 통합 설계 |
 | `ops_llm_selection_guide.md` | Ops 분석 시험 및 최적 LLM 선정 |
 | `inference_optimization_guide.md` | CPU/GPU VM 기반 추론 배치 추천 |
 | `ai_application_deployment_strategy.md` | AI 응용 배포/제어 추론 최적화 전략 |
@@ -61,6 +64,7 @@ docs/
 | --- | --- |
 | `recovery_action_experiment_guide.md` | Chaos Mesh 장애별 recovery action 실험 |
 | `recovery_quantitative_analysis_guide.md` | 평균 복구 시간, 성공률, reward 그래프 분석 |
+| `service_operations_environment.md` | Agent 중심 AI 서비스 운영 통합 실험 환경과 실행 코드 |
 | `full_stack_experiment_guide.md` | full-stack 실험 환경 구성 |
 | `experiment_commands.md` | 전체 실험 명령어 기록 |
 | `server_migration_runbook.md` | 서버 이관 및 실행 절차 |
