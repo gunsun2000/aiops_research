@@ -1,6 +1,6 @@
 # AIOps 4-Agent Kubernetes 자동화 연구
 
-![AIOps 4-Agent 프로젝트 진행 구조 및 연결 흐름](docs/assets/project_architecture_overview.webp)
+![AIOps 4-Agent 프로젝트 진행 구조 및 연결 흐름](docs/assets/project_architecture_overview.png.png)
 
 ## Agent 중심 통합 파이프라인 실행
 
