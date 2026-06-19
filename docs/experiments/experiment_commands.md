@@ -1027,3 +1027,223 @@ bash scripts/server_full_stack_feedback_loop.sh
 ```
 
 `GUARD_BACKEND=python`으로 바꾸면 기존 Python validator-only 경로로 되돌릴 수 있습니다.
+
+## 18. Agent 중심 AI 서비스 운영 통합 파이프라인
+
+이 섹션은 현재 프로젝트에서 따로 존재하던 기능들을 하나의 실행 흐름으로 묶어 검증하는 명령어입니다.
+
+통합되는 기능은 다음과 같습니다.
+
+```text
+Ops LLM 선정
+-> CPU/GPU VM 기반 AI 응용 배치 추천
+-> Kubernetes Deployment manifest 생성
+-> 응용관리 / 인프라 / 비용 Agent 검토
+-> Python Validator + Go Guard 실행 준비
+-> Kubernetes server-side dry-run 검증
+```
+
+### 18-1. 서버 환경 준비
+
+연구실 서버에서 다음 환경을 먼저 맞춥니다.
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+
+git pull origin master
+python -m pip install -e ".[dev,autogen]"
+
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
+
+kubectl config current-context
+kubectl get nodes
+```
+
+정상 기준:
+
+```text
+current-context = kind-geonhae-aiops
+node status = Ready
+```
+
+### 18-2. Python과 Go 검증
+
+Python 프로젝트 전체 테스트:
+
+```bash
+cd ~/geonhae/aiops_research
+python -m pytest
+```
+
+정상 기준:
+
+```text
+127 passed
+```
+
+Go guard 테스트:
+
+```bash
+cd ~/geonhae/aiops_research/go/aiops-guard
+go test ./...
+```
+
+정상 기준:
+
+```text
+ok github.com/gunsun2000/aiops_research/go/aiops-guard/internal/guard
+```
+
+### 18-3. Mock 모드 통합 실행
+
+Mock 모드는 실제 Kubernetes API를 호출하지 않고, 통합 파이프라인의 판단 결과와 manifest 생성을 확인합니다.
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+
+aiops-k8s-agents run-service-operations \
+  --llm-policy quality_first \
+  --workload llm-chat-inference \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --mode mock \
+  --guard-backend go
+```
+
+확인할 핵심 출력:
+
+```json
+{
+  "valid": true,
+  "selected_llm": "gpt-5.5",
+  "autogen_runtime_model": "gpt-5.5",
+  "selected_resource": "gpu-vm-l4",
+  "deployment_manifest": {
+    "kind": "Deployment"
+  },
+  "deployment_dry_run": {
+    "mode": "mock",
+    "valid": true
+  },
+  "recovery_pipeline_ready": true,
+  "guard_backend": "go"
+}
+```
+
+이 결과의 의미:
+
+```text
+Ops LLM 선정 결과가 AutoGen runtime model로 연결됨
+CPU/GPU VM 배치 결과가 Infrastructure Agent 검토에 반영됨
+AI 서비스 배포 manifest가 생성됨
+Go guard를 사용하는 실행 경로가 준비됨
+```
+
+### 18-4. Dry-run 모드 통합 실행
+
+Dry-run 모드는 Kubernetes API 서버에 manifest를 보내되, 실제 Pod는 생성하지 않습니다.
+
+먼저 AI inference namespace를 준비합니다.
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
+
+kubectl create namespace ai-inference --dry-run=client -o yaml | kubectl apply -f -
+kubectl get namespace ai-inference
+```
+
+그 다음 통합 파이프라인을 dry-run으로 실행합니다.
+
+```bash
+aiops-k8s-agents run-service-operations \
+  --llm-policy quality_first \
+  --workload llm-chat-inference \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --mode dry-run \
+  --guard-backend go
+```
+
+정상 기준:
+
+```json
+{
+  "valid": true,
+  "deployment_dry_run": {
+    "command": "kubectl apply -f - --dry-run=server",
+    "mode": "dry-run",
+    "valid": true,
+    "stdout": "deployment.apps/llm-chat-inference created (server dry run)"
+  },
+  "recovery_pipeline_ready": true
+}
+```
+
+이 결과의 의미:
+
+```text
+Kubernetes Deployment manifest가 실제 API 서버 검증을 통과함
+실제 Pod는 생성하지 않았지만, 배포 명세는 Kubernetes 관점에서 유효함
+```
+
+### 18-5. 장애 입력까지 포함한 통합 실행
+
+배포 준비뿐 아니라 4-Agent 복구 판단까지 함께 보고 싶으면 장애 입력을 추가합니다.
+
+```bash
+aiops-k8s-agents run-service-operations \
+  --llm-policy quality_first \
+  --workload llm-chat-inference \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --metric cpu \
+  --value 95 \
+  --threshold 80 \
+  --message "paymentservice CPU usage is high" \
+  --mode mock \
+  --guard-backend go
+```
+
+이 명령은 다음을 한 번에 확인합니다.
+
+```text
+AI 서비스 배포 준비
+4-Agent 장애 복구 판단
+ScaleAction 생성
+Python Validator + Go Guard 실행 준비
+```
+
+### 18-6. 현재 완료와 후속 단계 구분
+
+현재 완료된 범위:
+
+```text
+AI 서비스 배포 계획 생성
+Deployment manifest 생성
+Kubernetes server-side dry-run 검증
+Agent 검토와 Go Guard 연결
+```
+
+아직 후속 단계로 남긴 범위:
+
+```text
+실제 AI inference Pod 생성
+실제 LLM serving container 이미지 운영
+GPU device plugin / node label 기반 실제 GPU scheduling
+Go Echo HTTP API 서버와 Swagger UI
+```
+
+실제 Pod 배포를 아직 하지 않은 이유:
+
+```text
+현재 이미지 ghcr.io/gunsun2000/aiops-llm-chat:latest는 연구용 배포 계획 이미지임
+kind 클러스터에 실제 GPU device plugin과 node label이 완전히 준비되어야 함
+실제 apply는 리소스를 점유하므로 dry-run 검증 이후 별도 단계로 진행하는 것이 안전함
+```

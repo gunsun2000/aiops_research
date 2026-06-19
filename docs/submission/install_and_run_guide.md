@@ -551,3 +551,154 @@ RUNS=3 SLEEP_SECONDS=15 bash scripts/server_aiopslab_repeat_detection.sh
 ```bash
 cat runs/aiopslab_detection_summary.md
 ```
+
+## 15. Agent 중심 통합 파이프라인 실행
+
+이 명령은 현재 프로젝트의 핵심 기능을 하나의 흐름으로 실행합니다.
+
+```text
+Ops LLM 선정
+-> CPU/GPU VM 배치 추천
+-> AI 서비스 배포 계획 생성
+-> Kubernetes Deployment manifest 생성
+-> 4-Agent 검토
+-> Go Guard 연결
+-> Kubernetes dry-run 검증
+```
+
+### 15-1. 서버 환경 준비
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+
+git pull origin master
+python -m pip install -e ".[dev,autogen]"
+
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
+
+kubectl config current-context
+kubectl get nodes
+```
+
+정상 기준:
+
+```text
+kind-geonhae-aiops
+node Ready
+```
+
+### 15-2. 기본 테스트
+
+```bash
+python -m pytest
+```
+
+정상 기준:
+
+```text
+127 passed
+```
+
+Go guard도 확인합니다.
+
+```bash
+cd ~/geonhae/aiops_research/go/aiops-guard
+go test ./...
+```
+
+### 15-3. Mock 모드 실행
+
+Mock 모드는 실제 Kubernetes에 적용하지 않고 전체 판단 흐름만 확인합니다.
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+
+aiops-k8s-agents run-service-operations \
+  --llm-policy quality_first \
+  --workload llm-chat-inference \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --mode mock \
+  --guard-backend go
+```
+
+성공하면 다음 값들이 나옵니다.
+
+```text
+valid = true
+selected_llm = gpt-5.5
+autogen_runtime_model = gpt-5.5
+selected_resource = gpu-vm-l4
+deployment_manifest.kind = Deployment
+deployment_dry_run.valid = true
+recovery_pipeline_ready = true
+guard_backend = go
+```
+
+### 15-4. Kubernetes dry-run 실행
+
+Dry-run은 실제 Pod를 만들지는 않지만, Kubernetes API 서버가 manifest를 받을 수 있는지 검증합니다.
+
+먼저 namespace를 준비합니다.
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
+
+kubectl create namespace ai-inference --dry-run=client -o yaml | kubectl apply -f -
+kubectl get namespace ai-inference
+```
+
+그 다음 실행합니다.
+
+```bash
+aiops-k8s-agents run-service-operations \
+  --llm-policy quality_first \
+  --workload llm-chat-inference \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --mode dry-run \
+  --guard-backend go
+```
+
+성공 기준:
+
+```text
+deployment_dry_run.valid = true
+deployment.apps/llm-chat-inference created (server dry run)
+recovery_pipeline_ready = true
+```
+
+### 15-5. 이 결과가 의미하는 것
+
+완료된 것:
+
+```text
+Ops LLM 선정 결과가 AutoGen runtime model로 연결됨
+CPU/GPU VM 배치 결과가 Infrastructure Agent 판단에 반영됨
+AI 서비스 Deployment manifest가 생성됨
+Kubernetes server-side dry-run 검증을 통과함
+Go Guard 기반 실행 경로가 연결됨
+```
+
+아직 후속 단계:
+
+```text
+실제 AI inference Pod 배포
+실제 LLM serving container 이미지 운영
+GPU device plugin과 node label 기반 실제 GPU scheduling
+Go Echo HTTP API 서버와 Swagger UI
+```
+
+현재 dry-run까지만 한 이유:
+
+```text
+실제 Pod 배포는 컨테이너 이미지, GPU device plugin, node label, 리소스 점유 문제가 함께 발생함
+따라서 1차 연구에서는 안전하게 manifest 생성과 Kubernetes API 검증까지 완료한 상태로 둠
+```

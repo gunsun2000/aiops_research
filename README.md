@@ -1,6 +1,6 @@
 # AIOps 4-Agent Kubernetes 자동화 연구
 
-![AIOps 4-Agent 프로젝트 진행 구조 및 연결 흐름](docs/assets/project_architecture_overview.png)
+![AIOps 4-Agent 프로젝트 진행 구조 및 연결 흐름](docs/assets/project_architecture_overview.webp)
 
 ## Agent 중심 통합 파이프라인 실행
 
@@ -14,12 +14,6 @@ Ops LLM 선정
 -> Application / Infrastructure / Cost Agent 검토
 -> 필요 시 AI-MCMP 4-Agent 복구 판단
 -> Python Validator + Go Guard 실행 준비
-```
-
-상세한 서버 환경 준비, mock 실행, Kubernetes dry-run 실행, 성공 기준은 다음 runbook에 정리했다.
-
-```text
-docs/experiments/service_operations_environment.md
 ```
 
 가장 먼저 확인할 명령:
@@ -67,25 +61,6 @@ aiops-k8s-agents run-service-operations \
 
 현재 중심은 **AIOpsLab 자체 개발**이 아니라, AIOpsLab/Chaos Mesh/Prometheus/Kubernetes 환경 위에서 동작하는 **4-Agent 서비스 제어 및 관리 자동화 구조**입니다.
 
-## 교수님 요청, 연구 과제, 현재 프로젝트의 관계
-
-이 저장소에는 두 흐름이 함께 들어 있다. 하나는 교수님이 요청한 **4-Agent 기반 AIOps 장애 감시/복구 연구**이고, 다른 하나는 대학원/ETRI 과제에서 요구하는 **AI 응용 배포/운용 및 멀티 클라우드 확장 준비 기능**이다. 둘은 완전히 같은 과제는 아니지만, Agent 기반 운영 자동화라는 상위 목표 아래에서 연결된다.
-
-| 구분 | 핵심 목표 | 현재 구현/산출물 |
-| --- | --- | --- |
-| 교수님 요청 연구 | 4개 Agent가 장애 상태를 판단하고 안전한 Kubernetes 복구 action을 결정 | 4-Agent, action/reward, Chaos Mesh, Prometheus, Kubernetes real 실행 |
-| 대학원/ETRI 과제 요구 | Go 개발, 2종 이상 LLM/코딩 Agent 교차 검증, AI App 배포/운용, CPU/GPU VM 배치 준비 | Go Guard, Codex 교차 검증 문서, Ops LLM 선정, CPU/GPU VM 배치/배포 계획 |
-| 통합 프로젝트 | 장애 복구 연구와 AI 응용 배포/운용 과제 기능을 하나의 Agent 중심 운영 파이프라인으로 연결 | `run-service-operations`, Python Validator + Go Guard, 배포 manifest dry-run |
-
-통합하면 좋은 점은 명확하다. 장애 복구 연구에서 만든 관측, Agent 판단, 안전 검증, 실행 로그 구조를 AI App 배포/운용 과제에도 재사용할 수 있고, 과제에서 요구하는 Go/LLM 교차 검증/배포 전략은 기존 AIOps 연구의 안전성과 산출물 완성도를 높인다.
-
-자세한 구분과 설계는 아래 문서에 정리했다.
-
-```text
-docs/design/research_task_integration_design.md
-docs/submission/execution_code_guide.md
-```
-
 ## 현재까지 완료된 핵심
 
 | 구분 | 상태 |
@@ -101,8 +76,6 @@ docs/submission/execution_code_guide.md
 | Agent 등록 관리 프로토타입 | 완료 |
 | CPU/GPU VM 기반 추론 배치 최적화 프로토타입 | 완료 |
 | Reward 정책 변화와 장애별 action ranking 실험 | 완료 |
-| Agent 중심 AI 서비스 운영 통합 파이프라인 | 완료 |
-| Kubernetes server-side AI 서비스 배포 dry-run | 완료 |
 
 ## 전체 구조
 
@@ -304,9 +277,6 @@ CPU 95% 입력은 초기 smoke test용 mock 시나리오다. 현재 연구 결�
 
 | 문서 | 내용 |
 | --- | --- |
-| `docs/design/research_task_integration_design.md` | 교수님 요청 연구와 대학원/ETRI 과제 요구의 범위 구분 및 통합 설계 |
-| `docs/submission/execution_code_guide.md` | 실행 코드 설명서 |
-| `docs/experiments/service_operations_environment.md` | Agent 중심 AI 서비스 운영 통합 실험 환경과 실행 코드 |
 | `docs/submission/requirements_definition.md` | 요구사항 정의서 |
 | `docs/design/agent_registry_guide.md` | AI Agent 등록 관리 가이드 |
 | `docs/design/inference_optimization_guide.md` | CPU/GPU VM 추론 최적화 가이드 |
@@ -329,8 +299,6 @@ CPU 95% 입력은 초기 smoke test용 mock 시나리오다. 현재 연구 결�
 - Agent 등록 관리
 - CPU/GPU VM 기반 추론 최적화 정책
 - Reward 정책 변화에 따른 장애별 action ranking 비교
-- Agent 중심 AI 서비스 운영 통합 파이프라인
-- AI 서비스 Deployment manifest 생성 및 Kubernetes server-side dry-run 검증
 
 다음 연구 확장:
 
