@@ -14,6 +14,12 @@ Ops LLM 선정
 -> Python Validator + Go Guard 실행 준비
 ```
 
+상세한 서버 환경 준비, mock 실행, Kubernetes dry-run 실행, 성공 기준은 다음 runbook에 정리했다.
+
+```text
+docs/experiments/service_operations_environment.md
+```
+
 가장 먼저 확인할 명령:
 
 ```bash
@@ -74,6 +80,8 @@ aiops-k8s-agents run-service-operations \
 | Agent 등록 관리 프로토타입 | 완료 |
 | CPU/GPU VM 기반 추론 배치 최적화 프로토타입 | 완료 |
 | Reward 정책 변화와 장애별 action ranking 실험 | 완료 |
+| Agent 중심 AI 서비스 운영 통합 파이프라인 | 완료 |
+| Kubernetes server-side AI 서비스 배포 dry-run | 완료 |
 
 ## 전체 구조
 
@@ -275,6 +283,7 @@ CPU 95% 입력은 초기 smoke test용 mock 시나리오다. 현재 연구 결�
 
 | 문서 | 내용 |
 | --- | --- |
+| `docs/experiments/service_operations_environment.md` | Agent 중심 AI 서비스 운영 통합 실험 환경과 실행 코드 |
 | `docs/submission/requirements_definition.md` | 요구사항 정의서 |
 | `docs/design/agent_registry_guide.md` | AI Agent 등록 관리 가이드 |
 | `docs/design/inference_optimization_guide.md` | CPU/GPU VM 추론 최적화 가이드 |
@@ -297,6 +306,8 @@ CPU 95% 입력은 초기 smoke test용 mock 시나리오다. 현재 연구 결�
 - Agent 등록 관리
 - CPU/GPU VM 기반 추론 최적화 정책
 - Reward 정책 변화에 따른 장애별 action ranking 비교
+- Agent 중심 AI 서비스 운영 통합 파이프라인
+- AI 서비스 Deployment manifest 생성 및 Kubernetes server-side dry-run 검증
 
 다음 연구 확장:
 
