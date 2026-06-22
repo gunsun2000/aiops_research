@@ -1,5 +1,21 @@
 {
   "version": "1",
+  "metadata": {
+    "data_source": "manual_summary",
+    "benchmark_run_id": "aiopslab-and-chaos-summary-20260616",
+    "generated_from": [
+      "AIOpsLab Hotel Reservation detection summaries",
+      "Chaos Mesh recovery action experiment summaries",
+      "manual project result review"
+    ],
+    "is_synthetic": false,
+    "last_updated": "2026-06-16",
+    "notes": [
+      "Current benchmark values are manually summarized from available project experiment logs and review notes.",
+      "They are suitable for prototype model-selection policy wiring, but should be regenerated from standardized per-model runs for final quantitative reporting.",
+      "Use scripts/build_ops_llm_benchmark_from_runs.py when comparable per-model run records are available."
+    ]
+  },
   "policies": {
     "quality_first": {
       "description": "Ops detection, safe action validity, and consistent reasoning are prioritized for the main research agent path.",

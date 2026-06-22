@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from aiops_k8s_agents.agent_decision import AgentDecision
-from aiops_k8s_agents.models import ScaleAction
+from aiops_k8s_agents.models import RecoveryAction, RecoveryActionKind, ScaleAction
 
 
 @dataclass(frozen=True)
@@ -14,32 +14,48 @@ class AISemiconductorInfraOpsAgent:
     name: str = "AISemiconductorInfraOpsAgent"
     max_recommended_replicas: int = 5
 
-    def review(self, action: ScaleAction) -> AgentDecision:
-        if action.replicas > self.max_recommended_replicas:
+    def review(self, action: ScaleAction | RecoveryAction) -> AgentDecision:
+        if isinstance(action, RecoveryAction) and action.kind != RecoveryActionKind.SCALE_OUT:
+            return AgentDecision(
+                agent=self.name,
+                action="infra_action_approved",
+                reward=0.70,
+                approved=True,
+                reason=(
+                    f"{action.kind.value} does not increase replica capacity and is "
+                    "within the first-stage infrastructure policy."
+                ),
+                parameters={"action_kind": action.kind.value},
+            )
+
+        replicas = action.replicas
+        if replicas is None:
             return AgentDecision(
                 agent=self.name,
                 action="infra_capacity_rejected",
                 reward=-0.60,
                 approved=False,
-                reason=(
-                    "요청 replica 수가 AI 반도체 인프라 권장 범위를 "
-                    "초과했습니다."
-                ),
+                reason="scale_out requires an explicit replica target.",
+            )
+        if replicas > self.max_recommended_replicas:
+            return AgentDecision(
+                agent=self.name,
+                action="infra_capacity_rejected",
+                reward=-0.60,
+                approved=False,
+                reason="Requested replicas exceed the first-stage infrastructure policy.",
             )
         return AgentDecision(
             agent=self.name,
             action="infra_capacity_approved",
             reward=0.70,
             approved=True,
-            reason=(
-                "replica 목표가 모사 GPU/NPU 인프라 자원 범위 안에 있어 "
-                "승인합니다."
-            ),
+            reason="Requested replicas are within the simulated GPU/NPU capacity policy.",
         )
 
     def review_operation(
         self,
-        recovery_action: ScaleAction | None = None,
+        recovery_action: ScaleAction | RecoveryAction | None = None,
         placement_decision: Any | None = None,
     ) -> AgentDecision:
         if recovery_action is not None:

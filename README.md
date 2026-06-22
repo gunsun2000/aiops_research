@@ -329,3 +329,18 @@ statistics/reward_by_policy.svg
 - single-agent baseline 비교
 - Agent 제거 ablation 실험
 - Go Echo HTTP API 서버와 Swagger UI
+
+## Latest Repository Improvement Notes
+
+이번 개선은 전체 연구 목표를 바꾸지 않고, 기존 4-Agent AIOps 파이프라인의 약점을 보완하는 방향으로 반영되었다.
+
+| 개선 항목 | 반영 위치 |
+| --- | --- |
+| 고정 규칙 기반 Agent 판단 완화 | `config/agent_decision_policy.json`, `src/aiops_k8s_agents/ha_agent.py`, `src/aiops_k8s_agents/application_agent.py` |
+| metric/severity 기반 action 선택 | CPU/memory는 scale-out, restart/latency/network 계열은 rollout restart 중심으로 정책화 |
+| Ops LLM benchmark 출처 명시 | `config/ops_llm_benchmark.json`의 `metadata` 필드 |
+| LLM benchmark 재생성 보조 스크립트 | `scripts/build_ops_llm_benchmark_from_runs.py` |
+| AutoGen 설명 보정 | [docs/design/autogen_groupchat.md](docs/design/autogen_groupchat.md) |
+| Ops LLM 선정 설명 보정 | [docs/design/ops_llm_selection_guide.md](docs/design/ops_llm_selection_guide.md) |
+
+주의할 점은 현재 AutoGen 경로가 완전 자율 장시간 토론 시스템이 아니라, structured output과 validator로 제한된 multi-agent prototype이라는 것이다. LLM이 생성한 자유 텍스트 명령은 직접 실행하지 않으며, 최종 Kubernetes action은 Python Validator와 Go Guard를 통과해야 한다.

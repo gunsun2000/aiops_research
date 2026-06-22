@@ -24,16 +24,52 @@ AUTOGEN_AGENT_ALIASES = {
     "AI HA Agent": "AIServiceHASupportAgent",
     "AI Service HA Support Agent": "AIServiceHASupportAgent",
     "HA Support Agent": "AIServiceHASupportAgent",
-    "AI서비스 HA 지원 에이전트": "AIServiceHASupportAgent",
     "AI Application Management Agent": "AIApplicationManagementAgent",
     "Application Management Agent": "AIApplicationManagementAgent",
-    "AI응용관리 자동화 에이전트": "AIApplicationManagementAgent",
     "AI Semiconductor Infra Ops Agent": "AISemiconductorInfraOpsAgent",
     "Semiconductor Infra Ops Agent": "AISemiconductorInfraOpsAgent",
-    "AI반도체 인프라 운용 자동화 에이전트": "AISemiconductorInfraOpsAgent",
     "Cost Optimization Agent": "CostOptimizationAgent",
     "Cost Agent": "CostOptimizationAgent",
-    "비용 최적화 지원 에이전트": "CostOptimizationAgent",
+}
+
+AUTOGEN_SYSTEM_MESSAGES = {
+    "AIServiceHASupportAgent": (
+        "You are the AI service HA support agent. Use the alert metric, value, "
+        "threshold, and message to judge service availability risk and recovery "
+        "urgency. Return agent=\"AIServiceHASupportAgent\" exactly. Approve only "
+        "when the evidence crosses the threshold or indicates degraded service. "
+        "Use action=ha_scale_out_required for scale-out-worthy saturation, "
+        "action=ha_recovery_required for non-scale recovery needs, or "
+        "action=ha_no_action when no recovery is justified. Return only the "
+        "structured output schema."
+    ),
+    "AIApplicationManagementAgent": (
+        "You are the AI application management automation agent. Return "
+        "agent=\"AIApplicationManagementAgent\" exactly. Choose the least risky "
+        "application action supported by the evidence: app_observe_only for "
+        "self-healing or weak symptoms, app_rollout_restart for restart/latency/"
+        "network degradation, or app_scale_deployment for clear capacity "
+        "saturation. If proposing scale-out, choose replicas from severity and "
+        "safety context instead of using a fixed number. Return only the "
+        "structured output schema."
+    ),
+    "AISemiconductorInfraOpsAgent": (
+        "You are the AI semiconductor infrastructure operations agent. Return "
+        "agent=\"AISemiconductorInfraOpsAgent\" exactly. Review whether the "
+        "proposed action fits CPU/GPU/NPU capacity, node pressure, and replica "
+        "limits. Approve with infra_capacity_approved when the action is feasible; "
+        "reject with infra_capacity_rejected if it would exceed safe capacity. "
+        "Return only the structured output schema."
+    ),
+    "CostOptimizationAgent": (
+        "You are the cost optimization support agent. Return "
+        "agent=\"CostOptimizationAgent\" exactly. Review whether the action is "
+        "cost-appropriate, avoids unnecessary replica increases, and respects "
+        "budget policy. Approve with cost_budget_approved when the cost is "
+        "acceptable; reject with cost_budget_rejected when the action is "
+        "unnecessarily expensive or violates policy. Return only the structured "
+        "output schema."
+    ),
 }
 
 DecisionProvider = Callable[[AlertEvent], Awaitable[list[AgentDecision]]]
@@ -67,34 +103,40 @@ def parse_autogen_decision(payload: Any, expected_agent: str) -> AgentDecision:
 
 
 def build_autogen_task(alert: AlertEvent) -> str:
-    return json.dumps(
-        {
-            "research_goal": "AIOpsLab state를 보고 Kubernetes scale 액션을 합의합니다.",
-            "required_output": {
-                "agent": f"반드시 다음 공식 이름 중 하나: {', '.join(AUTOGEN_AGENT_NAMES)}",
-                "action": "정책 액션 이름",
-                "reward": "float reward",
-                "approved": "boolean",
-                "reason": "한국어 판단 근거",
-                "parameters": (
-                    "namespace/deployment/replicas를 항상 문자열로 포함합니다."
-                ),
-            },
-            "alert": {
-                "namespace": alert.namespace,
-                "service": alert.service,
-                "metric": alert.metric,
-                "value": alert.value,
-                "threshold": alert.threshold,
-                "message": alert.message,
-            },
-            "allowed_final_command": (
-                "kubectl scale deployment <deployment> --replicas=<N> -n <namespace>"
+    payload = {
+        "research_goal": (
+            "Review the AIOps alert evidence and produce bounded Kubernetes "
+            "operations decisions through the four-agent review process."
+        ),
+        "required_output": {
+            "agent": f"one exact agent name from: {', '.join(AUTOGEN_AGENT_NAMES)}",
+            "action": "bounded action name",
+            "reward": "float reward",
+            "approved": "boolean",
+            "reason": "short evidence-based rationale",
+            "parameters": (
+                "include namespace, deployment, and replicas as strings; replicas "
+                "is required only for scale-out but must remain a safe integer "
+                "string when provided"
             ),
         },
-        ensure_ascii=False,
-        indent=2,
-    )
+        "alert": {
+            "namespace": alert.namespace,
+            "service": alert.service,
+            "metric": alert.metric,
+            "value": alert.value,
+            "threshold": alert.threshold,
+            "message": alert.message,
+        },
+        "allowed_scale_command": (
+            "kubectl scale deployment <deployment> --replicas=<N> -n <namespace>"
+        ),
+        "safety_rule": (
+            "Do not emit free-form shell commands. The executor will convert only "
+            "structured, allowlisted actions into Kubernetes commands."
+        ),
+    }
+    return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
 @dataclass
@@ -138,7 +180,9 @@ class AutoGenGroupChatCoordinator:
             mode=self.mode.value,
             valid=False,
             stdout="",
-            stderr="; ".join(decision.reason for decision in decisions if not decision.approved),
+            stderr="; ".join(
+                decision.reason for decision in decisions if not decision.approved
+            ),
             metadata=self._metadata("rejected", decisions),
         )
 
@@ -253,42 +297,6 @@ def create_openai_model_client(model: str) -> Any:
             'python -m pip install -e ".[autogen,dev]"'
         ) from exc
     return OpenAIChatCompletionClient(model=model)
-
-
-AUTOGEN_SYSTEM_MESSAGES = {
-    "AIServiceHASupportAgent": (
-        "당신은 AI서비스 HA 지원 에이전트입니다. agent 필드는 반드시 "
-        "\"AIServiceHASupportAgent\"로 작성하세요. 서비스 장애 진단, 예측, "
-        "자율복구 필요성을 판단합니다. CPU가 임계치 이상이면 "
-        "ha_scale_out_required 액션을 승인하고 reward 0.90을 제안하세요. "
-        "그 외에는 ha_no_action과 낮은 양수 reward를 반환하세요. "
-        "반드시 지정된 structured output만 반환하고 parameters에는 "
-        "관찰한 namespace, deployment, 제안 replicas \"3\"을 문자열로 포함하세요."
-    ),
-    "AIApplicationManagementAgent": (
-        "당신은 AI응용관리 자동화 에이전트입니다. agent 필드는 반드시 "
-        "\"AIApplicationManagementAgent\"로 작성하세요. HA 에이전트가 복구 필요성을 "
-        "인정한 상황에서 Kubernetes 응용 제어 액션을 제안합니다. v1에서는 "
-        "app_scale_deployment만 사용하며 parameters에 namespace, deployment, "
-        "replicas를 문자열로 포함하세요. 기본 replicas는 \"3\"이고 reward는 0.85입니다."
-    ),
-    "AISemiconductorInfraOpsAgent": (
-        "당신은 AI반도체 인프라 운용 자동화 에이전트입니다. agent 필드는 반드시 "
-        "\"AISemiconductorInfraOpsAgent\"로 작성하세요. 제안된 replica "
-        "수가 GPU/NPU 또는 가속기 자원 관점에서 가능한지 검토합니다. "
-        "parameters의 replicas가 5 이하이면 infra_capacity_approved와 reward 0.70을, "
-        "초과하면 infra_capacity_rejected와 음수 reward를 반환하세요. "
-        "parameters에는 namespace, deployment, replicas를 문자열로 포함하세요."
-    ),
-    "CostOptimizationAgent": (
-        "당신은 비용 최적화 지원 에이전트입니다. agent 필드는 반드시 "
-        "\"CostOptimizationAgent\"로 작성하세요. 제안된 replica 수가 비용 "
-        "정책상 허용 가능한지 판단합니다. replicas가 3 이하이면 "
-        "cost_budget_approved와 reward 0.60을, 초과하면 "
-        "cost_budget_rejected와 음수 reward를 반환하세요. "
-        "parameters에는 namespace, deployment, replicas를 문자열로 포함하세요."
-    ),
-}
 
 
 def _payload_to_dict(payload: Any) -> dict[str, Any]:

@@ -138,7 +138,7 @@ def test_memory_alert_generates_scale_action_for_full_stack_metric():
     assert "AIApplicationManagementAgent:app_scale_deployment" in result.metadata["actions"]
 
 
-def test_restart_alert_generates_scale_action_for_chaos_mesh_recovery():
+def test_restart_alert_generates_rollout_restart_action_for_chaos_mesh_recovery():
     coordinator = AIMCMPCoordinator(
         validator=CommandValidator(
             allowed_namespaces={"online-boutique"},
@@ -161,8 +161,9 @@ def test_restart_alert_generates_scale_action_for_chaos_mesh_recovery():
 
     assert result.valid is True
     assert result.command == (
-        "kubectl scale deployment paymentservice --replicas=3 -n online-boutique"
+        "kubectl rollout restart deployment paymentservice -n online-boutique"
     )
+    assert "AIApplicationManagementAgent:app_rollout_restart" in result.metadata["actions"]
     assert result.metadata["reward_total"] == "3.05"
 
 

@@ -20,6 +20,15 @@ def test_quality_first_policy_selects_gpt_55():
     assert result.ranking[0]["metrics"]["action_validity"] == 1.0
 
 
+def test_ops_llm_benchmark_exposes_data_source_metadata():
+    config = load_ops_llm_benchmark_config("config/ops_llm_benchmark.json")
+
+    assert config.metadata.data_source == "manual_summary"
+    assert config.metadata.is_synthetic is False
+    assert config.metadata.benchmark_run_id
+    assert "manually summarized" in " ".join(config.metadata.notes).lower()
+
+
 def test_cost_first_policy_selects_lightweight_model():
     config = load_ops_llm_benchmark_config("config/ops_llm_benchmark.json")
 

@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from aiops_k8s_agents.agent_decision import AgentDecision
-from aiops_k8s_agents.models import ScaleAction
+from aiops_k8s_agents.models import RecoveryAction, RecoveryActionKind, ScaleAction
 
 
 @dataclass(frozen=True)
@@ -15,8 +15,29 @@ class CostOptimizationAgent:
     max_cost_safe_replicas: int = 3
     max_safe_cost_per_hour: float = 2.0
 
-    def review(self, action: ScaleAction) -> AgentDecision:
-        if action.replicas > self.max_cost_safe_replicas:
+    def review(self, action: ScaleAction | RecoveryAction) -> AgentDecision:
+        if isinstance(action, RecoveryAction) and action.kind != RecoveryActionKind.SCALE_OUT:
+            return AgentDecision(
+                agent=self.name,
+                action="cost_budget_approved",
+                reward=0.60,
+                approved=True,
+                reason=(
+                    f"{action.kind.value} does not increase replica count and is "
+                    "within the first-stage cost policy."
+                ),
+                parameters={"action_kind": action.kind.value},
+            )
+        replicas = action.replicas
+        if replicas is None:
+            return AgentDecision(
+                agent=self.name,
+                action="cost_budget_rejected",
+                reward=-0.70,
+                approved=False,
+                reason="scale_out requires an explicit replica target for cost review.",
+            )
+        if replicas > self.max_cost_safe_replicas:
             return AgentDecision(
                 agent=self.name,
                 action="cost_budget_rejected",
@@ -34,7 +55,7 @@ class CostOptimizationAgent:
 
     def review_operation(
         self,
-        recovery_action: ScaleAction | None = None,
+        recovery_action: ScaleAction | RecoveryAction | None = None,
         placement_decision: Any | None = None,
     ) -> AgentDecision:
         if recovery_action is not None:

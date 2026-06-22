@@ -11,6 +11,38 @@ class OpsLLMSelectionError(ValueError):
 
 
 @dataclass(frozen=True)
+class OpsLLMBenchmarkMetadata:
+    data_source: str
+    benchmark_run_id: str
+    generated_from: tuple[str, ...]
+    is_synthetic: bool
+    last_updated: str
+    notes: tuple[str, ...]
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> OpsLLMBenchmarkMetadata:
+        data_source = str(data.get("data_source", "unspecified")).strip()
+        if not data_source:
+            raise OpsLLMSelectionError("benchmark metadata data_source is required")
+        return cls(
+            data_source=data_source,
+            benchmark_run_id=str(data.get("benchmark_run_id", "")).strip(),
+            generated_from=tuple(
+                str(item) for item in data.get("generated_from", [])
+            ),
+            is_synthetic=bool(data.get("is_synthetic", False)),
+            last_updated=str(data.get("last_updated", "")).strip(),
+            notes=tuple(str(item) for item in data.get("notes", [])),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        data = asdict(self)
+        data["generated_from"] = list(self.generated_from)
+        data["notes"] = list(self.notes)
+        return data
+
+
+@dataclass(frozen=True)
 class OpsLLMCandidate:
     model: str
     provider: str
@@ -101,6 +133,7 @@ class OpsLLMSelectionPolicy:
 @dataclass(frozen=True)
 class OpsLLMBenchmarkConfig:
     version: str
+    metadata: OpsLLMBenchmarkMetadata
     candidates: dict[str, OpsLLMCandidate]
     policies: dict[str, OpsLLMSelectionPolicy]
 
@@ -125,6 +158,9 @@ class OpsLLMBenchmarkConfig:
 
         return cls(
             version=str(data.get("version", "1")),
+            metadata=OpsLLMBenchmarkMetadata.from_dict(
+                dict(data.get("metadata", {}))
+            ),
             candidates=candidates,
             policies=policies,
         )
@@ -132,6 +168,7 @@ class OpsLLMBenchmarkConfig:
     def to_dict(self) -> dict[str, Any]:
         return {
             "version": self.version,
+            "metadata": self.metadata.to_dict(),
             "candidates": [
                 self.candidates[model].to_dict()
                 for model in sorted(self.candidates)

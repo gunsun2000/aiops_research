@@ -1,0 +1,93 @@
+{
+  "version": "1",
+  "description": "Configurable evidence and action policy for the constrained 4-Agent AIOps prototype.",
+  "metric_categories": {
+    "cpu": {
+      "aliases": ["cpu", "cpu_usage", "cpu-usage", "container_cpu"],
+      "cause": "cpu_saturation",
+      "signal_direction": "high_is_bad",
+      "severity": {
+        "warning_ratio": 1.0,
+        "critical_ratio": 1.10
+      }
+    },
+    "memory": {
+      "aliases": ["memory", "mem", "memory_usage", "working_set"],
+      "cause": "memory_saturation",
+      "signal_direction": "high_is_bad",
+      "severity": {
+        "warning_ratio": 1.0,
+        "critical_ratio": 1.10
+      }
+    },
+    "latency": {
+      "aliases": ["latency", "request_latency", "probe_duration_seconds"],
+      "cause": "latency_saturation",
+      "signal_direction": "high_is_bad",
+      "severity": {
+        "warning_ratio": 1.0,
+        "critical_ratio": 1.50
+      }
+    },
+    "network_errors": {
+      "aliases": ["network_error", "network_errors", "error_rate"],
+      "cause": "network_degradation",
+      "signal_direction": "high_is_bad",
+      "severity": {
+        "warning_ratio": 1.0,
+        "critical_ratio": 2.0
+      }
+    },
+    "restart_count": {
+      "aliases": ["restart_count", "restarts", "pod_restarts"],
+      "cause": "pod_restarts",
+      "signal_direction": "high_is_bad",
+      "severity": {
+        "warning_ratio": 1.0,
+        "critical_ratio": 2.0
+      }
+    },
+    "availability": {
+      "aliases": [
+        "availability",
+        "available_replicas",
+        "ready_replicas",
+        "pod_availability"
+      ],
+      "cause": "low_availability",
+      "signal_direction": "low_is_bad",
+      "severity": {
+        "warning_ratio": 1.0,
+        "critical_ratio": 2.0
+      }
+    }
+  },
+  "action_candidates": [
+    "observe_only",
+    "rollout_restart",
+    "scale_out"
+  ],
+  "preferred_actions_by_cause": {
+    "cpu_saturation": "scale_out",
+    "memory_saturation": "scale_out",
+    "latency_saturation": "rollout_restart",
+    "network_degradation": "rollout_restart",
+    "pod_restarts": "rollout_restart",
+    "low_availability": "scale_out"
+  },
+  "replica_recommendation_policy": {
+    "default_replicas": 3,
+    "max_replicas": 5,
+    "by_severity": {
+      "warning": 2,
+      "critical": 3
+    }
+  },
+  "action_rewards": {
+    "ha_recovery_required": 0.9,
+    "ha_no_action": 0.2,
+    "app_observe_only": 0.3,
+    "app_rollout_restart": 0.85,
+    "app_scale_deployment": 0.85
+  }
+}

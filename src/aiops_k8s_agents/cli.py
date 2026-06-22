@@ -717,6 +717,7 @@ def list_ops_llm_candidates(args: argparse.Namespace) -> dict[str, Any]:
         "command": "list-ops-llm-candidates",
         "config": args.config,
         "version": config.version,
+        "metadata": config.metadata.to_dict(),
         "candidates": [
             config.candidates[model].to_dict()
             for model in sorted(config.candidates)

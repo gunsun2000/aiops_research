@@ -10,6 +10,7 @@ from aiops_k8s_agents.autogen_groupchat import (
 )
 from aiops_k8s_agents.executor import ExecutionMode
 from aiops_k8s_agents.models import AlertEvent
+from aiops_k8s_agents.validator import CommandValidationError
 from aiops_k8s_agents.validator import CommandValidator
 
 
@@ -258,3 +259,80 @@ def test_autogen_groupchat_coordinator_rejects_when_one_agent_rejects():
     assert result.command == ""
     assert result.metadata["consensus"] == "rejected"
     assert result.metadata["reward_total"] == "1.75"
+
+
+def test_autogen_groupchat_blocks_unsafe_replica_count_before_kubernetes():
+    async def fake_groupchat(_alert):
+        return [
+            parse_autogen_decision(
+                {
+                    "agent": "AIServiceHASupportAgent",
+                    "action": "ha_scale_out_required",
+                    "reward": 0.90,
+                    "approved": True,
+                    "reason": "CPU saturation requires recovery.",
+                },
+                expected_agent="AIServiceHASupportAgent",
+            ),
+            parse_autogen_decision(
+                {
+                    "agent": "AIApplicationManagementAgent",
+                    "action": "app_scale_deployment",
+                    "reward": 0.85,
+                    "approved": True,
+                    "reason": "Unsafe over-scaling proposal from LLM path.",
+                    "parameters": {
+                        "namespace": "online-boutique",
+                        "deployment": "paymentservice",
+                        "replicas": "99",
+                    },
+                },
+                expected_agent="AIApplicationManagementAgent",
+            ),
+            parse_autogen_decision(
+                {
+                    "agent": "AISemiconductorInfraOpsAgent",
+                    "action": "infra_capacity_approved",
+                    "reward": 0.70,
+                    "approved": True,
+                    "reason": "Structured response only; validator remains final guard.",
+                },
+                expected_agent="AISemiconductorInfraOpsAgent",
+            ),
+            parse_autogen_decision(
+                {
+                    "agent": "CostOptimizationAgent",
+                    "action": "cost_budget_approved",
+                    "reward": 0.60,
+                    "approved": True,
+                    "reason": "Structured response only; validator remains final guard.",
+                },
+                expected_agent="CostOptimizationAgent",
+            ),
+        ]
+
+    coordinator = AutoGenGroupChatCoordinator(
+        validator=CommandValidator(
+            allowed_namespaces={"online-boutique"},
+            allowed_deployments={"paymentservice"},
+            min_replicas=1,
+            max_replicas=5,
+        ),
+        mode=ExecutionMode.MOCK,
+        decision_provider=fake_groupchat,
+    )
+    alert = AlertEvent(
+        namespace="online-boutique",
+        service="paymentservice",
+        metric="cpu",
+        value=95.0,
+        threshold=80.0,
+        message="Prometheus alert: paymentservice CPU is high",
+    )
+
+    try:
+        asyncio.run(coordinator.run(alert))
+    except CommandValidationError as exc:
+        assert "replicas" in str(exc)
+    else:
+        raise AssertionError("unsafe AutoGen replica count reached execution")
