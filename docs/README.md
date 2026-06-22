@@ -9,6 +9,7 @@
 | `core_submission_summary.md` | 교수님/평가자에게 보여줄 핵심 요약 |
 | `submission/requirements_definition.md` | 요구사항 정의서 |
 | `submission/functional_api_guide.md` | 기능/API 사용 가이드 |
+| `submission/service_control_framework_mapping.md` | AI 기반 서비스 제어 및 관리 자동화 프레임워크 항목과 구현 파일/실행 명령 매핑 |
 | `submission/install_and_run_guide.md` | 설치 및 실행 가이드 |
 | `submission/execution_code_guide.md` | 실행 코드 설명서 |
 | `submission/test_guide.md` | 시험 검증 가이드 |
@@ -36,6 +37,7 @@ docs/
 | `requirements_definition.md` | 요구사항 정의서 |
 | `requirements_definition.docx` | Word 형식 요구사항 정의서 |
 | `functional_api_guide.md` | CLI/API 기능 사용법 |
+| `service_control_framework_mapping.md` | 과제 항목, 구현 모듈, 실행 코드, 현재 범위와 future work 매핑 |
 | `openapi_agent_registry.yaml` | Agent 등록 관리 OpenAPI 초안 |
 | `install_and_run_guide.md` | 로컬/서버 설치 및 실행 방법 |
 | `execution_code_guide.md` | 교수님 요청 연구와 과제 요구별 실행 코드 설명 |

@@ -17,6 +17,19 @@ cd C:\Users\geonhae\Documents\aiops_research
 .\.venv\Scripts\python.exe -m pytest
 ```
 
+검증 범위:
+
+- 기존 deterministic 4-Agent 판단
+- AutoGen structured decision 경로
+- Agent registry와 action 검증
+- Ops LLM 선정
+- CPU/GPU VM 배치 추천
+- AI 서비스 deployment manifest 생성
+- Python Validator와 Go Guard 연결
+- Evidence Collector 기반 autonomous loop
+- Recovery Monitor와 bounded replanning
+- CLI backward compatibility
+
 ## 2. Go guard 테스트
 
 ```bash

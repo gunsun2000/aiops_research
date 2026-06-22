@@ -8,7 +8,14 @@ from aiops_k8s_agents.agent_decision_policy import (
     AgentDecisionPolicy,
     default_agent_decision_policy,
 )
-from aiops_k8s_agents.models import AlertEvent, Diagnosis, RecoveryAction, RecoveryActionKind
+from aiops_k8s_agents.evidence import EvidenceSnapshot
+from aiops_k8s_agents.models import (
+    AlertEvent,
+    Diagnosis,
+    RecoveryAction,
+    RecoveryActionCandidate,
+    RecoveryActionKind,
+)
 
 
 @dataclass(frozen=True)
@@ -109,6 +116,72 @@ class AIApplicationManagementAgent:
                 "deployment": str(kubernetes.get("deployment", "")),
                 "selected_resource": selected_resource,
             },
+        )
+
+    def generate_recovery_candidates(
+        self,
+        namespace: str,
+        deployment: str,
+        diagnosis: Diagnosis,
+        evidence: EvidenceSnapshot,
+    ) -> list[RecoveryActionCandidate]:
+        preferred_action = self.policy.preferred_action_for(diagnosis.cause)
+        baseline_replicas = max(evidence.desired_replicas, 1)
+        target_replicas = max(
+            baseline_replicas + 1,
+            self.policy.recommended_replicas(diagnosis.severity),
+        )
+        target_replicas = min(target_replicas, 5)
+
+        candidates = [
+            RecoveryActionCandidate(
+                action=RecoveryAction(
+                    namespace=namespace,
+                    deployment=deployment,
+                    kind=RecoveryActionKind.OBSERVE_ONLY,
+                    reason="Collect more evidence before changing Kubernetes state.",
+                ),
+                reason="Evidence is insufficient or risk is low enough to observe first.",
+                expected_effect="No resource change; confirms whether Kubernetes self-recovers.",
+                risk_level="low",
+                estimated_cost=0.0,
+                confidence=0.55 if diagnosis.confidence >= 0.8 else 0.75,
+                priority=0.95 if preferred_action == "observe_only" else 0.40,
+            ),
+            RecoveryActionCandidate(
+                action=RecoveryAction(
+                    namespace=namespace,
+                    deployment=deployment,
+                    kind=RecoveryActionKind.ROLLOUT_RESTART,
+                    reason="Restart pods when restart or unhealthy evidence is present.",
+                ),
+                reason="Pod instability or memory symptoms can be cleared by restart.",
+                expected_effect="Refreshes pods without increasing replica cost.",
+                risk_level="medium",
+                estimated_cost=0.10,
+                confidence=0.80 if diagnosis.cause in {"pod_restarts", "memory_saturation"} else 0.50,
+                priority=0.95 if preferred_action == "rollout_restart" else 0.55,
+            ),
+            RecoveryActionCandidate(
+                action=RecoveryAction(
+                    namespace=namespace,
+                    deployment=deployment,
+                    kind=RecoveryActionKind.SCALE_OUT,
+                    replicas=target_replicas,
+                    reason="Scale out when workload saturation is likely.",
+                ),
+                reason="CPU, latency, or availability pressure can be mitigated by replicas.",
+                expected_effect="Adds serving capacity and improves availability headroom.",
+                risk_level="medium",
+                estimated_cost=float(max(target_replicas - baseline_replicas, 0)),
+                confidence=0.88 if diagnosis.cause in {"cpu_saturation", "latency_saturation", "low_availability"} else 0.45,
+                priority=0.95 if preferred_action == "scale_out" else 0.50,
+            ),
+        ]
+        return sorted(
+            candidates,
+            key=lambda candidate: (candidate.priority, candidate.confidence),
+            reverse=True,
         )
 
 

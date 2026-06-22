@@ -1,0 +1,133 @@
+from aiops_k8s_agents.autonomous import AutonomousAIOpsCoordinator
+from aiops_k8s_agents.evidence import EvidenceSnapshot, FakeEvidenceProvider
+from aiops_k8s_agents.executor import ExecutionMode
+from aiops_k8s_agents.models import RecoveryActionKind
+from aiops_k8s_agents.recovery_monitor import FakeRecoveryMonitor
+from aiops_k8s_agents.validator import CommandValidator
+
+
+def _validator() -> CommandValidator:
+    return CommandValidator(
+        allowed_namespaces={"online-boutique"},
+        allowed_deployments={"paymentservice"},
+        min_replicas=1,
+        max_replicas=5,
+    )
+
+
+def test_fake_evidence_provider_returns_operational_snapshot():
+    provider = FakeEvidenceProvider.cpu_saturation(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        value=95.0,
+    )
+
+    evidence = provider.collect("online-boutique", "paymentservice")
+
+    assert evidence.source == "fake"
+    assert evidence.metric_values["cpu"] == 95.0
+    assert evidence.desired_replicas == 1
+    assert evidence.available_replicas == 1
+    assert evidence.restart_count == 0
+    assert evidence.to_summary()["metric_values"]["cpu"] == 95.0
+
+
+def test_autonomous_coordinator_collects_evidence_and_selects_safe_candidate():
+    coordinator = AutonomousAIOpsCoordinator(
+        validator=_validator(),
+        evidence_provider=FakeEvidenceProvider.cpu_saturation(
+            namespace="online-boutique",
+            deployment="paymentservice",
+            value=95.0,
+        ),
+        recovery_monitor=FakeRecoveryMonitor(default_success=True),
+        mode=ExecutionMode.MOCK,
+    )
+
+    report = coordinator.run(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+    )
+
+    assert report["command"] == "autonomous-run"
+    assert report["valid"] is True
+    assert report["final_status"] == "recovered"
+    assert report["diagnosis"]["cause"] == "cpu_saturation"
+    assert {candidate["action"]["kind"] for candidate in report["generated_candidates"]} == {
+        "observe_only",
+        "rollout_restart",
+        "scale_out",
+    }
+    assert report["selected_action"]["kind"] == "scale_out"
+    assert report["validation_result"]["valid"] is True
+    assert report["execution_result"]["command"] == (
+        "kubectl scale deployment paymentservice --replicas=3 -n online-boutique"
+    )
+    assert report["recovery_monitoring"]["recovery_success"] is True
+
+
+def test_autonomous_coordinator_replans_after_failed_first_action():
+    coordinator = AutonomousAIOpsCoordinator(
+        validator=_validator(),
+        evidence_provider=FakeEvidenceProvider(
+            EvidenceSnapshot(
+                namespace="online-boutique",
+                deployment="paymentservice",
+                metric_values={"restart_count": 3.0},
+                desired_replicas=1,
+                available_replicas=1,
+                restart_count=3,
+                events=("BackOff restarting failed container",),
+            )
+        ),
+        recovery_monitor=FakeRecoveryMonitor(
+            action_success={
+                RecoveryActionKind.ROLLOUT_RESTART: False,
+                RecoveryActionKind.OBSERVE_ONLY: True,
+            }
+        ),
+        mode=ExecutionMode.MOCK,
+        max_replan_attempts=2,
+    )
+
+    report = coordinator.run(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="restart_count",
+        threshold=1.0,
+    )
+
+    assert report["valid"] is True
+    assert report["final_status"] == "recovered_after_replan"
+    assert len(report["replanning_attempts"]) == 1
+    assert report["executed_actions"][0]["kind"] == "rollout_restart"
+    assert report["executed_actions"][1]["kind"] == "observe_only"
+    assert report["policy_update_recommendations"][0]["requires_human_review"] is True
+
+
+def test_autonomous_coordinator_safe_terminates_after_replan_limit():
+    coordinator = AutonomousAIOpsCoordinator(
+        validator=_validator(),
+        evidence_provider=FakeEvidenceProvider.cpu_saturation(
+            namespace="online-boutique",
+            deployment="paymentservice",
+            value=95.0,
+        ),
+        recovery_monitor=FakeRecoveryMonitor(default_success=False),
+        mode=ExecutionMode.MOCK,
+        max_replan_attempts=1,
+    )
+
+    report = coordinator.run(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+    )
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_failure"
+    assert len(report["executed_actions"]) == 2
+    assert report["recovery_monitoring"]["replanning_required"] is True

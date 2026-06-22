@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from aiops_k8s_agents.agent_decision import AgentDecision
-from aiops_k8s_agents.models import RecoveryAction, RecoveryActionKind, ScaleAction
+from aiops_k8s_agents.models import (
+    CandidateEvaluation,
+    RecoveryAction,
+    RecoveryActionCandidate,
+    RecoveryActionKind,
+    ScaleAction,
+)
 
 
 @dataclass(frozen=True)
@@ -107,3 +113,33 @@ class AISemiconductorInfraOpsAgent:
                 ),
             },
         )
+
+    def evaluate_candidates(
+        self,
+        candidates: list[RecoveryActionCandidate],
+    ) -> list[CandidateEvaluation]:
+        evaluations: list[CandidateEvaluation] = []
+        for candidate in candidates:
+            action = candidate.action
+            review = self.review(action)
+            score = candidate.priority
+            if action.kind == RecoveryActionKind.SCALE_OUT and action.replicas:
+                capacity_margin = max(self.max_recommended_replicas - action.replicas, 0)
+                score = min(1.0, 0.55 + capacity_margin * 0.08)
+            elif action.kind == RecoveryActionKind.ROLLOUT_RESTART:
+                score = 0.82
+            elif action.kind == RecoveryActionKind.OBSERVE_ONLY:
+                score = 0.90
+            evaluations.append(
+                CandidateEvaluation(
+                    agent=self.name,
+                    action_kind=action.kind,
+                    approved=review.approved,
+                    score=score if review.approved else 0.0,
+                    reward=review.reward,
+                    reason=review.reason,
+                    risk=candidate.risk_level,
+                    blocking_reason="" if review.approved else review.reason,
+                )
+            )
+        return evaluations

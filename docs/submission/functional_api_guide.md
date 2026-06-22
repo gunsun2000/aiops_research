@@ -77,7 +77,36 @@ aiops-k8s-agents execute-recovery-action \
   --allowed-deployment paymentservice
 ```
 
-## 4. Recovery Action 실험
+## 4. Safety-Bounded Closed-Loop Autonomous 4-Agent 실행
+
+```bash
+aiops-k8s-agents autonomous-run \
+  --mode mock \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --metric cpu \
+  --threshold 80 \
+  --evidence-value 95 \
+  --allowed-namespace online-boutique \
+  --allowed-deployment paymentservice
+```
+
+출력 핵심:
+
+```json
+{
+  "command": "autonomous-run",
+  "final_status": "recovered",
+  "diagnosis": {"cause": "cpu_saturation"},
+  "selected_action": {"kind": "scale_out"},
+  "validation_result": {"valid": true},
+  "recovery_monitoring": {"recovery_success": true}
+}
+```
+
+이 기능은 API 서버가 아니라 CLI 기반 structured JSON interface이다. 향후 Go Echo/Swagger API를 만들 경우 이 출력 구조를 HTTP response schema로 옮기면 된다.
+
+## 5. Recovery Action 실험
 
 36회 본 실험:
 
@@ -99,7 +128,7 @@ wc -l "$LATEST/outcomes.jsonl"
 cat "$LATEST/analysis/reward_policy_comparison.md"
 ```
 
-## 5. Recovery 정량 통계/그래프 생성
+## 6. Recovery 정량 통계/그래프 생성
 
 평균 복구 시간, 성공률, reward 정책별 선택 점수 그래프를 생성한다.
 
@@ -125,7 +154,7 @@ reward_by_policy.svg
 reward_by_policy.png
 ```
 
-## 6. OpenAPI 문서
+## 7. OpenAPI 문서
 
 향후 API 서버화를 위한 인터페이스 초안은 다음 파일에 정리되어 있다.
 

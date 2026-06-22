@@ -25,6 +25,12 @@ from aiops_k8s_agents.autogen_groupchat import (
     AutoGenRoundRobinDecisionProvider,
     create_openai_model_client,
 )
+from aiops_k8s_agents.autonomous import AutonomousAIOpsCoordinator
+from aiops_k8s_agents.evidence import (
+    EvidenceSnapshot,
+    FakeEvidenceProvider,
+    KubernetesEvidenceProvider,
+)
 from aiops_k8s_agents.executor import (
     ExecutionBackend,
     ExecutionMode,
@@ -73,6 +79,7 @@ from aiops_k8s_agents.recovery_runner import (
     load_recovery_experiment_config,
     run_recovery_matrix,
 )
+from aiops_k8s_agents.recovery_monitor import FakeRecoveryMonitor
 from aiops_k8s_agents.service_operations import AIServiceOperationsPipeline
 from aiops_k8s_agents.prometheus import (
     PrometheusAdapter,
@@ -252,6 +259,49 @@ def build_parser() -> argparse.ArgumentParser:
         default="http://127.0.0.1:9090",
     )
     recovery_matrix_parser.add_argument("--output", required=True)
+
+    autonomous_parser = subparsers.add_parser(
+        "autonomous-run",
+        help=(
+            "Run the safety-bounded closed-loop autonomous 4-Agent flow: "
+            "evidence collection, diagnosis, candidate planning, validation, "
+            "execution, recovery monitoring, and bounded replanning."
+        ),
+    )
+    autonomous_parser.add_argument(
+        "--mode", choices=[mode.value for mode in ExecutionMode], default="mock"
+    )
+    _add_guard_backend_argument(autonomous_parser)
+    autonomous_parser.add_argument(
+        "--evidence-source",
+        choices=["fake", "kubernetes"],
+        default="fake",
+    )
+    autonomous_parser.add_argument("--namespace", required=True)
+    autonomous_parser.add_argument("--deployment", required=True)
+    autonomous_parser.add_argument("--metric", required=True)
+    autonomous_parser.add_argument("--threshold", type=float, required=True)
+    autonomous_parser.add_argument("--evidence-value", type=float)
+    autonomous_parser.add_argument("--desired-replicas", type=int, default=1)
+    autonomous_parser.add_argument("--available-replicas", type=int, default=1)
+    autonomous_parser.add_argument("--restart-count", type=int, default=0)
+    autonomous_parser.add_argument("--latency-ms", type=float)
+    autonomous_parser.add_argument("--error-rate", type=float)
+    autonomous_parser.add_argument("--max-replan-attempts", type=int, default=1)
+    autonomous_parser.add_argument(
+        "--force-recovery-failure",
+        action="store_true",
+        help="Mock/test option: make the fake recovery monitor fail all actions.",
+    )
+    autonomous_parser.add_argument(
+        "--allowed-namespace", action="append", required=True
+    )
+    autonomous_parser.add_argument(
+        "--allowed-deployment", action="append", required=True
+    )
+    autonomous_parser.add_argument("--min-replicas", type=int, default=1)
+    autonomous_parser.add_argument("--max-replicas", type=int, default=5)
+    _add_result_logging_argument(autonomous_parser)
 
     list_agents_parser = subparsers.add_parser(
         "list-agents",
@@ -520,6 +570,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
         _emit_json_report(args, report)
         return 0 if report["valid_measurements"] == report["total_treatments"] else 2
+
+    if args.command == "autonomous-run":
+        report = run_autonomous_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report["valid"] else 2
 
     if args.command == "list-agents":
         report = list_registered_agents(args)
@@ -914,6 +969,51 @@ def run_recovery_experiment_matrix(args: argparse.Namespace) -> dict[str, Any]:
         prometheus_url=args.prometheus_url,
         output_path=args.output,
     )
+
+
+def run_autonomous_cli(args: argparse.Namespace) -> dict[str, Any]:
+    validator = _validator_from_args(args)
+    provider = _evidence_provider_from_args(args)
+    monitor = FakeRecoveryMonitor(default_success=not args.force_recovery_failure)
+    coordinator = AutonomousAIOpsCoordinator(
+        validator=validator,
+        evidence_provider=provider,
+        recovery_monitor=monitor,
+        mode=ExecutionMode(args.mode),
+        backend=ExecutionBackend(args.guard_backend),
+        max_replan_attempts=args.max_replan_attempts,
+    )
+    return coordinator.run(
+        namespace=args.namespace,
+        deployment=args.deployment,
+        metric=args.metric,
+        threshold=args.threshold,
+    )
+
+
+def _evidence_provider_from_args(
+    args: argparse.Namespace,
+) -> FakeEvidenceProvider | KubernetesEvidenceProvider:
+    if args.evidence_source == "kubernetes":
+        return KubernetesEvidenceProvider()
+
+    metric = str(args.metric).strip().lower().replace("-", "_")
+    value = args.evidence_value
+    if value is None:
+        value = args.threshold + 1.0
+    snapshot = EvidenceSnapshot(
+        namespace=args.namespace,
+        deployment=args.deployment,
+        metric_values={metric: value},
+        desired_replicas=args.desired_replicas,
+        available_replicas=args.available_replicas,
+        restart_count=args.restart_count,
+        events=("fake evidence for autonomous-run",),
+        latency_ms=args.latency_ms,
+        error_rate=args.error_rate,
+        source="fake",
+    )
+    return FakeEvidenceProvider(snapshot)
 
 
 def run_feedback_loop(args: argparse.Namespace) -> dict[str, Any]:

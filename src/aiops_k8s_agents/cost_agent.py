@@ -4,7 +4,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from aiops_k8s_agents.agent_decision import AgentDecision
-from aiops_k8s_agents.models import RecoveryAction, RecoveryActionKind, ScaleAction
+from aiops_k8s_agents.models import (
+    CandidateEvaluation,
+    RecoveryAction,
+    RecoveryActionCandidate,
+    RecoveryActionKind,
+    ScaleAction,
+)
 
 
 @dataclass(frozen=True)
@@ -96,3 +102,32 @@ class CostOptimizationAgent:
                 "cost_per_hour": f"{cost_per_hour:.2f}",
             },
         )
+
+    def evaluate_candidates(
+        self,
+        candidates: list[RecoveryActionCandidate],
+    ) -> list[CandidateEvaluation]:
+        evaluations: list[CandidateEvaluation] = []
+        for candidate in candidates:
+            action = candidate.action
+            review = self.review(action)
+            if action.kind == RecoveryActionKind.OBSERVE_ONLY:
+                score = 0.98
+            elif action.kind == RecoveryActionKind.ROLLOUT_RESTART:
+                score = 0.86
+            else:
+                replicas = action.replicas or 0
+                score = max(0.0, 0.95 - max(replicas - 1, 0) * 0.14)
+            evaluations.append(
+                CandidateEvaluation(
+                    agent=self.name,
+                    action_kind=action.kind,
+                    approved=review.approved,
+                    score=score if review.approved else 0.0,
+                    reward=review.reward,
+                    reason=review.reason,
+                    risk=candidate.risk_level,
+                    blocking_reason="" if review.approved else review.reason,
+                )
+            )
+        return evaluations

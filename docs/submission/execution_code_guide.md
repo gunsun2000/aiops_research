@@ -117,6 +117,46 @@ aiops-k8s-agents execute-recovery-action \
 - `--guard-backend go`를 사용하면 Python 검증 후 Go Guard가 한 번 더 검증한다.
 - `--mode real`은 실제 Kubernetes API에 action을 전달한다.
 
+### 4.4 폐루프 자율 4-Agent 실행
+
+```bash
+aiops-k8s-agents autonomous-run \
+  --mode mock \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --metric cpu \
+  --threshold 80 \
+  --evidence-value 95 \
+  --allowed-namespace online-boutique \
+  --allowed-deployment paymentservice
+```
+
+출력에서 확인할 핵심:
+
+```text
+collected_evidence_summary
+diagnosis
+generated_candidates
+infra_evaluations
+cost_evaluations
+selected_action
+validation_result
+execution_result
+recovery_monitoring
+replanning_attempts
+policy_update_recommendations
+```
+
+의미:
+
+- 단일 metric 입력만 보는 구조를 넘어, evidence 기반으로 장애 원인을 진단한다.
+- Application Agent가 `observe_only`, `rollout_restart`, `scale_out` 후보를 모두 생성한다.
+- Infra Agent와 Cost Agent가 각 후보를 별도로 평가한다.
+- Coordinator가 가장 적절한 action을 선택한다.
+- 실행 후 Recovery Monitor가 복구 여부를 판단한다.
+- 실패하면 `--max-replan-attempts` 범위 안에서 다음 후보로 재계획한다.
+- mock mode에서는 실제 Kubernetes resource를 바꾸지 않는다.
+
 ## 5. 대학원/ETRI 과제 요구 실행 코드
 
 과제 요구의 중심은 AI App 배포/운용, CPU/GPU VM 기반 배치, Ops LLM 선정, Go/LLM 교차 검증이다.

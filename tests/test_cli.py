@@ -411,6 +411,42 @@ def test_cli_runs_service_operations_pipeline_in_mock_mode(capsys):
     assert output["guard_backend"] == "go"
 
 
+def test_cli_runs_autonomous_closed_loop_in_mock_mode(capsys):
+    exit_code = main(
+        [
+            "autonomous-run",
+            "--mode",
+            "mock",
+            "--namespace",
+            "online-boutique",
+            "--deployment",
+            "paymentservice",
+            "--metric",
+            "cpu",
+            "--threshold",
+            "80",
+            "--evidence-value",
+            "95",
+            "--allowed-namespace",
+            "online-boutique",
+            "--allowed-deployment",
+            "paymentservice",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["command"] == "autonomous-run"
+    assert output["valid"] is True
+    assert output["final_status"] == "recovered"
+    assert output["diagnosis"]["cause"] == "cpu_saturation"
+    assert output["selected_action"]["kind"] == "scale_out"
+    assert output["execution_result"]["command"] == (
+        "kubectl scale deployment paymentservice --replicas=3 -n online-boutique"
+    )
+
+
 def test_cli_lists_ops_llm_candidates(capsys):
     exit_code = main(
         [

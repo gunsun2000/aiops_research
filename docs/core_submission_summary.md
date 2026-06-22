@@ -4,7 +4,7 @@
 
 ## 1. 연구 한 줄 요약
 
-본 프로젝트는 Kubernetes 기반 서비스 장애 상황에서 4개의 AI Agent가 역할별로 장애를 판단하고, action/reward 교차 검증과 Go 기반 안전 검증기를 거쳐 Kubernetes 복구 명령을 실행하는 AIOps 서비스 제어 자동화 프레임워크이다.
+본 프로젝트는 Kubernetes 기반 서비스 장애 상황에서 4개의 AI Agent가 운영 evidence를 수집하고, 장애를 진단하며, 여러 recovery action 후보를 생성·평가한 뒤 Python Validator와 Go Guard를 통과한 action만 실행하는 **안전 제약 기반 폐루프 자율 4-Agent AIOps 프레임워크**이다.
 
 ## 2. 과제 개발 가이드 대응 현황
 
@@ -25,9 +25,10 @@
 | 4-Agent 구조 | HA, 응용관리, 인프라, 비용 최적화 Agent 역할 분리 | `src/aiops_k8s_agents/agents.py`, `config/agent_registry.json` |
 | Agent 등록 관리 | Agent별 역할, action, reward, 승인/거부 조건 관리 | `config/agent_registry.json`, `docs/design/agent_registry_guide.md` |
 | Action/Reward 정책 | 장애별 후보 action 평가 및 reward 정책별 action ranking | `config/recovery_action_experiments.json`, `docs/design/agent_action_reward_policy.md` |
+| Evidence 기반 자율 판단 | evidence 수집, 진단, 후보 생성, 후보별 평가, 복구 모니터링, 재계획 | `src/aiops_k8s_agents/evidence.py`, `src/aiops_k8s_agents/autonomous.py`, `src/aiops_k8s_agents/recovery_monitor.py` |
 | Kubernetes 안전 실행 | allowlist, replica 범위, namespace/deployment 검증 | `src/aiops_k8s_agents/validator.py`, `src/aiops_k8s_agents/executor.py` |
 | Go 기반 Guard | 최종 action을 Go 언어로 한 번 더 검증 | `go/aiops-guard` |
-| Prometheus 연동 | metric 기반 상태 관측 및 실험 입력 | `src/aiops_k8s_agents/prometheus_adapter.py` |
+| Prometheus 연동 | metric 기반 상태 관측 및 실험 입력 | `src/aiops_k8s_agents/prometheus.py` |
 | Chaos Mesh 실험 | pod-kill, cpu-stress, memory-stress, network-delay 장애 주입 | `k8s/chaos/` |
 | AIOpsLab 연동 | Hotel Reservation 탐지 benchmark 실험 | `scripts/server_aiopslab_auto_detection.py` |
 | 정량 분석 | 평균 복구 시간, 성공률, reward 정책별 선택 결과 분석 | `src/aiops_k8s_agents/recovery_statistics.py` |
@@ -77,7 +78,7 @@
 | 산출물 요구 | 현재 파일 |
 | --- | --- |
 | 요구사항 정의서 | `docs/submission/requirements_definition.md`, `docs/submission/requirements_definition.docx` |
-| 기능/API 가이드 | `docs/submission/functional_api_guide.md`, `docs/submission/openapi_agent_registry.yaml` |
+| 기능/API 가이드 | `docs/submission/functional_api_guide.md`, `docs/submission/service_control_framework_mapping.md`, `docs/submission/openapi_agent_registry.yaml` |
 | 설치 활용 가이드 | `docs/submission/install_and_run_guide.md` |
 | 시험 가이드 | `docs/submission/test_guide.md` |
 | Go 개발 설명 | `docs/design/go_and_llm_cross_validation.md`, `go/aiops-guard/README.md` |

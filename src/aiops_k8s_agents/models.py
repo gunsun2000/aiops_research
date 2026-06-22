@@ -48,6 +48,33 @@ class RecoveryAction:
 
 
 @dataclass(frozen=True)
+class RecoveryActionCandidate:
+    action: RecoveryAction
+    reason: str
+    expected_effect: str
+    risk_level: str
+    estimated_cost: float
+    required_validation: tuple[str, ...] = (
+        "python_validator",
+        "go_guard",
+    )
+    confidence: float = 0.0
+    priority: float = 0.0
+
+
+@dataclass(frozen=True)
+class CandidateEvaluation:
+    agent: str
+    action_kind: RecoveryActionKind
+    approved: bool
+    score: float
+    reward: float
+    reason: str
+    risk: str = "low"
+    blocking_reason: str = ""
+
+
+@dataclass(frozen=True)
 class CommandResult:
     command: str
     mode: str

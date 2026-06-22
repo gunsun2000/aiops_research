@@ -77,6 +77,11 @@ AIOpsLab / Chaos Mesh 장애 주입
 | AI 서비스 배포 manifest 생성 | 완료 |
 | Kubernetes server-side dry-run 검증 | 완료 |
 | 통합 CLI `run-service-operations` | 완료 |
+| Evidence Collector 기반 자율 evidence 수집 | 완료 |
+| Multi-candidate recovery action 생성 | 완료 |
+| Infra/Cost Agent 후보별 평가 | 완료 |
+| Recovery Monitor와 실패 후 재계획 | 완료 |
+| 폐루프 autonomous CLI `autonomous-run` | 완료 |
 | Reward 정책별 action ranking 실험 | 완료 |
 | 정량 그래프/통계 분석 | 완료 |
 | Go Echo HTTP API 서버 + Swagger UI | 이번 범위 제외 |
@@ -185,7 +190,39 @@ Ops LLM 선정
 -> Python Validator + Go Guard 실행 준비
 ```
 
-### 6. Kubernetes real 장애 복구 실험
+### 6. 폐루프 자율 4-Agent 실행
+
+아래 명령은 실제 클러스터 변경 없이 fake evidence로 폐루프 autonomous flow를 검증한다.
+
+```bash
+aiops-k8s-agents autonomous-run \
+  --mode mock \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --metric cpu \
+  --threshold 80 \
+  --evidence-value 95 \
+  --allowed-namespace online-boutique \
+  --allowed-deployment paymentservice
+```
+
+이 명령은 다음을 한 번에 수행한다.
+
+```text
+Evidence 수집
+-> HA Agent evidence 기반 진단
+-> Application Agent 후보 action 3종 생성
+-> Infra/Cost Agent 후보별 평가
+-> Coordinator 최종 action 선택
+-> Python Validator + Guard backend 검증
+-> Kubernetes action 실행 또는 mock 검증
+-> Recovery Monitor 복구 판정
+-> 실패 시 다음 후보로 재계획
+```
+
+중요한 점은 `autonomous-run`에서도 Agent가 임의의 `kubectl` 문자열을 직접 실행하지 않는다는 것이다. 모든 action은 구조화된 `RecoveryAction`으로 생성되고, 실행 전에는 반드시 Python Validator와 선택한 guard backend를 통과한다.
+
+### 7. Kubernetes real 장애 복구 실험
 
 Prometheus port-forward는 별도 터미널에서 켜둔다.
 
@@ -226,7 +263,7 @@ cat "$LATEST/analysis/reward_policy_comparison.md"
 36 outcomes.jsonl
 ```
 
-### 7. 정량 그래프/통계 생성
+### 8. 정량 그래프/통계 생성
 
 ```bash
 LATEST=$(ls -dt runs/recovery-action-pilot/*/ | head -1)
