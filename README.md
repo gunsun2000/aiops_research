@@ -2,172 +2,152 @@
 
 ![AIOps 4-Agent 프로젝트 진행 구조 및 연결 흐름](docs/assets/project_architecture_overview.webp)
 
-## Agent 중심 통합 파이프라인 실행
+이 저장소는 **4개의 AI Agent가 Kubernetes 기반 서비스 장애와 AI 응용 배포 조건을 판단하고, Python Validator와 Go Guard를 거쳐 안전한 Kubernetes Action만 실행하는 AIOps 자동화 연구 프로토타입**이다.
 
-이번 통합으로 기존에 따로 돌던 기능들이 하나의 운영 흐름으로 연결됐다.
-
-```text
-Ops LLM 선정
--> CPU/GPU VM 배치 계획
--> Kubernetes Deployment manifest 생성
--> manifest mock/dry-run 검증
--> Application / Infrastructure / Cost Agent 검토
--> 필요 시 AI-MCMP 4-Agent 복구 판단
--> Python Validator + Go Guard 실행 준비
-```
-
-가장 먼저 확인할 명령:
-
-```bash
-aiops-k8s-agents run-service-operations \
-  --llm-policy quality_first \
-  --workload llm-chat-inference \
-  --namespace online-boutique \
-  --deployment paymentservice \
-  --mode mock \
-  --guard-backend go
-```
-
-정상 결과 핵심:
+핵심은 API 서버 자체가 아니라 다음 흐름이다.
 
 ```text
-selected_llm = gpt-5.5
-selected_resource = gpu-vm-l4
-deployment_manifest.kind = Deployment
-deployment_dry_run.valid = true
-agent_reviews.application.approved = true
-agent_reviews.infrastructure.approved = true
-agent_reviews.cost.approved = true
-recovery_pipeline_ready = true
-guard_backend = go
-```
-
-복구 판단까지 같이 연결하려면 장애 입력을 함께 준다.
-
-```bash
-aiops-k8s-agents run-service-operations \
-  --llm-policy quality_first \
-  --workload llm-chat-inference \
-  --namespace online-boutique \
-  --deployment paymentservice \
-  --metric cpu \
-  --value 95 \
-  --threshold 80 \
-  --mode mock \
-  --guard-backend go
-```
-
-이 프로젝트는 Kubernetes 기반 서비스 장애 상황에서 4개의 AI Agent가 서로 다른 운영 관점을 나누어 판단하고, 검증된 action만 안전하게 실행하는 AIOps 연구 프로토타입입니다.
-
-현재 중심은 **AIOpsLab 자체 개발**이 아니라, AIOpsLab/Chaos Mesh/Prometheus/Kubernetes 환경 위에서 동작하는 **4-Agent 서비스 제어 및 관리 자동화 구조**입니다.
-
-## 현재까지 완료된 핵심
-
-| 구분 | 상태 |
-| --- | --- |
-| 4-Agent 역할, action, reward 정책 | 완료 |
-| AutoGen GroupChat 기반 Agent 대화 경로 | 완료 |
-| Prometheus metric 입력 | 완료 |
-| Chaos Mesh 장애 4종 실험 | 완료 |
-| AIOpsLab Hotel Reservation 탐지 benchmark | 완료 |
-| Kubernetes dry-run/real 실행 | 완료 |
-| Go 언어 기반 최종 action guard | 완료 |
-| 2종 코딩/LLM 관점 교차 검증 문서 | 완료 |
-| Agent 등록 관리 프로토타입 | 완료 |
-| CPU/GPU VM 기반 추론 배치 최적화 프로토타입 | 완료 |
-| Reward 정책 변화와 장애별 action ranking 실험 | 완료 |
-
-## 전체 구조
-
-```text
-AIOpsLab / Chaos Mesh 장애
+AIOpsLab / Chaos Mesh 장애 주입
 -> Prometheus / Kubernetes 상태 관측
 -> AI-MCMP Coordinator
 -> 4-Agent 판단
-   - HA 지원 Agent
-   - 응용관리 Agent
-   - AI반도체 인프라 운용 Agent
-   - 비용 최적화 Agent
 -> Action / Reward 교차 검증
 -> Python Validator + Go Guard
 -> kubectl dry-run 또는 real 실행
--> before / after 상태와 metric 저장
+-> 실행 결과와 metric 저장 및 분석
 ```
+
+## 먼저 볼 문서
+
+처음 보는 사람은 아래 순서대로 보면 된다.
+
+| 순서 | 문서 | 무엇을 나타내는가 |
+| --- | --- | --- |
+| 1 | [docs/core_submission_summary.md](docs/core_submission_summary.md) | 교수님/평가자에게 보여줄 핵심 요약 |
+| 2 | [docs/README.md](docs/README.md) | `docs/` 폴더 전체 문서 지도 |
+| 3 | [docs/design/research_task_integration_design.md](docs/design/research_task_integration_design.md) | 교수님 요청 연구와 ETRI/대학원 과제 요구사항의 관계 |
+| 4 | [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md) | 목적별 실행 코드 전체 모음 |
+| 5 | [docs/experiments/service_operations_environment.md](docs/experiments/service_operations_environment.md) | Agent 중심 통합 파이프라인 실행 환경 |
+| 6 | [docs/experiments/recovery_action_experiment_guide.md](docs/experiments/recovery_action_experiment_guide.md) | Chaos Mesh 장애별 복구 action 실험 |
+| 7 | [docs/experiments/recovery_quantitative_analysis_guide.md](docs/experiments/recovery_quantitative_analysis_guide.md) | 평균 복구 시간, 성공률, reward 그래프 분석 |
+
+제출용 산출물은 아래 문서에 정리되어 있다.
+
+| 산출물 | 문서 |
+| --- | --- |
+| 요구사항 정의서 | [docs/submission/requirements_definition.md](docs/submission/requirements_definition.md), [docs/submission/requirements_definition.docx](docs/submission/requirements_definition.docx) |
+| 기능/API 가이드 | [docs/submission/functional_api_guide.md](docs/submission/functional_api_guide.md) |
+| OpenAPI 초안 | [docs/submission/openapi_agent_registry.yaml](docs/submission/openapi_agent_registry.yaml) |
+| 설치 활용 가이드 | [docs/submission/install_and_run_guide.md](docs/submission/install_and_run_guide.md) |
+| 시험 가이드 | [docs/submission/test_guide.md](docs/submission/test_guide.md) |
+| 실행 코드 설명서 | [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md) |
+
+## 교수님 요청과 ETRI 요구사항 관계
+
+이 프로젝트에는 두 가지 요구가 함께 들어 있다.
+
+| 구분 | 요구 내용 | 현재 반영 |
+| --- | --- | --- |
+| 교수님 요청 연구 | 4개 Agent가 HA, 응용관리, 인프라, 비용 관점에서 action과 reward를 설계해야 함 | 4-Agent 판단 구조, action/reward 정책, reward 기반 action ranking |
+| 교수님 요청 연구 | 장애별로 필요한 복구 action을 판단해야 함 | `pod-kill`, `cpu-stress`, `memory-stress`, `network-delay` 실험 |
+| 교수님 요청 연구 | 안전하지 않은 Kubernetes 명령은 실행하지 않아야 함 | Python Validator + Go Guard 이중 검증 |
+| ETRI 개발 가이드 | Go 언어 개발 필수 | [go/aiops-guard](go/aiops-guard) 구현 |
+| ETRI 개발 가이드 | 최소 2종 이상 LLM/코딩 에이전트 활용 | OpenAI LLM + Codex 교차 검증 구조 문서화 |
+| ETRI 개발 가이드 | 프레임워크/프롬프트 중심 문서 작성 | `docs/design/`, `docs/submission/` 문서화 |
+| ETRI 개발 가이드 | 로그 및 에러 메시지 최대화 | `runs/` 결과, JSONL, CSV, SVG/PNG 통계 산출 |
+| ETRI 과제 방향 | CPU/GPU VM 기반 AI 응용 배포/제어 | Ops LLM 선정, CPU/GPU 배치 추천, Deployment manifest dry-run |
+
+정리하면, 교수님 요청은 **Agent 중심 AIOps 장애 복구 연구**이고, ETRI 요구사항은 **Go, LLM 교차 검증, AI 응용 배포/운용 산출물**이다. 이 저장소는 두 흐름을 하나의 Agent 기반 운영 파이프라인으로 연결한다.
+
+## 현재 완료 상태
+
+| 항목 | 상태 |
+| --- | --- |
+| 4-Agent 역할, action, reward 정책 | 완료 |
+| AutoGen GroupChat 기반 Agent 경로 | 완료 |
+| Prometheus metric 입력 | 완료 |
+| Chaos Mesh 장애 4종 실험 | 완료 |
+| AIOpsLab Hotel Reservation 탐지 benchmark | 완료 |
+| Kubernetes dry-run / real 실행 | 완료 |
+| Python Validator 안전 검증 | 완료 |
+| Go Guard 이중 검증 | 완료 |
+| Agent 등록 관리 프로토타입 | 완료 |
+| Ops LLM 선정 CLI | 완료 |
+| CPU/GPU VM 배치 추천 CLI | 완료 |
+| AI 서비스 배포 manifest 생성 | 완료 |
+| Kubernetes server-side dry-run 검증 | 완료 |
+| 통합 CLI `run-service-operations` | 완료 |
+| Reward 정책별 action ranking 실험 | 완료 |
+| 정량 그래프/통계 분석 | 완료 |
+| Go Echo HTTP API 서버 + Swagger UI | 이번 범위 제외 |
+| 실제 AWS/Azure/GCP 멀티 클라우드 연동 | ETRI VM 확보 후 후속 진행 |
+| 실제 AI 서비스 Pod 상시 배포 운영 | 현재는 manifest/dry-run 중심, 후속 진행 |
 
 ## 4-Agent 역할
 
-| Agent | 담당 내용 |
+| Agent | 역할 |
 | --- | --- |
 | `AIServiceHASupportAgent` | 서비스 장애 진단, 가용성 판단, 자율 복구 필요성 평가 |
-| `AIApplicationManagementAgent` | 응용 배포, 복구 action 선택, Kubernetes 제어 절차 관리 |
+| `AIApplicationManagementAgent` | 응용 배포/복구 action 제안, Kubernetes 제어 절차 관리 |
 | `AISemiconductorInfraOpsAgent` | CPU/GPU/NPU 자원 수용성, replica 증가, VM 배치 가능성 검증 |
-| `CostOptimizationAgent` | 자원 증가 비용, 과잉 action, 비용 우선 정책 검증 |
+| `CostOptimizationAgent` | 비용 증가, 과잉 action, 비용 우선 정책 검증 |
 
-Agent 정의 파일:
+Agent 등록 정보는 [config/agent_registry.json](config/agent_registry.json)에 있다.
 
-```text
-config/agent_registry.json
-```
-
-## 실행 환경 구분
+## 실행 환경
 
 | 환경 | 용도 |
 | --- | --- |
 | `base` | Anaconda 기본 환경 |
-| `aiops_research` | 우리 프로젝트 실행, pytest, 4-Agent CLI, Go guard |
+| `aiops_research` | 우리 프로젝트 실행, pytest, 4-Agent CLI, Go Guard |
 | `aiopslab` | 외부 AIOpsLab 공식 코드 실행 |
 
-보통 우리 프로젝트 작업은 다음 환경에서 한다.
+보통 우리 프로젝트 작업은 다음 환경에서 실행한다.
 
 ```bash
 conda activate aiops_research
 cd ~/geonhae/aiops_research
 ```
 
-## 설치 및 테스트
+## 빠른 실행 코드
 
-### 서버
+자세한 실행 코드는 [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md)에 목적별로 정리되어 있다. README에는 대표 명령만 둔다.
+
+### 1. 최신 코드 반영
 
 ```bash
 cd ~/geonhae/aiops_research
-conda activate aiops_research
 git pull origin master
+conda activate aiops_research
 python -m pip install -e ".[dev,autogen]"
+```
+
+### 2. 전체 테스트
+
+```bash
 python -m pytest
 ```
-
-Go guard 테스트:
 
 ```bash
 cd ~/geonhae/aiops_research/go/aiops-guard
 go test ./...
-go run ./cmd/aiops-guard --input ../../examples/go_guard_scale_action.json
 ```
 
-### Windows 로컬
-
-```powershell
-cd C:\Users\geonhae\Documents\aiops_research
-.\.venv\Scripts\python.exe -m pytest
-```
-
-## 기본 명령
-
-### 1. Agent 등록 관리
+### 3. Ops LLM 선정
 
 ```bash
-aiops-k8s-agents list-agents \
-  --registry config/agent_registry.json
+aiops-k8s-agents select-ops-llm \
+  --config config/ops_llm_benchmark.json \
+  --policy quality_first
 ```
 
-```bash
-aiops-k8s-agents validate-agent-action \
-  --registry config/agent_registry.json \
-  --agent AIApplicationManagementAgent \
-  --action app_scale_deployment
+대표 결과:
+
+```text
+selected_model = gpt-5.5
 ```
 
-### 2. CPU/GPU VM 추론 배치 추천
+### 4. CPU/GPU VM 배치 추천
 
 ```bash
 aiops-k8s-agents recommend-inference-placement \
@@ -175,52 +155,39 @@ aiops-k8s-agents recommend-inference-placement \
   --workload llm-chat-inference
 ```
 
-기대 결과:
+대표 결과:
 
 ```text
 selected_resource = gpu-vm-l4
 action = deploy_on_gpu_vm
 ```
 
-가벼운 텍스트 모델:
+### 5. Agent 중심 통합 파이프라인
 
 ```bash
-aiops-k8s-agents recommend-inference-placement \
-  --config config/inference_optimization.json \
-  --workload text-classifier
-```
-
-기대 결과:
-
-```text
-selected_resource = cpu-vm-standard
-action = deploy_on_cpu_vm
-```
-
-### 3. Kubernetes recovery action 실행
-
-```bash
-aiops-k8s-agents execute-recovery-action \
-  --mode real \
-  --guard-backend go \
-  --action rollout_restart \
+aiops-k8s-agents run-service-operations \
+  --llm-policy quality_first \
+  --workload llm-chat-inference \
   --namespace online-boutique \
   --deployment paymentservice \
-  --allowed-namespace online-boutique \
-  --allowed-deployment paymentservice
+  --mode dry-run \
+  --guard-backend go
 ```
 
-## 서버 real 실험
+이 명령은 다음을 한 번에 연결한다.
 
-전제:
-
-```bash
-export PATH="$HOME/bin:$PATH"
-export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
-kubectl get nodes
+```text
+Ops LLM 선정
+-> CPU/GPU VM 배치 계획
+-> Kubernetes Deployment manifest 생성
+-> manifest dry-run 검증
+-> Application / Infrastructure / Cost Agent 검토
+-> Python Validator + Go Guard 실행 준비
 ```
 
-Prometheus port-forward는 별도 터미널에서 계속 켜둔다.
+### 6. Kubernetes real 장애 복구 실험
+
+Prometheus port-forward는 별도 터미널에서 켜둔다.
 
 ```bash
 kubectl port-forward \
@@ -232,14 +199,11 @@ kubectl port-forward \
 실험 터미널:
 
 ```bash
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
 export PROM=http://127.0.0.1:9091
 export NETWORK_LATENCY_QUERY='max(probe_duration_seconds{target="paymentservice"})'
-curl -sS "$PROM/-/ready"
-```
 
-36회 recovery action 실험:
-
-```bash
 GUARD_BACKEND=go \
 MODE=real \
 REPETITIONS=3 \
@@ -262,78 +226,7 @@ cat "$LATEST/analysis/reward_policy_comparison.md"
 36 outcomes.jsonl
 ```
 
-## 실제 장애 시나리오
-
-| 장애 | 도구 | 대상 |
-| --- | --- | --- |
-| `pod-kill` | Chaos Mesh | `paymentservice` |
-| `cpu-stress` | Chaos Mesh | `paymentservice` |
-| `memory-stress` | Chaos Mesh | `checkoutservice` |
-| `network-delay` | Chaos Mesh + blackbox exporter | `paymentservice` |
-
-CPU 95% 입력은 초기 smoke test용 mock 시나리오다. 현재 연구 결과의 중심은 위의 실제 Chaos Mesh/AIOpsLab 기반 실험이다.
-
-## 주요 문서
-
-| 문서 | 내용 |
-| --- | --- |
-| `docs/submission/requirements_definition.md` | 요구사항 정의서 |
-| `docs/design/agent_registry_guide.md` | AI Agent 등록 관리 가이드 |
-| `docs/design/inference_optimization_guide.md` | CPU/GPU VM 추론 최적화 가이드 |
-| `docs/submission/functional_api_guide.md` | 기능/API 사용 가이드 |
-| `docs/submission/test_guide.md` | 시험 검증 가이드 |
-| `docs/design/go_and_llm_cross_validation.md` | Go 언어 및 LLM 교차 검증 정리 |
-| `docs/experiments/recovery_action_experiment_guide.md` | 장애별 action/reward 실험 가이드 |
-| `docs/archive/first_stage_research_completion.md` | 1차 연구 완료 범위 정리 |
-
-## 현재 연구 단계
-
-현재 단계는 **1차 통합 프로토타입 구현 및 실험 검증 완료**로 볼 수 있다.
-
-완료된 내용:
-
-- 4-Agent 구조 구현
-- 실제 장애 주입과 metric 관측
-- Kubernetes real action 실행
-- Go guard 기반 최종 action 검증
-- Agent 등록 관리
-- CPU/GPU VM 기반 추론 최적화 정책
-- Reward 정책 변화에 따른 장애별 action ranking 비교
-
-다음 연구 확장:
-
-- single-agent baseline 비교
-- Agent 제거 ablation 실험
-- AutoGen multi-round real action 선택
-- 실제 GPU/NPU 스케줄링과 모델 추론 서비스 연동
-- 통계 검정과 그래프 기반 정량 평가
-
-## 추가 완료 항목: LLM 선정 및 AI 응용 배포/제어 전략
-
-다음 두 항목도 코드, CLI, 테스트, 문서 산출물로 정리했다.
-
-| 개발 항목 | 완료 산출물 |
-| --- | --- |
-| Ops 분석 시험 및 최적 LLM 선정 | `config/ops_llm_benchmark.json`, `docs/design/ops_llm_selection_guide.md`, `aiops-k8s-agents select-ops-llm` |
-| CPU/GPU VM 기반 AI 응용 배포/제어 추론 최적화 전략 | `config/inference_optimization.json`, `docs/design/ai_application_deployment_strategy.md`, `aiops-k8s-agents plan-inference-deployment` |
-
-실행 명령:
-
-```bash
-aiops-k8s-agents select-ops-llm \
-  --config config/ops_llm_benchmark.json \
-  --policy quality_first
-```
-
-```bash
-aiops-k8s-agents plan-inference-deployment \
-  --config config/inference_optimization.json \
-  --workload llm-chat-inference
-```
-
-## 추가 완료 항목: 정량 그래프/통계 분석
-
-Recovery action 실험 결과를 이용해 평균 복구 시간, 성공률, reward 정책 차이를 표와 SVG 그래프로 생성하는 기능을 추가했다.
+### 7. 정량 그래프/통계 생성
 
 ```bash
 LATEST=$(ls -dt runs/recovery-action-pilot/*/ | head -1)
@@ -343,7 +236,7 @@ aiops-k8s-agents summarize-recovery-statistics \
   --output-dir "${LATEST}statistics"
 ```
 
-산출물:
+대표 산출물:
 
 ```text
 statistics/quantitative_summary.md
@@ -353,3 +246,86 @@ statistics/mean_recovery_seconds_by_action.svg
 statistics/success_rate_by_action.svg
 statistics/reward_by_policy.svg
 ```
+
+## 실제 장애 시나리오
+
+| 장애 | 도구 | 대상 | 설명 |
+| --- | --- | --- | --- |
+| `pod-kill` | Chaos Mesh | `paymentservice` | Pod를 제거해 Kubernetes 복구 동작 확인 |
+| `cpu-stress` | Chaos Mesh | `paymentservice` | CPU 부하를 주입해 action 선택 비교 |
+| `memory-stress` | Chaos Mesh | `checkoutservice` | 메모리 부하와 restart/rollout 판단 확인 |
+| `network-delay` | Chaos Mesh + blackbox exporter | `paymentservice` | 지연시간 증가를 Prometheus metric으로 관측 |
+
+초기의 `CPU 95%` 입력은 mock/smoke test용 시나리오다. 현재 연구 결과의 중심은 위의 실제 Chaos Mesh/AIOpsLab 기반 실험이다.
+
+## 문서 지도
+
+### 제출용 문서
+
+| 문서 | 내용 |
+| --- | --- |
+| [docs/submission/requirements_definition.md](docs/submission/requirements_definition.md) | 요구사항 정의서 |
+| [docs/submission/functional_api_guide.md](docs/submission/functional_api_guide.md) | 기능/API 사용 가이드 |
+| [docs/submission/install_and_run_guide.md](docs/submission/install_and_run_guide.md) | 설치 및 실행 가이드 |
+| [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md) | 실행 코드 설명서 |
+| [docs/submission/test_guide.md](docs/submission/test_guide.md) | 시험 검증 가이드 |
+| [docs/submission/openapi_agent_registry.yaml](docs/submission/openapi_agent_registry.yaml) | Agent 등록 관리 OpenAPI 초안 |
+
+### 설계 문서
+
+| 문서 | 내용 |
+| --- | --- |
+| [docs/design/research_task_integration_design.md](docs/design/research_task_integration_design.md) | 교수님 요청 연구와 ETRI 과제 요구사항 통합 설계 |
+| [docs/design/agent_registry_guide.md](docs/design/agent_registry_guide.md) | Agent 등록 관리 구조 |
+| [docs/design/agent_action_reward_policy.md](docs/design/agent_action_reward_policy.md) | Agent별 action/reward 정책 |
+| [docs/design/go_and_llm_cross_validation.md](docs/design/go_and_llm_cross_validation.md) | Go Guard와 LLM/코딩 Agent 교차 검증 |
+| [docs/design/ops_llm_selection_guide.md](docs/design/ops_llm_selection_guide.md) | Ops 분석 시험 및 최적 LLM 선정 |
+| [docs/design/inference_optimization_guide.md](docs/design/inference_optimization_guide.md) | CPU/GPU VM 기반 추론 배치 추천 |
+| [docs/design/ai_application_deployment_strategy.md](docs/design/ai_application_deployment_strategy.md) | AI 응용 배포/제어 추론 최적화 전략 |
+| [docs/design/autogen_groupchat.md](docs/design/autogen_groupchat.md) | AutoGen GroupChat 구조 |
+
+### 실험 문서
+
+| 문서 | 내용 |
+| --- | --- |
+| [docs/experiments/service_operations_environment.md](docs/experiments/service_operations_environment.md) | Agent 중심 통합 파이프라인 실행 환경 |
+| [docs/experiments/recovery_action_experiment_guide.md](docs/experiments/recovery_action_experiment_guide.md) | Chaos Mesh 장애별 recovery action 실험 |
+| [docs/experiments/recovery_quantitative_analysis_guide.md](docs/experiments/recovery_quantitative_analysis_guide.md) | 평균 복구 시간, 성공률, reward 그래프 분석 |
+| [docs/experiments/full_stack_experiment_guide.md](docs/experiments/full_stack_experiment_guide.md) | full-stack 실험 환경 구성 |
+| [docs/experiments/experiment_commands.md](docs/experiments/experiment_commands.md) | 전체 실험 명령어 기록 |
+| [docs/experiments/server_migration_runbook.md](docs/experiments/server_migration_runbook.md) | 서버 이관 및 실행 절차 |
+
+### 보관 문서
+
+| 문서 | 내용 |
+| --- | --- |
+| [docs/archive/first_stage_research_completion.md](docs/archive/first_stage_research_completion.md) | 1차 연구 완료 범위 정리 |
+| [docs/archive/llm_cross_validation_report_20260616.md](docs/archive/llm_cross_validation_report_20260616.md) | LLM/코딩 Agent 교차 검증 기록 |
+| [docs/archive/prometheus_adapter.md](docs/archive/prometheus_adapter.md) | Prometheus adapter 중간 설명 |
+| [docs/archive/research_reference_integration.md](docs/archive/research_reference_integration.md) | 참고 PPT/연구자료 반영 기록 |
+
+## 현재 연구 단계
+
+현재 단계는 **1차 통합 프로토타입 구현 및 실험 검증 완료**로 볼 수 있다.
+
+완료된 핵심:
+
+- 4-Agent 구조 구현
+- 실제 장애 주입과 metric 관측
+- Kubernetes real action 실행
+- Python Validator + Go Guard 이중 안전 검증
+- Agent 등록 관리
+- Ops LLM 선정
+- CPU/GPU VM 기반 추론 배치 추천
+- AI 서비스 Deployment manifest 생성 및 server-side dry-run 검증
+- Reward 정책 변화에 따른 장애별 action ranking 비교
+- 정량 그래프/통계 분석
+
+후속 확장:
+
+- 실제 AWS/Azure/GCP 멀티 클라우드 VM 연동
+- 실제 GPU/NPU 스케줄링과 모델 추론 서비스 연동
+- AutoGen multi-round real action 선택
+- single-agent baseline 비교
+- Agent 제거 ablation 실험
+- Go Echo HTTP API 서버와 Swagger UI
