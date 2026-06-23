@@ -15,7 +15,12 @@ from aiops_k8s_agents.models import (
 
 @dataclass(frozen=True)
 class AISemiconductorInfraOpsAgent:
-    """Reviews proposed actions from simulated GPU/NPU infrastructure capacity view."""
+    """Reviews replica safety and CPU/GPU VM placement constraints.
+
+    The compatibility class name is kept for the research architecture. Real
+    GPU/NPU cluster scheduling and accelerator-level orchestration are future
+    extensions beyond this prototype guardrail.
+    """
 
     name: str = "AISemiconductorInfraOpsAgent"
     max_recommended_replicas: int = 5
@@ -29,7 +34,7 @@ class AISemiconductorInfraOpsAgent:
                 approved=True,
                 reason=(
                     f"{action.kind.value} does not increase replica capacity and is "
-                    "within the first-stage infrastructure policy."
+                    "within the current Kubernetes deployment safety policy."
                 ),
                 parameters={"action_kind": action.kind.value},
             )
@@ -56,7 +61,10 @@ class AISemiconductorInfraOpsAgent:
             action="infra_capacity_approved",
             reward=0.70,
             approved=True,
-            reason="Requested replicas are within the simulated GPU/NPU capacity policy.",
+            reason=(
+                "Requested replicas are within the current Kubernetes replica "
+                "safety and CPU/GPU VM placement policy."
+            ),
         )
 
     def review_operation(

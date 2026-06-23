@@ -43,7 +43,7 @@ AIOpsLab / Kubernetes 장애 상태
 | --- | --- |
 | `ha_agent.py` | AI서비스 HA 지원 에이전트. 장애 위험과 HA 복구 필요성 판단 |
 | `application_agent.py` | AI응용관리 자동화 에이전트. 실제 Kubernetes 응용 제어 액션 생성 |
-| `infra_agent.py` | AI반도체 인프라 운용 자동화 에이전트. GPU/NPU/인프라 용량 관점 검토 |
+| `infra_agent.py` | AI반도체 인프라 운용 자동화 에이전트. Kubernetes replica/deployment 안전성과 CPU/GPU VM 배치 제약 검토 |
 | `cost_agent.py` | 비용 최적화 지원 에이전트. 자원 증가가 비용 정책 안에 있는지 검토 |
 | `coordinator.py` | AI-MCMP 통합 관리 에이전트. 4대 에이전트 결정을 모아 최종 실행 여부 결정 |
 | `agent_decision.py` | 각 에이전트가 내는 action, reward, 승인 여부 구조체 |

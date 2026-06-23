@@ -54,11 +54,12 @@
     {
       "name": "AISemiconductorInfraOpsAgent",
       "korean_name": "AI반도체 인프라 운용 자동화 에이전트",
-      "role": "CPU/GPU/NPU 자원 수용성 판단, 인프라 제약 검증",
+      "role": "Kubernetes replica/deployment 안전성 판단, CPU/GPU VM 배치 제약 검토",
       "responsibilities": [
-        "replica 증가, rollout restart, 추론 VM 선택이 현재 인프라 용량 안에서 가능한지 검토한다.",
-        "GPU/NPU 가속기 필요 여부와 VM 후보의 지연시간, 처리량, 메모리 조건을 검증한다.",
-        "자원 부족 또는 정책 위반 action을 거부한다."
+        "replica 증가, rollout restart, 추론 VM 선택이 현재 프로토타입의 인프라 정책 안에서 가능한지 검토한다.",
+        "CPU/GPU VM 후보의 지연시간, 처리량, 메모리, 비용 조건을 검토한다.",
+        "자원 부족 또는 정책 위반 action을 거부한다.",
+        "실제 GPU/NPU 클러스터 스케줄링과 accelerator-level orchestration은 후속 확장으로 분리한다."
       ],
       "bounded_actions": [
         "infra_capacity_approved",

@@ -9,6 +9,9 @@
       "manual project result review"
     ],
     "is_synthetic": false,
+    "is_standardized_benchmark": false,
+    "measurement_level": "manual_summary_from_available_project_runs",
+    "requires_regeneration_for_final_report": true,
     "last_updated": "2026-06-16",
     "notes": [
       "Current benchmark values are manually summarized from available project experiment logs and review notes.",

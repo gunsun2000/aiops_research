@@ -62,11 +62,47 @@ def test_autonomous_coordinator_collects_evidence_and_selects_safe_candidate():
         "scale_out",
     }
     assert report["selected_action"]["kind"] == "scale_out"
+    assert report["selected_action"]["state_changed"] is True
+    assert report["selected_action"]["action_effect_type"] == "kubernetes_state_change"
     assert report["validation_result"]["valid"] is True
     assert report["execution_result"]["command"] == (
         "kubectl scale deployment paymentservice --replicas=3 -n online-boutique"
     )
     assert report["recovery_monitoring"]["recovery_success"] is True
+
+
+def test_high_is_bad_metric_comparison_reflects_exceeded_and_normal_cases():
+    agent = AIServiceHASupportAgent()
+
+    high_diagnosis, high_decision = agent.diagnose_evidence(
+        evidence=EvidenceSnapshot(
+            namespace="online-boutique",
+            deployment="paymentservice",
+            metric_values={"cpu": 95.0},
+            desired_replicas=1,
+            available_replicas=1,
+        ),
+        metric="cpu",
+        threshold=80.0,
+    )
+    normal_diagnosis, normal_decision = agent.diagnose_evidence(
+        evidence=EvidenceSnapshot(
+            namespace="online-boutique",
+            deployment="paymentservice",
+            metric_values={"cpu": 50.0},
+            desired_replicas=1,
+            available_replicas=1,
+        ),
+        metric="cpu",
+        threshold=80.0,
+    )
+
+    assert high_diagnosis.evidence["threshold_comparison"] == "95.000 >= 80.000"
+    assert high_diagnosis.evidence["threshold_exceeded"] is True
+    assert high_decision.approved is True
+    assert normal_diagnosis.evidence["threshold_comparison"] == "50.000 < 80.000"
+    assert normal_diagnosis.evidence["threshold_exceeded"] is False
+    assert normal_decision.approved is False
 
 
 def test_autonomous_coordinator_replans_after_failed_first_action():
@@ -105,6 +141,11 @@ def test_autonomous_coordinator_replans_after_failed_first_action():
     assert len(report["replanning_attempts"]) == 1
     assert report["executed_actions"][0]["kind"] == "rollout_restart"
     assert report["executed_actions"][1]["kind"] == "observe_only"
+    assert report["executed_actions"][1]["state_changed"] is False
+    assert (
+        report["executed_actions"][1]["action_effect_type"]
+        == "read_only_observation"
+    )
     assert report["policy_update_recommendations"][0]["requires_human_review"] is True
 
 
@@ -206,6 +247,7 @@ def test_low_is_bad_availability_below_threshold_diagnoses_low_availability():
     assert diagnosis.cause == "low_availability"
     assert diagnosis.severity in {"warning", "critical"}
     assert diagnosis.evidence["threshold_comparison"] == "0.600 <= 0.900"
+    assert diagnosis.evidence["threshold_exceeded"] is True
     assert decision.approved is True
 
 
@@ -234,6 +276,8 @@ def test_low_is_bad_availability_at_threshold_does_not_select_risky_action():
 
     assert report["valid"] is False
     assert report["final_status"] == "no_action_required"
+    assert report["diagnosis"]["evidence"]["threshold_comparison"] == "0.950 > 0.900"
+    assert report["diagnosis"]["evidence"]["threshold_exceeded"] is False
     assert report["executed_actions"] == []
 
 

@@ -19,7 +19,7 @@ Agent 등록 관리는 4-Agent 구조를 코드에 고정하지 않고, JSON 설
 | --- | --- |
 | `AIServiceHASupportAgent` | 서비스 장애 진단, 가용성 판단, 자율 복구 필요성 평가 |
 | `AIApplicationManagementAgent` | 응용 배포, Kubernetes 제어 action 선택, 복구 절차 관리 |
-| `AISemiconductorInfraOpsAgent` | CPU/GPU/NPU 자원 수용성 판단, 인프라 제약 검증 |
+| `AISemiconductorInfraOpsAgent` | Kubernetes replica/deployment 안전성과 CPU/GPU VM 배치 제약 검토 |
 | `CostOptimizationAgent` | 자원 사용량, replica 증가, VM 비용 정책 검증 |
 
 설정 파일:

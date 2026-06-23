@@ -211,8 +211,10 @@ def _normalize_metric(metric: str) -> str:
 def _comparison_text(value: float, threshold: float, metric_policy: object | None) -> str:
     signal_direction = getattr(metric_policy, "signal_direction", "")
     if signal_direction == "low_is_bad":
-        return f"{value:.3f} <= {threshold:.3f}"
-    return f"{value:.3f} >= {threshold:.3f}"
+        operator = "<=" if value <= threshold else ">"
+        return f"{value:.3f} {operator} {threshold:.3f}"
+    operator = ">=" if value >= threshold else "<"
+    return f"{value:.3f} {operator} {threshold:.3f}"
 
 
 def _evidence_metric_value(

@@ -180,3 +180,25 @@ using aiops-k8s-agents summarize-recovery-statistics.
 - `mock` 출력: 기능 구조 확인용 prototype result
 - `dry-run` 출력: Kubernetes API 호환성 검증
 - `real` 출력: 실제 Kubernetes resource 변경이 포함된 실험
+
+## 7. 최종 정확성 보완
+
+본 프로젝트의 autonomous flow는 무제한 자율 실행 시스템이 아니다. 자율성은 evidence 기반 진단, 후보 action 생성, 후보 평가, 복구 모니터링, 실패 시 제한적 재계획에 해당한다. 실제 Kubernetes 실행은 Python Validator와 Go Guard를 통과한 bounded action으로 제한된다.
+
+`observe_only`는 복구 명령이 아니라 read-only observation이다. 즉 Kubernetes 상태를 변경하지 않고 현재 deployment/pod 상태와 Kubernetes 자체 복구 여부를 확인하는 action이다. 리포트에서는 다음처럼 상태 변경 action과 구분한다.
+
+```json
+{
+  "kind": "observe_only",
+  "state_changed": false,
+  "action_effect_type": "read_only_observation"
+}
+```
+
+반대로 `rollout_restart`와 `scale_out`은 Kubernetes 상태를 변경하는 action이므로 `state_changed: true`, `action_effect_type: "kubernetes_state_change"`로 해석한다.
+
+Infra Agent의 현재 구현 범위도 다음처럼 제한해서 해석한다.
+
+> Infra Agent reviews Kubernetes replica safety and CPU/GPU VM placement constraints in the current prototype. Real GPU/NPU cluster scheduling remains future work.
+
+즉 현재 Infra Agent는 Kubernetes replica 안전성, deployment 안전성, CPU/GPU VM 배치 제약 검토를 담당한다. 실제 GPU/NPU 클러스터 스케줄링과 accelerator-level orchestration은 후속 확장 범위이다.

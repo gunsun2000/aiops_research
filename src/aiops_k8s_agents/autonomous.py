@@ -323,12 +323,19 @@ def _evaluation_to_dict(evaluation: CandidateEvaluation) -> dict[str, Any]:
 
 
 def _action_to_dict(action: RecoveryAction) -> dict[str, Any]:
+    state_changed = action.kind != RecoveryActionKind.OBSERVE_ONLY
     return {
         "namespace": action.namespace,
         "deployment": action.deployment,
         "kind": action.kind.value,
         "replicas": action.replicas,
         "reason": action.reason,
+        "state_changed": state_changed,
+        "action_effect_type": (
+            "kubernetes_state_change"
+            if state_changed
+            else "read_only_observation"
+        ),
     }
 
 

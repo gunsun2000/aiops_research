@@ -30,6 +30,7 @@ AIOpsLab / Chaos Mesh 장애 주입
 | 5 | [docs/experiments/service_operations_environment.md](docs/experiments/service_operations_environment.md) | Agent 중심 통합 파이프라인 실행 환경 |
 | 6 | [docs/experiments/recovery_action_experiment_guide.md](docs/experiments/recovery_action_experiment_guide.md) | Chaos Mesh 장애별 복구 action 실험 |
 | 7 | [docs/experiments/recovery_quantitative_analysis_guide.md](docs/experiments/recovery_quantitative_analysis_guide.md) | 평균 복구 시간, 성공률, reward 그래프 분석 |
+| 8 | [docs/submission/service_control_framework_mapping.md](docs/submission/service_control_framework_mapping.md) | AI 기반 서비스 제어 및 관리 자동화 프레임워크 산출물과 코드 매핑 |
 
 제출용 산출물은 아래 문서에 정리되어 있다.
 
@@ -41,6 +42,7 @@ AIOpsLab / Chaos Mesh 장애 주입
 | 설치 활용 가이드 | [docs/submission/install_and_run_guide.md](docs/submission/install_and_run_guide.md) |
 | 시험 가이드 | [docs/submission/test_guide.md](docs/submission/test_guide.md) |
 | 실행 코드 설명서 | [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md) |
+| 과제-코드 매핑 | [docs/submission/service_control_framework_mapping.md](docs/submission/service_control_framework_mapping.md) |
 
 ## 교수님 요청과 ETRI 요구사항 관계
 
@@ -96,7 +98,7 @@ AIOpsLab / Chaos Mesh 장애 주입
 | --- | --- |
 | `AIServiceHASupportAgent` | 서비스 장애 진단, 가용성 판단, 자율 복구 필요성 평가 |
 | `AIApplicationManagementAgent` | 응용 배포/복구 action 제안, Kubernetes 제어 절차 관리 |
-| `AISemiconductorInfraOpsAgent` | CPU/GPU/NPU 자원 수용성, replica 증가, VM 배치 가능성 검증 |
+| `AISemiconductorInfraOpsAgent` | 현재 프로토타입에서는 Kubernetes replica 안전성, deployment 안전성, CPU/GPU VM 배치 제약을 검토한다. 실제 GPU/NPU 클러스터 스케줄링과 accelerator-level orchestration은 후속 확장이다. |
 | `CostOptimizationAgent` | 비용 증가, 과잉 action, 비용 우선 정책 검증 |
 
 Agent 등록 정보는 [config/agent_registry.json](config/agent_registry.json)에 있다.
@@ -153,6 +155,8 @@ aiops-k8s-agents select-ops-llm \
 ```text
 selected_model = gpt-5.5
 ```
+
+현재 `config/ops_llm_benchmark.json`의 수치는 사용 가능한 AIOpsLab/Chaos Mesh 프로젝트 run을 수동 요약한 값이다. 따라서 정책 연결과 프로토타입 검증에는 사용할 수 있지만, 최종 정량 보고서에서는 동일 조건의 per-model 반복 실험으로 benchmark를 재생성해야 한다. 이 범위는 metadata의 `is_standardized_benchmark: false`, `measurement_level: manual_summary_from_available_project_runs`, `requires_regeneration_for_final_report: true`로 명시한다.
 
 ### 4. CPU/GPU VM 배치 추천
 
@@ -222,7 +226,9 @@ Evidence 수집
 -> 실패 시 다음 후보로 재계획
 ```
 
-중요한 점은 `autonomous-run`에서도 Agent가 임의의 `kubectl` 문자열을 직접 실행하지 않는다는 것이다. 모든 action은 구조화된 `RecoveryAction`으로 생성되고, 실행 전에는 반드시 Python Validator와 선택한 guard backend를 통과한다.
+중요한 점은 `autonomous-run`에서도 Agent가 임의의 `kubectl` 문자열을 직접 실행하지 않는다는 것이다. 본 프로젝트의 자율성은 Agent의 evidence 기반 판단, 후보 action 생성, 복구 모니터링, 실패 시 재계획에 해당한다. 실제 Kubernetes 실행은 구조화된 `RecoveryAction`으로 제한되며, 실행 전에는 반드시 Python Validator와 선택한 guard backend를 통과한다.
+
+`observe_only`는 Kubernetes 상태를 변경하는 복구 action이 아니다. 이 action은 read-only observation, 즉 추가 관찰과 Kubernetes 자체 복구 여부 확인을 의미하며, 리포트에는 `state_changed: false`, `action_effect_type: "read_only_observation"`으로 표시된다. `rollout_restart`와 `scale_out`은 실제 상태 변경 action으로 구분한다.
 
 Evidence Collector 기반 autonomous flow는 mock/test 환경에서 동작하도록 구현되어 있으며, `KubernetesEvidenceProvider`는 deployment/pod snapshot 중심의 제한적 provider로 제공된다. Prometheus metric, log enrichment, full real-cluster evidence fusion은 후속 확장 단계로 분리한다.
 

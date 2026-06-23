@@ -25,6 +25,11 @@ def test_ops_llm_benchmark_exposes_data_source_metadata():
 
     assert config.metadata.data_source == "manual_summary"
     assert config.metadata.is_synthetic is False
+    assert config.metadata.is_standardized_benchmark is False
+    assert config.metadata.measurement_level == (
+        "manual_summary_from_available_project_runs"
+    )
+    assert config.metadata.requires_regeneration_for_final_report is True
     assert config.metadata.benchmark_run_id
     assert "manually summarized" in " ".join(config.metadata.notes).lower()
 

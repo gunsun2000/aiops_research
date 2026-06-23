@@ -440,8 +440,12 @@ def test_cli_runs_autonomous_closed_loop_in_mock_mode(capsys):
     assert output["command"] == "autonomous-run"
     assert output["valid"] is True
     assert output["final_status"] == "recovered"
+    assert output["mode"] == "mock"
+    assert output["metadata"]["autonomous"] == "closed_loop"
+    assert output["collected_evidence_summary"]["source"] == "fake"
     assert output["diagnosis"]["cause"] == "cpu_saturation"
     assert output["selected_action"]["kind"] == "scale_out"
+    assert output["selected_action"]["state_changed"] is True
     assert output["execution_result"]["command"] == (
         "kubectl scale deployment paymentservice --replicas=3 -n online-boutique"
     )

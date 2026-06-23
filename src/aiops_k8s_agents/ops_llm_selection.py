@@ -16,6 +16,9 @@ class OpsLLMBenchmarkMetadata:
     benchmark_run_id: str
     generated_from: tuple[str, ...]
     is_synthetic: bool
+    is_standardized_benchmark: bool
+    measurement_level: str
+    requires_regeneration_for_final_report: bool
     last_updated: str
     notes: tuple[str, ...]
 
@@ -31,6 +34,15 @@ class OpsLLMBenchmarkMetadata:
                 str(item) for item in data.get("generated_from", [])
             ),
             is_synthetic=bool(data.get("is_synthetic", False)),
+            is_standardized_benchmark=bool(
+                data.get("is_standardized_benchmark", False)
+            ),
+            measurement_level=str(
+                data.get("measurement_level", "unspecified")
+            ).strip(),
+            requires_regeneration_for_final_report=bool(
+                data.get("requires_regeneration_for_final_report", False)
+            ),
             last_updated=str(data.get("last_updated", "")).strip(),
             notes=tuple(str(item) for item in data.get("notes", [])),
         )

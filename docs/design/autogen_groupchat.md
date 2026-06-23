@@ -26,7 +26,7 @@ LLM이 작성한 자유 텍스트나 shell command는 직접 실행하지 않는
 | --- | --- |
 | `AIServiceHASupportAgent` | 장애 심각도, 가용성 위험, 복구 필요성 판단 |
 | `AIApplicationManagementAgent` | 응용 관점의 복구 action 제안 |
-| `AISemiconductorInfraOpsAgent` | CPU/GPU/NPU, replica, capacity 관점 검토 |
+| `AISemiconductorInfraOpsAgent` | Kubernetes replica 안전성과 CPU/GPU VM 배치 제약 검토 |
 | `CostOptimizationAgent` | 비용 증가와 과잉 대응 여부 검토 |
 
 ## Structured Output

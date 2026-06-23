@@ -30,6 +30,8 @@ cd C:\Users\geonhae\Documents\aiops_research
 - Recovery Monitor와 bounded replanning
 - CLI backward compatibility
 
+autonomous loop 테스트에서 `observe_only`는 Kubernetes 상태 변경 action이 아니라 read-only observation으로 해석한다. 즉 `observe_only` 결과는 `state_changed: false`, `action_effect_type: "read_only_observation"`으로 확인하고, `rollout_restart`와 `scale_out`은 상태 변경 action으로 구분한다.
+
 ## 2. Go guard 테스트
 
 ```bash

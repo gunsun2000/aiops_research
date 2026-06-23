@@ -87,7 +87,7 @@ Go guard는 LLM 자유 텍스트를 직접 받지 않습니다. 반드시 구조
 
 | action | kubectl 명령 |
 | --- | --- |
-| `observe_only` | `kubectl get deployment <deployment> -n <namespace>` |
+| `observe_only` | `kubectl get deployment <deployment> -n <namespace>` 형태의 read-only observation. Kubernetes 상태를 변경하지 않음 |
 | `rollout_restart` | `kubectl rollout restart deployment <deployment> -n <namespace>` |
 | `scale_out` | `kubectl scale deployment <deployment> --replicas=<N> -n <namespace>` |
 

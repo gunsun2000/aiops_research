@@ -125,3 +125,27 @@ aiops-k8s-agents select-ops-llm \
 | LLM benchmark 재생성 보조 스크립트 | `scripts/build_ops_llm_benchmark_from_runs.py` |
 | LLM 선정 CLI | `aiops-k8s-agents select-ops-llm` |
 | 테스트 코드 | `tests/test_ops_llm_selection.py` |
+
+## 최종 보고서 사용 범위 보정
+
+현재 `config/ops_llm_benchmark.json`은 표준화된 per-model 반복 benchmark 결과가 아니라, 사용 가능한 AIOpsLab 탐지 결과와 Chaos Mesh 복구 실험 결과를 바탕으로 정리한 manual summary이다.
+
+따라서 현재 값은 다음 목적에 사용한다.
+
+- Ops LLM 선정 정책이 코드에 연결되는지 검증
+- `quality_first`, `cost_first` 정책에 따른 모델 선택 흐름 확인
+- Agent 운영 파이프라인에서 선택된 LLM 이름이 전달되는지 확인
+
+최종 논문 또는 정량 보고서에서는 동일 조건에서 모델별 반복 실험을 다시 수행해 benchmark를 재생성해야 한다. 이 범위를 명확히 하기 위해 benchmark metadata는 다음 필드를 포함한다.
+
+```json
+{
+  "is_standardized_benchmark": false,
+  "measurement_level": "manual_summary_from_available_project_runs",
+  "requires_regeneration_for_final_report": true
+}
+```
+
+발표에서는 다음처럼 설명하는 것이 정확하다.
+
+> 현재 Ops LLM 선정 모듈은 AIOps 운영 기준의 모델 선택 정책을 구현한 것이며, 수치는 사용 가능한 프로젝트 run을 기반으로 한 manual summary이다. 최종 정량 비교를 위해서는 모델별 동일 조건 반복 실험으로 benchmark를 재생성한다.
