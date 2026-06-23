@@ -1,6 +1,7 @@
 from aiops_k8s_agents.autonomous import AutonomousAIOpsCoordinator
 from aiops_k8s_agents.evidence import EvidenceSnapshot, FakeEvidenceProvider
 from aiops_k8s_agents.executor import ExecutionMode
+from aiops_k8s_agents.ha_agent import AIServiceHASupportAgent
 from aiops_k8s_agents.models import RecoveryActionKind
 from aiops_k8s_agents.recovery_monitor import FakeRecoveryMonitor
 from aiops_k8s_agents.validator import CommandValidator
@@ -131,3 +132,139 @@ def test_autonomous_coordinator_safe_terminates_after_replan_limit():
     assert report["final_status"] == "safe_failure"
     assert len(report["executed_actions"]) == 2
     assert report["recovery_monitoring"]["replanning_required"] is True
+
+
+def test_unknown_evidence_metric_does_not_fallback_to_cpu_saturation():
+    agent = AIServiceHASupportAgent()
+    evidence = EvidenceSnapshot(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric_values={"queue_depth": 95.0},
+        desired_replicas=1,
+        available_replicas=1,
+    )
+
+    diagnosis, decision = agent.diagnose_evidence(
+        evidence=evidence,
+        metric="queue_depth",
+        threshold=80.0,
+    )
+
+    assert diagnosis.cause == "unknown_metric"
+    assert diagnosis.cause != "cpu_saturation"
+    assert diagnosis.evidence["preferred_action"] == "observe_only"
+    assert decision.approved is False
+    assert decision.action == "ha_no_action"
+
+
+def test_autonomous_unknown_metric_observes_without_scale_out():
+    coordinator = AutonomousAIOpsCoordinator(
+        validator=_validator(),
+        evidence_provider=FakeEvidenceProvider(
+            EvidenceSnapshot(
+                namespace="online-boutique",
+                deployment="paymentservice",
+                metric_values={"queue_depth": 95.0},
+                desired_replicas=1,
+                available_replicas=1,
+            )
+        ),
+        recovery_monitor=FakeRecoveryMonitor(default_success=True),
+        mode=ExecutionMode.MOCK,
+    )
+
+    report = coordinator.run(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="queue_depth",
+        threshold=80.0,
+    )
+
+    assert report["valid"] is False
+    assert report["diagnosis"]["cause"] == "unknown_metric"
+    assert report["final_status"] == "no_action_required"
+    assert report["generated_candidates"] == []
+    assert report["executed_actions"] == []
+
+
+def test_low_is_bad_availability_below_threshold_diagnoses_low_availability():
+    agent = AIServiceHASupportAgent()
+    evidence = EvidenceSnapshot(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric_values={"availability": 0.60},
+        desired_replicas=1,
+        available_replicas=1,
+    )
+
+    diagnosis, decision = agent.diagnose_evidence(
+        evidence=evidence,
+        metric="availability",
+        threshold=0.90,
+    )
+
+    assert diagnosis.cause == "low_availability"
+    assert diagnosis.severity in {"warning", "critical"}
+    assert diagnosis.evidence["threshold_comparison"] == "0.600 <= 0.900"
+    assert decision.approved is True
+
+
+def test_low_is_bad_availability_at_threshold_does_not_select_risky_action():
+    coordinator = AutonomousAIOpsCoordinator(
+        validator=_validator(),
+        evidence_provider=FakeEvidenceProvider(
+            EvidenceSnapshot(
+                namespace="online-boutique",
+                deployment="paymentservice",
+                metric_values={"availability": 0.95},
+                desired_replicas=1,
+                available_replicas=1,
+            )
+        ),
+        recovery_monitor=FakeRecoveryMonitor(default_success=True),
+        mode=ExecutionMode.MOCK,
+    )
+
+    report = coordinator.run(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="availability",
+        threshold=0.90,
+    )
+
+    assert report["valid"] is False
+    assert report["final_status"] == "no_action_required"
+    assert report["executed_actions"] == []
+
+
+def test_autonomous_rejects_disallowed_deployment_without_executing_action():
+    coordinator = AutonomousAIOpsCoordinator(
+        validator=CommandValidator(
+            allowed_namespaces={"online-boutique"},
+            allowed_deployments={"checkoutservice"},
+            min_replicas=1,
+            max_replicas=1,
+        ),
+        evidence_provider=FakeEvidenceProvider.cpu_saturation(
+            namespace="online-boutique",
+            deployment="paymentservice",
+            value=95.0,
+        ),
+        recovery_monitor=FakeRecoveryMonitor(default_success=True),
+        mode=ExecutionMode.MOCK,
+        max_replan_attempts=0,
+    )
+
+    report = coordinator.run(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+    )
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_failure"
+    assert report["validation_result"]["valid"] is False
+    assert "not allowlisted" in report["validation_result"]["stderr"]
+    assert report["executed_actions"] == []
+    assert report["policy_update_recommendations"][0]["requires_human_review"] is True

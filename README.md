@@ -77,7 +77,8 @@ AIOpsLab / Chaos Mesh 장애 주입
 | AI 서비스 배포 manifest 생성 | 완료 |
 | Kubernetes server-side dry-run 검증 | 완료 |
 | 통합 CLI `run-service-operations` | 완료 |
-| Evidence Collector 기반 자율 evidence 수집 | 완료 |
+| FakeEvidenceProvider 기반 autonomous mock/test evidence loop | 완료 |
+| KubernetesEvidenceProvider 기반 제한적 deployment/pod snapshot 수집 | 완료 |
 | Multi-candidate recovery action 생성 | 완료 |
 | Infra/Cost Agent 후보별 평가 | 완료 |
 | Recovery Monitor와 실패 후 재계획 | 완료 |
@@ -85,6 +86,7 @@ AIOpsLab / Chaos Mesh 장애 주입
 | Reward 정책별 action ranking 실험 | 완료 |
 | 정량 그래프/통계 분석 | 완료 |
 | Go Echo HTTP API 서버 + Swagger UI | 이번 범위 제외 |
+| Prometheus metric, log enrichment, real-cluster evidence fusion | 후속 확장 |
 | 실제 AWS/Azure/GCP 멀티 클라우드 연동 | ETRI VM 확보 후 후속 진행 |
 | 실제 AI 서비스 Pod 상시 배포 운영 | 현재는 manifest/dry-run 중심, 후속 진행 |
 
@@ -192,7 +194,7 @@ Ops LLM 선정
 
 ### 6. 폐루프 자율 4-Agent 실행
 
-아래 명령은 실제 클러스터 변경 없이 fake evidence로 폐루프 autonomous flow를 검증한다.
+아래 명령은 실제 클러스터 변경 없이 `FakeEvidenceProvider` 기반 fake evidence로 폐루프 autonomous flow를 검증한다. 이 결과는 구조/안전성 검증용 mock 결과이며, Chaos Mesh/Prometheus/Kubernetes real 실험 결과와 구분해서 사용해야 한다.
 
 ```bash
 aiops-k8s-agents autonomous-run \
@@ -221,6 +223,8 @@ Evidence 수집
 ```
 
 중요한 점은 `autonomous-run`에서도 Agent가 임의의 `kubectl` 문자열을 직접 실행하지 않는다는 것이다. 모든 action은 구조화된 `RecoveryAction`으로 생성되고, 실행 전에는 반드시 Python Validator와 선택한 guard backend를 통과한다.
+
+Evidence Collector 기반 autonomous flow는 mock/test 환경에서 동작하도록 구현되어 있으며, `KubernetesEvidenceProvider`는 deployment/pod snapshot 중심의 제한적 provider로 제공된다. Prometheus metric, log enrichment, full real-cluster evidence fusion은 후속 확장 단계로 분리한다.
 
 ### 7. Kubernetes real 장애 복구 실험
 
@@ -355,11 +359,14 @@ statistics/reward_by_policy.svg
 - Ops LLM 선정
 - CPU/GPU VM 기반 추론 배치 추천
 - AI 서비스 Deployment manifest 생성 및 server-side dry-run 검증
+- FakeEvidenceProvider 기반 autonomous mock/test loop
+- KubernetesEvidenceProvider 기반 제한적 deployment/pod snapshot evidence 수집
 - Reward 정책 변화에 따른 장애별 action ranking 비교
 - 정량 그래프/통계 분석
 
 후속 확장:
 
+- Prometheus metric, log enrichment, full real-cluster evidence fusion
 - 실제 AWS/Azure/GCP 멀티 클라우드 VM 연동
 - 실제 GPU/NPU 스케줄링과 모델 추론 서비스 연동
 - AutoGen multi-round real action 선택

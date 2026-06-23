@@ -73,7 +73,8 @@
     "latency_saturation": "rollout_restart",
     "network_degradation": "rollout_restart",
     "pod_restarts": "rollout_restart",
-    "low_availability": "scale_out"
+    "low_availability": "scale_out",
+    "unknown_metric": "observe_only"
   },
   "replica_recommendation_policy": {
     "default_replicas": 3,

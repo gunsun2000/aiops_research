@@ -119,7 +119,7 @@ class AgentDecisionPolicy:
         return None
 
     def preferred_action_for(self, cause: str) -> str:
-        return self.preferred_actions.get(cause, "scale_out")
+        return self.preferred_actions.get(cause, "observe_only")
 
     def reward_for(self, action: str, default: float) -> float:
         return self.action_rewards.get(action, default)

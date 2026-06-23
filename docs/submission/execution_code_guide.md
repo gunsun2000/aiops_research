@@ -150,12 +150,15 @@ policy_update_recommendations
 의미:
 
 - 단일 metric 입력만 보는 구조를 넘어, evidence 기반으로 장애 원인을 진단한다.
+- 현재 `autonomous-run` evidence flow는 `FakeEvidenceProvider` 기반 mock/test 시나리오를 안정적으로 검증하도록 구현되어 있다.
+- `--evidence-source kubernetes`는 deployment/pod snapshot 중심의 제한적 provider이며, Prometheus metric과 log enrichment를 결합한 full real-cluster evidence fusion은 후속 확장이다.
 - Application Agent가 `observe_only`, `rollout_restart`, `scale_out` 후보를 모두 생성한다.
 - Infra Agent와 Cost Agent가 각 후보를 별도로 평가한다.
 - Coordinator가 가장 적절한 action을 선택한다.
 - 실행 후 Recovery Monitor가 복구 여부를 판단한다.
 - 실패하면 `--max-replan-attempts` 범위 안에서 다음 후보로 재계획한다.
 - mock mode에서는 실제 Kubernetes resource를 바꾸지 않는다.
+- mock evidence 결과는 실제 Chaos Mesh/Prometheus/Kubernetes real 실험 결과와 구분해서 기록한다.
 
 ## 5. 대학원/ETRI 과제 요구 실행 코드
 

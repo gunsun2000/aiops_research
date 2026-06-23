@@ -6,7 +6,7 @@
 
 > 본 프로젝트는 Kubernetes 서비스 복구와 AI 서비스 운영을 위한 **안전 제약 기반 폐루프 자율 4-Agent AIOps 프레임워크**이다.
 
-즉, 4개 Agent가 evidence를 수집하고, 장애를 진단하며, 여러 복구 action 후보를 만들고, Infra/Cost 관점에서 후보를 평가한 뒤, 안전 검증을 통과한 action만 Kubernetes에 전달한다.
+즉, 4개 Agent가 evidence를 수집하고, 장애를 진단하며, 여러 복구 action 후보를 만들고, Infra/Cost 관점에서 후보를 평가한 뒤, 안전 검증을 통과한 action만 Kubernetes에 전달한다. 단, 현재 autonomous evidence flow는 `FakeEvidenceProvider` 기반 mock/test loop와 제한적인 Kubernetes deployment/pod snapshot provider까지 구현되어 있으며, Prometheus metric, log enrichment, full real-cluster evidence fusion은 후속 확장 단계로 분리한다.
 
 ## 1. 과제 항목과 현재 구현 매핑
 
@@ -18,7 +18,7 @@
 | AI 응용 자동화 에이전트 설계 | HA, Application, Infra, Cost Agent와 Coordinator 구현 | `ha_agent.py`, `application_agent.py`, `infra_agent.py`, `cost_agent.py`, `coordinator.py` | `aiops-k8s-agents run ...` |
 | CPU/GPU VM 기반 AI 응용 배포/제어 추론 최적화 전략 | workload 조건에 맞는 CPU/GPU VM 후보 추천, deployment plan 생성 | `config/inference_optimization.json`, `src/aiops_k8s_agents/inference_optimizer.py` | `recommend-inference-placement`, `plan-inference-deployment` |
 | 안전한 Kubernetes 실행 | Python Validator와 Go Guard 이중 검증 | `src/aiops_k8s_agents/validator.py`, `go/aiops-guard` | `execute-recovery-action --guard-backend go ...` |
-| 폐루프 자율 Agent 운영 | evidence 수집, 진단, 후보 생성, 후보 평가, 실행, 복구 모니터링, 재계획 | `src/aiops_k8s_agents/evidence.py`, `src/aiops_k8s_agents/autonomous.py`, `src/aiops_k8s_agents/recovery_monitor.py` | `aiops-k8s-agents autonomous-run ...` |
+| 폐루프 자율 Agent 운영 | mock/test evidence 수집, 제한적 Kubernetes snapshot, 진단, 후보 생성, 후보 평가, 실행, 복구 모니터링, 재계획 | `src/aiops_k8s_agents/evidence.py`, `src/aiops_k8s_agents/autonomous.py`, `src/aiops_k8s_agents/recovery_monitor.py` | `aiops-k8s-agents autonomous-run ...` |
 | 실험 결과 추적 | real/mock/dry-run 결과와 통계 산출물 구분 | `runs/`, `src/aiops_k8s_agents/recovery_statistics.py` | `summarize-recovery-statistics ...` |
 
 ## 2. 폐루프 autonomous 구조
@@ -38,6 +38,12 @@ Evidence Collector
 -> bounded replanning if recovery fails
 -> final report and policy recommendation
 ```
+
+Evidence 구현 범위는 다음과 같이 구분한다.
+
+- `FakeEvidenceProvider`: mock/test autonomous loop 검증용 evidence provider
+- `KubernetesEvidenceProvider`: deployment/pod 상태 snapshot 중심의 제한적 provider
+- future extension: Prometheus metric, log enrichment, full real-cluster evidence fusion
 
 중요한 안전 제약은 다음과 같다.
 
@@ -140,12 +146,14 @@ policy_update_recommendations
 | --- | --- |
 | deterministic 4-Agent recovery 판단 | 구현 완료 |
 | AutoGen structured multi-agent decision 경로 | 구현 완료 |
-| Evidence 기반 autonomous mock loop | 구현 완료 |
+| FakeEvidenceProvider 기반 autonomous mock/test loop | 구현 완료 |
+| KubernetesEvidenceProvider 기반 제한적 deployment/pod snapshot | 구현 완료 |
 | Recovery Monitor와 bounded replanning | 구현 완료 |
 | Chaos Mesh/Prometheus/Kubernetes real recovery 실험 | 구현 완료 |
 | Go Guard 기반 이중 검증 | 구현 완료 |
 | CPU/GPU VM placement recommendation | 구현 완료 |
 | AI 서비스 Deployment manifest 생성 및 dry-run | 구현 완료 |
+| Prometheus/log enrichment 기반 full autonomous evidence fusion | future work |
 | 실제 GPU/NPU 클러스터 스케줄링 | future work |
 | 실제 TPU/NPU 환경 검증 | future work |
 | AWS/Azure/GCP 멀티 클라우드 API 연동 | future work |

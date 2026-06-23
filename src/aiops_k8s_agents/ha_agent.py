@@ -100,8 +100,11 @@ class AIServiceHASupportAgent:
         metric: str,
         threshold: float,
     ) -> tuple[Diagnosis, AgentDecision]:
-        normalized_metric = _normalize_metric(metric)
-        value = evidence.primary_metric_value(normalized_metric)
+        metric_policy = self.policy.metric_policy_for(metric)
+        normalized_metric = (
+            metric_policy.canonical_name if metric_policy else _normalize_metric(metric)
+        )
+        value = _evidence_metric_value(evidence, normalized_metric, metric_policy)
         missing_evidence: list[str] = []
         if value is None:
             missing_evidence.append(normalized_metric)
@@ -112,9 +115,15 @@ class AIServiceHASupportAgent:
         possible_root_causes: list[str] = []
         preferred_action = "observe_only"
 
-        if value is not None and value >= threshold:
-            cause = _cause_from_metric(normalized_metric)
-            severity = "critical" if value >= threshold * 1.15 else "warning"
+        if metric_policy is None:
+            cause = "unknown_metric"
+            severity = "info"
+            confidence = 0.50
+            preferred_action = self.policy.preferred_action_for(cause)
+            possible_root_causes.append(cause)
+        elif value is not None and metric_policy.threshold_exceeded(value, threshold):
+            cause = metric_policy.cause
+            severity = metric_policy.severity_label(value, threshold)
             confidence = 0.88
             preferred_action = self.policy.preferred_action_for(cause)
             possible_root_causes.append(cause)
@@ -134,7 +143,7 @@ class AIServiceHASupportAgent:
             confidence = max(confidence, 0.90)
             preferred_action = self.policy.preferred_action_for(cause)
 
-        approved = cause != "no_action_required"
+        approved = cause not in {"no_action_required", "unknown_metric"}
         action = (
             "ha_recovery_required"
             if approved
@@ -148,7 +157,20 @@ class AIServiceHASupportAgent:
             "threshold_comparison": (
                 "missing"
                 if value is None
-                else _comparison_text(value, threshold, None)
+                else _comparison_text(value, threshold, metric_policy)
+            ),
+            "threshold_exceeded": (
+                False
+                if value is None or metric_policy is None
+                else metric_policy.threshold_exceeded(value, threshold)
+            ),
+            "signal_direction": (
+                metric_policy.signal_direction if metric_policy else "unknown"
+            ),
+            "severity_score": (
+                0.0
+                if value is None or metric_policy is None
+                else metric_policy.severity_score(value, threshold)
             ),
             "diagnosis_reason": (
                 f"cause={cause}; severity={severity}; preferred_action={preferred_action}"
@@ -193,6 +215,21 @@ def _comparison_text(value: float, threshold: float, metric_policy: object | Non
     return f"{value:.3f} >= {threshold:.3f}"
 
 
+def _evidence_metric_value(
+    evidence: EvidenceSnapshot,
+    normalized_metric: str,
+    metric_policy: object | None,
+) -> float | None:
+    candidates = [normalized_metric]
+    aliases = getattr(metric_policy, "aliases", ())
+    candidates.extend(str(alias) for alias in aliases)
+    for candidate in candidates:
+        value = evidence.primary_metric_value(candidate)
+        if value is not None:
+            return value
+    return None
+
+
 def _cause_from_metric(metric: str) -> str:
     if metric in {"cpu", "cpu_usage", "cpu_utilization"}:
         return "cpu_saturation"
@@ -206,4 +243,4 @@ def _cause_from_metric(metric: str) -> str:
         return "pod_restarts"
     if metric in {"availability", "available_replicas"}:
         return "low_availability"
-    return "cpu_saturation"
+    return "unknown_metric"
