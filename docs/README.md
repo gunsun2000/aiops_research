@@ -6,7 +6,7 @@
 
 | 문서 | 목적 |
 | --- | --- |
-| `core_submission_summary.md` | 교수님/평가자에게 보여줄 핵심 요약 |
+| `core_submission_summary.md` | 대학원 연구/평가자에게 보여줄 핵심 요약 |
 | `submission/requirements_definition.md` | 요구사항 정의서 |
 | `submission/functional_api_guide.md` | 기능/API 사용 가이드 |
 | `submission/service_control_framework_mapping.md` | AI 기반 서비스 제어 및 관리 자동화 프레임워크 항목과 구현 파일/실행 명령 매핑 |
@@ -40,7 +40,7 @@ docs/
 | `service_control_framework_mapping.md` | 과제 항목, 구현 모듈, 실행 코드, 현재 범위와 future work 매핑 |
 | `openapi_agent_registry.yaml` | Agent 등록 관리 OpenAPI 초안 |
 | `install_and_run_guide.md` | 로컬/서버 설치 및 실행 방법 |
-| `execution_code_guide.md` | 교수님 요청 연구와 과제 요구별 실행 코드 설명 |
+| `execution_code_guide.md` | 대학원 연구와 과제 요구별 실행 코드 설명 |
 | `test_guide.md` | pytest, Go test, real experiment 검증 방법 |
 
 ## design
@@ -52,7 +52,7 @@ docs/
 | `agent_registry_guide.md` | 4-Agent 등록 관리 구조 |
 | `agent_action_reward_policy.md` | Agent별 action/reward 정책 |
 | `go_and_llm_cross_validation.md` | Go guard와 LLM/코딩 에이전트 교차 검증 |
-| `research_task_integration_design.md` | 교수님 요청 연구와 대학원/ETRI 과제 요구의 범위 구분 및 통합 설계 |
+| `research_task_integration_design.md` | 대학원 연구와 ETRI 과제 요구의 범위 구분 및 통합 설계 |
 | `ops_llm_selection_guide.md` | Ops 분석 시험 및 최적 LLM 선정 |
 | `inference_optimization_guide.md` | CPU/GPU VM 기반 추론 배치 추천 |
 | `ai_application_deployment_strategy.md` | AI 응용 배포/제어 추론 최적화 전략 |

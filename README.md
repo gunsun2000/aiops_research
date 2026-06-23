@@ -23,9 +23,9 @@ AIOpsLab / Chaos Mesh 장애 주입
 
 | 순서 | 문서 | 무엇을 나타내는가 |
 | --- | --- | --- |
-| 1 | [docs/core_submission_summary.md](docs/core_submission_summary.md) | 교수님/평가자에게 보여줄 핵심 요약 |
+| 1 | [docs/core_submission_summary.md](docs/core_submission_summary.md) | 대학원 연구/평가자에게 보여줄 핵심 요약 |
 | 2 | [docs/README.md](docs/README.md) | `docs/` 폴더 전체 문서 지도 |
-| 3 | [docs/design/research_task_integration_design.md](docs/design/research_task_integration_design.md) | 교수님 요청 연구와 ETRI/대학원 과제 요구사항의 관계 |
+| 3 | [docs/design/research_task_integration_design.md](docs/design/research_task_integration_design.md) | 대학원 연구와 ETRI 과제 요구사항의 관계 |
 | 4 | [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md) | 목적별 실행 코드 전체 모음 |
 | 5 | [docs/experiments/service_operations_environment.md](docs/experiments/service_operations_environment.md) | Agent 중심 통합 파이프라인 실행 환경 |
 | 6 | [docs/experiments/recovery_action_experiment_guide.md](docs/experiments/recovery_action_experiment_guide.md) | Chaos Mesh 장애별 복구 action 실험 |
@@ -44,18 +44,18 @@ AIOpsLab / Chaos Mesh 장애 주입
 | 실행 코드 설명서 | [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md) |
 | 과제-코드 매핑 | [docs/submission/service_control_framework_mapping.md](docs/submission/service_control_framework_mapping.md) |
 
-## 교수님 요청과 ETRI 요구사항 관계
+## 대학원 연구와 ETRI 요구사항 관계
 
 이 저장소에는 서로 다른 두 요구가 함께 들어 있다. 중심 연구는 **4-Agent 기반 AIOps 자동 제어**이고, ETRI 과제 요구사항은 그 연구를 과제 산출물 형태로 맞추기 위한 개발 조건이다.
 
 | 구분 | 핵심 목적 | 이 프로젝트에서의 역할 |
 | --- | --- | --- |
-| 교수님 요청 연구 | 4개 Agent가 장애를 판단하고 action/reward를 설계하는 AIOps 연구 | 연구의 중심 주제 |
+| 대학원 연구 | 4개 Agent가 장애를 판단하고 action/reward를 설계하는 AIOps 연구 | 연구의 중심 주제 |
 | ETRI 과제 요구사항 | Go, LLM 교차 검증, 문서/가이드, AI 응용 배포 구조 확보 | 연구 결과를 과제 산출물로 정리하는 개발 조건 |
 
-### 교수님 요청 연구
+### 대학원 연구
 
-교수님 요청은 “Agent들이 Kubernetes 장애 상황에서 어떤 action이 필요한지 판단하고, 그 판단을 reward와 안전 검증으로 설명할 수 있어야 한다”는 방향이다.
+대학원 연구의 중심은 “Agent들이 Kubernetes 장애 상황에서 어떤 action이 필요한지 판단하고, 그 판단을 reward와 안전 검증으로 설명할 수 있어야 한다”는 방향이다.
 
 | 요청 내용 | 반영 위치 |
 | --- | --- |
@@ -80,10 +80,10 @@ ETRI 요구사항은 연구 내용 자체를 바꾸는 것이 아니라, 개발 
 
 ### 두 요구의 연결 방식
 
-정리하면, 교수님 요청은 **무엇을 연구할 것인가**에 가깝고, ETRI 요구사항은 **그 연구를 어떤 개발 형식과 산출물로 제출할 것인가**에 가깝다. 이 저장소는 두 흐름을 다음처럼 하나로 묶는다.
+정리하면, 대학원 연구는 **무엇을 연구할 것인가**에 가깝고, ETRI 요구사항은 **그 연구를 어떤 개발 형식과 산출물로 제출할 것인가**에 가깝다. 이 저장소는 두 흐름을 다음처럼 하나로 묶는다.
 
 ```text
-교수님 요청 연구
+대학원 연구
 4-Agent 장애 판단 / action-reward / 안전한 Kubernetes 복구
 
         +
@@ -338,7 +338,7 @@ statistics/reward_by_policy.svg
 
 | 문서 | 내용 |
 | --- | --- |
-| [docs/design/research_task_integration_design.md](docs/design/research_task_integration_design.md) | 교수님 요청 연구와 ETRI 과제 요구사항 통합 설계 |
+| [docs/design/research_task_integration_design.md](docs/design/research_task_integration_design.md) | 대학원 연구와 ETRI 과제 요구사항 통합 설계 |
 | [docs/design/agent_registry_guide.md](docs/design/agent_registry_guide.md) | Agent 등록 관리 구조 |
 | [docs/design/agent_action_reward_policy.md](docs/design/agent_action_reward_policy.md) | Agent별 action/reward 정책 |
 | [docs/design/go_and_llm_cross_validation.md](docs/design/go_and_llm_cross_validation.md) | Go Guard와 LLM/코딩 Agent 교차 검증 |
@@ -374,7 +374,7 @@ statistics/reward_by_policy.svg
 | 보고 싶은 내용 | 문서 |
 | --- | --- |
 | 1차 연구 범위 | [docs/archive/first_stage_research_completion.md](docs/archive/first_stage_research_completion.md) |
-| ETRI/교수님 요구사항 대응 | [docs/design/research_task_integration_design.md](docs/design/research_task_integration_design.md) |
+| 대학원 연구/ETRI 요구사항 대응 | [docs/design/research_task_integration_design.md](docs/design/research_task_integration_design.md) |
 | 실행 코드 전체 | [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md) |
 | 시험 절차 | [docs/submission/test_guide.md](docs/submission/test_guide.md) |
 | 실험 결과 해석 | [docs/experiments/recovery_action_experiment_guide.md](docs/experiments/recovery_action_experiment_guide.md) |

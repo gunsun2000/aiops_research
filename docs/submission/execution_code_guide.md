@@ -2,7 +2,7 @@
 
 ## 1. 문서 목적
 
-이 문서는 프로젝트를 실행할 때 어떤 명령을 어떤 목적에 사용하는지 정리한 설명서이다. 단순 명령어 목록이 아니라, 각 명령이 교수님 요청 연구와 대학원/ETRI 과제 중 어느 부분을 검증하는지 함께 설명한다.
+이 문서는 프로젝트를 실행할 때 어떤 명령을 어떤 목적에 사용하는지 정리한 설명서이다. 단순 명령어 목록이 아니라, 각 명령이 대학원 연구와 ETRI 과제 중 어느 부분을 검증하는지 함께 설명한다.
 
 ## 2. 실행 환경
 
@@ -66,9 +66,9 @@ go run ./cmd/aiops-guard --input ../../examples/go_guard_scale_action.json
 - Python Validator 이후 Go Guard가 동일 action을 한 번 더 검증하는지 확인
 - 위험한 namespace, deployment, replica, action이 차단되는지 확인
 
-## 4. 교수님 요청 연구 실행 코드
+## 4. 대학원 연구 실행 코드
 
-교수님 요청 연구의 중심은 4-Agent가 장애 상황을 판단하고, 안전한 Kubernetes 복구 action을 결정하는 것이다.
+대학원 연구의 중심은 4-Agent가 장애 상황을 판단하고, 안전한 Kubernetes 복구 action을 결정하는 것이다.
 
 ### 4.1 Agent 목록 확인
 
@@ -160,7 +160,7 @@ policy_update_recommendations
 - mock mode에서는 실제 Kubernetes resource를 바꾸지 않는다.
 - mock evidence 결과는 실제 Chaos Mesh/Prometheus/Kubernetes real 실험 결과와 구분해서 기록한다.
 
-## 5. 대학원/ETRI 과제 요구 실행 코드
+## 5. 대학원 연구/ETRI 과제 요구 실행 코드
 
 과제 요구의 중심은 AI App 배포/운용, CPU/GPU VM 기반 배치, Ops LLM 선정, Go/LLM 교차 검증이다.
 
@@ -231,7 +231,7 @@ monitoring_metrics
 
 ## 6. 통합 파이프라인 실행 코드
 
-통합 파이프라인은 교수님 요청 연구와 과제 요구 기능을 하나로 연결한다.
+통합 파이프라인은 대학원 연구와 과제 요구 기능을 하나로 연결한다.
 
 ```bash
 aiops-k8s-agents run-service-operations \
