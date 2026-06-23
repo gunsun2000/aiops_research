@@ -61,36 +61,17 @@ AIOpsLab / Chaos Mesh 장애 주입
 
 정리하면, 교수님 요청은 **Agent 중심 AIOps 장애 복구 연구**이고, ETRI 요구사항은 **Go, LLM 교차 검증, AI 응용 배포/운용 산출물**이다. 이 저장소는 두 흐름을 하나의 Agent 기반 운영 파이프라인으로 연결한다.
 
-## 현재 완료 상태
+## 현재 핵심 구성
 
-| 항목 | 상태 |
+README에서는 긴 완료 체크리스트를 두지 않고, 현재 저장소가 어떤 흐름으로 동작하는지만 요약한다. 세부 구현 범위와 산출물 기준은 [docs/core_submission_summary.md](docs/core_submission_summary.md), [docs/submission/service_control_framework_mapping.md](docs/submission/service_control_framework_mapping.md), [docs/archive/first_stage_research_completion.md](docs/archive/first_stage_research_completion.md)에 분리했다.
+
+| 계층 | 포함 내용 |
 | --- | --- |
-| 4-Agent 역할, action, reward 정책 | 완료 |
-| AutoGen GroupChat 기반 Agent 경로 | 완료 |
-| Prometheus metric 입력 | 완료 |
-| Chaos Mesh 장애 4종 실험 | 완료 |
-| AIOpsLab Hotel Reservation 탐지 benchmark | 완료 |
-| Kubernetes dry-run / real 실행 | 완료 |
-| Python Validator 안전 검증 | 완료 |
-| Go Guard 이중 검증 | 완료 |
-| Agent 등록 관리 프로토타입 | 완료 |
-| Ops LLM 선정 CLI | 완료 |
-| CPU/GPU VM 배치 추천 CLI | 완료 |
-| AI 서비스 배포 manifest 생성 | 완료 |
-| Kubernetes server-side dry-run 검증 | 완료 |
-| 통합 CLI `run-service-operations` | 완료 |
-| FakeEvidenceProvider 기반 autonomous mock/test evidence loop | 완료 |
-| KubernetesEvidenceProvider 기반 제한적 deployment/pod snapshot 수집 | 완료 |
-| Multi-candidate recovery action 생성 | 완료 |
-| Infra/Cost Agent 후보별 평가 | 완료 |
-| Recovery Monitor와 실패 후 재계획 | 완료 |
-| 폐루프 autonomous CLI `autonomous-run` | 완료 |
-| Reward 정책별 action ranking 실험 | 완료 |
-| 정량 그래프/통계 분석 | 완료 |
-| Go Echo HTTP API 서버 + Swagger UI | 이번 범위 제외 |
-| Prometheus metric, log enrichment, real-cluster evidence fusion | 후속 확장 |
-| 실제 AWS/Azure/GCP 멀티 클라우드 연동 | ETRI VM 확보 후 후속 진행 |
-| 실제 AI 서비스 Pod 상시 배포 운영 | 현재는 manifest/dry-run 중심, 후속 진행 |
+| Agent 판단 계층 | AI-MCMP Coordinator, HA/Application/Infra/Cost 4-Agent, action/reward 정책 |
+| 관측 및 실험 계층 | AIOpsLab, Chaos Mesh, Prometheus, Kubernetes 상태 관측 |
+| 안전 실행 계층 | Python Validator, Go Guard, kubectl mock/dry-run/real 실행 |
+| 운영 확장 계층 | Ops LLM 선정, CPU/GPU VM 배치 추천, AI 서비스 deployment manifest 생성 |
+| 결과 분석 계층 | JSON/JSONL 로그, CSV, Markdown 요약, PNG/SVG 정량 그래프 |
 
 ## 4-Agent 역할
 
@@ -353,24 +334,17 @@ statistics/reward_by_policy.svg
 
 ## 현재 연구 단계
 
-현재 단계는 **1차 통합 프로토타입 구현 및 실험 검증 완료**로 볼 수 있다.
+현재 저장소는 **1차 통합 프로토타입과 서버 실험 결과를 기반으로, 비교 실험과 멀티 클라우드 연동을 확장하는 단계**다. README에는 완료 항목을 길게 반복하지 않고, 세부 결과는 문서별로 분리한다.
 
-완료된 핵심:
+| 보고 싶은 내용 | 문서 |
+| --- | --- |
+| 1차 연구 범위 | [docs/archive/first_stage_research_completion.md](docs/archive/first_stage_research_completion.md) |
+| ETRI/교수님 요구사항 대응 | [docs/design/research_task_integration_design.md](docs/design/research_task_integration_design.md) |
+| 실행 코드 전체 | [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md) |
+| 시험 절차 | [docs/submission/test_guide.md](docs/submission/test_guide.md) |
+| 실험 결과 해석 | [docs/experiments/recovery_action_experiment_guide.md](docs/experiments/recovery_action_experiment_guide.md) |
 
-- 4-Agent 구조 구현
-- 실제 장애 주입과 metric 관측
-- Kubernetes real action 실행
-- Python Validator + Go Guard 이중 안전 검증
-- Agent 등록 관리
-- Ops LLM 선정
-- CPU/GPU VM 기반 추론 배치 추천
-- AI 서비스 Deployment manifest 생성 및 server-side dry-run 검증
-- FakeEvidenceProvider 기반 autonomous mock/test loop
-- KubernetesEvidenceProvider 기반 제한적 deployment/pod snapshot evidence 수집
-- Reward 정책 변화에 따른 장애별 action ranking 비교
-- 정량 그래프/통계 분석
-
-후속 확장:
+다음 확장:
 
 - Prometheus metric, log enrichment, full real-cluster evidence fusion
 - 실제 AWS/Azure/GCP 멀티 클라우드 VM 연동
