@@ -23,6 +23,7 @@ RUN_ID="${RUN_ID:-$(date +%Y%m%d-%H%M%S)}"
 RUN_DIR="${RUN_DIR:-runs/final-real/$RUN_ID}"
 ITERATIONS="${ITERATIONS:-3}"
 INTERVAL_SECONDS="${INTERVAL_SECONDS:-10}"
+ALLOW_SCENARIO_FAILURES="${ALLOW_SCENARIO_FAILURES:-1}"
 
 mkdir -p "$RUN_DIR"
 
@@ -43,16 +44,27 @@ kubectl get deployment paymentservice checkoutservice -n online-boutique \
 
 SCENARIO=all bash scripts/server_full_stack_reset.sh
 
+matrix_status=0
+set +e
+ALLOW_SCENARIO_FAILURES="$ALLOW_SCENARIO_FAILURES" \
 BASE_RUN_DIR="$RUN_DIR" \
 ITERATIONS="$ITERATIONS" \
 INTERVAL_SECONDS="$INTERVAL_SECONDS" \
 MODE=real \
 bash scripts/server_full_stack_experiment_matrix.sh
+matrix_status=$?
+set -e
 
-aiops-k8s-agents summarize-full-stack-runs \
-  --runs-dir "$RUN_DIR" \
-  --output-md "$RUN_DIR/final_summary.md" \
-  --output-csv "$RUN_DIR/final_summary.csv"
+summary_created=0
+if find "$RUN_DIR" -name '*feedback_loop_report.json' -print -quit | grep -q .; then
+  aiops-k8s-agents summarize-full-stack-runs \
+    --runs-dir "$RUN_DIR" \
+    --output-md "$RUN_DIR/final_summary.md" \
+    --output-csv "$RUN_DIR/final_summary.csv"
+  summary_created=1
+else
+  echo "No feedback loop reports found under $RUN_DIR; summary was not generated." >&2
+fi
 
 kubectl get deployment paymentservice checkoutservice -n online-boutique \
   > "$RUN_DIR/deployments_after.txt"
@@ -63,3 +75,10 @@ trap - EXIT
 echo "Final experiment complete."
 echo "Markdown: $RUN_DIR/final_summary.md"
 echo "CSV: $RUN_DIR/final_summary.csv"
+
+if [[ "$matrix_status" != "0" ]]; then
+  echo "Final experiment matrix reported scenario failures; summary generation still completed when reports existed." >&2
+  if [[ "$summary_created" != "1" ]]; then
+    exit "$matrix_status"
+  fi
+fi

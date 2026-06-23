@@ -9,7 +9,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -89,7 +89,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--no-openebs-kind-patch",
         action="store_true",
-        help="Disable the kind/OpenEBS NDM readiness compatibility patch.",
+        help="Disable the kind/OpenEBS/observe readiness compatibility patch.",
     )
     parser.add_argument(
         "--no-prometheus-dynamic-port-patch",
@@ -118,7 +118,7 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     os.chdir(aiopslab_root)
 
     if not args.no_openebs_kind_patch:
-        _patch_openebs_wait_for_ready()
+        _patch_aiopslab_kind_wait_for_ready()
     if not args.no_prometheus_dynamic_port_patch:
         _patch_prometheus_api_dynamic_port()
 
@@ -151,9 +151,8 @@ async def run(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def _patch_openebs_wait_for_ready() -> None:
+def _patch_aiopslab_kind_wait_for_ready() -> None:
     from aiopslab.service.kubectl import KubeCtl
-    from rich.console import Console
 
     original_wait_for_ready = KubeCtl.wait_for_ready
 
@@ -163,43 +162,86 @@ def _patch_openebs_wait_for_ready() -> None:
         sleep: int = 2,
         max_wait: int = 300,
     ) -> None:
-        if namespace != "openebs":
-            return original_wait_for_ready(
-                self,
+        if namespace == "openebs":
+            return _wait_for_required_pods(
+                self=self,
                 namespace=namespace,
                 sleep=sleep,
                 max_wait=max_wait,
+                is_required_pod=_is_required_openebs_pod,
+                waiting_message=(
+                    "Waiting for required OpenEBS pods to be ready "
+                    "(kind NDM daemon pod ignored)..."
+                ),
+                ready_message="Required OpenEBS pods are ready.",
+                timeout_message=(
+                    "Timeout: required OpenEBS pods did not reach Ready state "
+                    f"within {max_wait} seconds."
+                ),
             )
 
-        console = Console()
-        console.log(
-            "[bold green]Waiting for required OpenEBS pods to be ready "
-            "(kind NDM daemon pod ignored)..."
-        )
-        wait = 0
-        while wait < max_wait:
-            try:
-                pod_list = self.list_pods(namespace)
-                required_pods = [
-                    pod
-                    for pod in pod_list.items
-                    if _is_required_openebs_pod(pod.metadata.name)
-                ]
-                if required_pods and all(
-                    self._pod_is_ready_or_succeeded(pod) for pod in required_pods
-                ):
-                    console.log("[bold green]Required OpenEBS pods are ready.")
-                    return
-            except Exception as exc:
-                console.log(f"[red]Error checking OpenEBS pod statuses: {exc}")
-            time.sleep(sleep)
-            wait += sleep
-        raise Exception(
-            "[red]Timeout: required OpenEBS pods did not reach Ready state "
-            f"within {max_wait} seconds."
+        if namespace == "observe":
+            return _wait_for_required_pods(
+                self=self,
+                namespace=namespace,
+                sleep=sleep,
+                max_wait=max_wait,
+                is_required_pod=_is_required_observe_prometheus_pod,
+                waiting_message=(
+                    "Waiting for required AIOpsLab observe pods to be ready "
+                    "(node-exporter host-port conflict ignored)..."
+                ),
+                ready_message="Required AIOpsLab observe pods are ready.",
+                timeout_message=(
+                    "Timeout: required AIOpsLab observe pods did not reach Ready "
+                    f"state within {max_wait} seconds."
+                ),
+            )
+
+        return original_wait_for_ready(
+            self,
+            namespace=namespace,
+            sleep=sleep,
+            max_wait=max_wait,
         )
 
     KubeCtl.wait_for_ready = patched_wait_for_ready
+
+
+def _wait_for_required_pods(
+    *,
+    self: Any,
+    namespace: str,
+    sleep: int,
+    max_wait: int,
+    is_required_pod: Callable[[str], bool],
+    waiting_message: str,
+    ready_message: str,
+    timeout_message: str,
+) -> None:
+    from rich.console import Console
+
+    console = Console()
+    console.log(f"[bold green]{waiting_message}")
+    wait = 0
+    while wait < max_wait:
+        try:
+            pod_list = self.list_pods(namespace)
+            required_pods = [
+                pod
+                for pod in pod_list.items
+                if is_required_pod(pod.metadata.name)
+            ]
+            if required_pods and all(
+                self._pod_is_ready_or_succeeded(pod) for pod in required_pods
+            ):
+                console.log(f"[bold green]{ready_message}")
+                return
+        except Exception as exc:
+            console.log(f"[red]Error checking {namespace} pod statuses: {exc}")
+        time.sleep(sleep)
+        wait += sleep
+    raise Exception(f"[red]{timeout_message}")
 
 
 def _patch_prometheus_api_dynamic_port() -> None:
@@ -235,6 +277,10 @@ def _is_required_openebs_pod(name: str) -> bool:
         component in name
         for component in ("cluster-exporter", "node-exporter", "operator")
     )
+
+
+def _is_required_observe_prometheus_pod(name: str) -> bool:
+    return "prometheus-node-exporter" not in name
 
 
 def save_report(args: argparse.Namespace, report: dict[str, Any]) -> Path:

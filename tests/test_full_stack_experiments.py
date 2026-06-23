@@ -101,6 +101,26 @@ def test_final_real_script_requires_confirmation_and_private_kind_context():
     assert "summarize-full-stack-runs" in script
 
 
+def test_final_real_script_keeps_summary_generation_after_scenario_failures():
+    script = Path("scripts/server_finalize_research.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'ALLOW_SCENARIO_FAILURES="${ALLOW_SCENARIO_FAILURES:-1}"' in script
+    assert "matrix_status=$?" in script
+    assert "find \"$RUN_DIR\" -name '*feedback_loop_report.json'" in script
+    assert "Final experiment matrix reported scenario failures" in script
+
+
+def test_progress_wrapper_exists_for_long_running_commands():
+    script = Path("scripts/run_with_progress.sh").read_text(encoding="utf-8")
+
+    assert "--label" in script
+    assert "still working" in script
+    assert "elapsed" in script
+    assert "wait \"$child_pid\"" in script
+
+
 def test_full_stack_setup_script_has_reset_and_rollout_diagnostics():
     script = Path("scripts/server_full_stack_setup.sh").read_text(
         encoding="utf-8"

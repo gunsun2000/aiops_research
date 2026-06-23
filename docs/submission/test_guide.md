@@ -114,6 +114,23 @@ PROMETHEUS_URL=http://127.0.0.1:9091 \
 bash scripts/server_recovery_action_pilot.sh
 ```
 
+실험이 오래 걸릴 때 진행 상태를 계속 표시하려면 다음 wrapper를 사용한다.
+
+```bash
+GUARD_BACKEND=go \
+MODE=real \
+REPETITIONS=3 \
+PROMETHEUS_URL=http://127.0.0.1:9091 \
+NETWORK_LATENCY_QUERY="$NETWORK_LATENCY_QUERY" \
+bash scripts/run_with_progress.sh \
+  --label "recovery real 36 runs" \
+  --interval-seconds 10 \
+  -- \
+  bash scripts/server_recovery_action_pilot.sh
+```
+
+`server_finalize_research.sh`는 개별 시나리오 일부가 실패하더라도 생성된 feedback loop report가 있으면 `final_summary.md`와 `final_summary.csv`를 끝까지 만든다. 따라서 최종 요약 파일이 없으면 먼저 `runs/final-real/<run>/` 아래에 `*feedback_loop_report.json`이 생성됐는지 확인한다.
+
 성공 기준:
 
 - `outcomes.jsonl`이 36줄이어야 한다.

@@ -83,6 +83,21 @@ NETWORK_LATENCY_QUERY="$NETWORK_LATENCY_QUERY" \
 bash scripts/server_recovery_action_pilot.sh
 ```
 
+오래 걸리는 실행에서 진행 표시를 계속 보고 싶으면 wrapper를 붙입니다.
+
+```bash
+GUARD_BACKEND=go \
+MODE=real \
+REPETITIONS=3 \
+PROMETHEUS_URL="$PROM" \
+NETWORK_LATENCY_QUERY="$NETWORK_LATENCY_QUERY" \
+bash scripts/run_with_progress.sh \
+  --label "recovery real 36 runs" \
+  --interval-seconds 10 \
+  -- \
+  bash scripts/server_recovery_action_pilot.sh
+```
+
 검증된 결과:
 
 ```text
@@ -838,7 +853,18 @@ Saved report: .../runs/<timestamp>_aiopslab_auto_detection.json
 - 개인 kind 환경에서는 OpenEBS NDM daemon pod가 `ContainerCreating`에 머물 수 있습니다.
 - runner는 AIOpsLab 원본을 크게 고치지 않고, 실행 중 `openebs-ndm-*` daemon pod만 Ready 판정에서 제외합니다.
 - `openebs-localpv-provisioner`, `openebs-ndm-operator`, exporter pod들은 여전히 Ready 상태를 요구합니다.
+- 개인 kind 단일 노드 환경에서는 AIOpsLab `observe` namespace의 `prometheus-node-exporter`가 기존 full Prometheus node-exporter와 hostPort가 충돌해 `Pending`일 수 있습니다. runner는 이 보조 pod만 Ready 판정에서 제외하고, Prometheus server와 kube-state-metrics 같은 필수 pod는 계속 Ready를 요구합니다.
 - AIOpsLab이 Prometheus port-forward를 `32001` 같은 동적 포트로 열면 runner가 Prometheus client URL도 같은 포트로 맞춥니다.
+
+긴 AIOpsLab 실행도 진행 표시를 보고 싶으면 다음처럼 실행합니다.
+
+```bash
+bash scripts/run_with_progress.sh \
+  --label "AIOpsLab auto detection" \
+  --interval-seconds 10 \
+  -- \
+  bash scripts/server_aiopslab_auto_detection.sh
+```
 
 ## 15. AIOpsLab 자동 detection 반복 실험과 결과표 생성
 
