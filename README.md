@@ -46,20 +46,55 @@ AIOpsLab / Chaos Mesh 장애 주입
 
 ## 교수님 요청과 ETRI 요구사항 관계
 
-이 프로젝트에는 두 가지 요구가 함께 들어 있다.
+이 저장소에는 서로 다른 두 요구가 함께 들어 있다. 중심 연구는 **4-Agent 기반 AIOps 자동 제어**이고, ETRI 과제 요구사항은 그 연구를 과제 산출물 형태로 맞추기 위한 개발 조건이다.
 
-| 구분 | 요구 내용 | 현재 반영 |
+| 구분 | 핵심 목적 | 이 프로젝트에서의 역할 |
 | --- | --- | --- |
-| 교수님 요청 연구 | 4개 Agent가 HA, 응용관리, 인프라, 비용 관점에서 action과 reward를 설계해야 함 | 4-Agent 판단 구조, action/reward 정책, reward 기반 action ranking |
-| 교수님 요청 연구 | 장애별로 필요한 복구 action을 판단해야 함 | `pod-kill`, `cpu-stress`, `memory-stress`, `network-delay` 실험 |
-| 교수님 요청 연구 | 안전하지 않은 Kubernetes 명령은 실행하지 않아야 함 | Python Validator + Go Guard 이중 검증 |
-| ETRI 개발 가이드 | Go 언어 개발 필수 | [go/aiops-guard](go/aiops-guard) 구현 |
-| ETRI 개발 가이드 | 최소 2종 이상 LLM/코딩 에이전트 활용 | OpenAI LLM + Codex 교차 검증 구조 문서화 |
-| ETRI 개발 가이드 | 프레임워크/프롬프트 중심 문서 작성 | `docs/design/`, `docs/submission/` 문서화 |
-| ETRI 개발 가이드 | 로그 및 에러 메시지 최대화 | `runs/` 결과, JSONL, CSV, SVG/PNG 통계 산출 |
-| ETRI 과제 방향 | CPU/GPU VM 기반 AI 응용 배포/제어 | Ops LLM 선정, CPU/GPU 배치 추천, Deployment manifest dry-run |
+| 교수님 요청 연구 | 4개 Agent가 장애를 판단하고 action/reward를 설계하는 AIOps 연구 | 연구의 중심 주제 |
+| ETRI 과제 요구사항 | Go, LLM 교차 검증, 문서/가이드, AI 응용 배포 구조 확보 | 연구 결과를 과제 산출물로 정리하는 개발 조건 |
 
-정리하면, 교수님 요청은 **Agent 중심 AIOps 장애 복구 연구**이고, ETRI 요구사항은 **Go, LLM 교차 검증, AI 응용 배포/운용 산출물**이다. 이 저장소는 두 흐름을 하나의 Agent 기반 운영 파이프라인으로 연결한다.
+### 교수님 요청 연구
+
+교수님 요청은 “Agent들이 Kubernetes 장애 상황에서 어떤 action이 필요한지 판단하고, 그 판단을 reward와 안전 검증으로 설명할 수 있어야 한다”는 방향이다.
+
+| 요청 내용 | 반영 위치 |
+| --- | --- |
+| HA, 응용관리, 인프라, 비용 관점의 4-Agent 구조 | `src/aiops_k8s_agents/agents.py`, `config/agent_registry.json` |
+| 장애별 필요한 복구 action 판단 | `pod-kill`, `cpu-stress`, `memory-stress`, `network-delay` 실험 |
+| action별 reward 설계 및 비교 | `config/recovery_action_experiments.json`, reward policy ranking 결과 |
+| 안전하지 않은 Kubernetes 명령 차단 | Python Validator + Go Guard 이중 검증 |
+| 실제 장애 기반 검증 | Chaos Mesh, Prometheus, Kubernetes real 실행 결과 |
+
+### ETRI 과제 요구사항
+
+ETRI 요구사항은 연구 내용 자체를 바꾸는 것이 아니라, 개발 방식과 산출물 형식을 맞추는 조건이다.
+
+| 요구사항 | 반영 위치 |
+| --- | --- |
+| Go 언어 개발 필수 | [go/aiops-guard](go/aiops-guard) |
+| 최소 2종 이상 LLM/코딩 에이전트 활용 | OpenAI LLM + Codex 기반 교차 검증 구조 |
+| 프레임워크/프롬프트 중심 문서 작성 | `docs/design/`, `docs/submission/` |
+| 로그 및 에러 메시지 최대화 | `runs/` JSON/JSONL/CSV/Markdown 결과 저장 |
+| CPU/GPU VM 기반 AI 응용 배포/제어 방향 | Ops LLM 선정, CPU/GPU 배치 추천, Deployment manifest dry-run |
+| 기능/API/설치/시험 가이드 산출 | `docs/submission/` 문서 묶음 |
+
+### 두 요구의 연결 방식
+
+정리하면, 교수님 요청은 **무엇을 연구할 것인가**에 가깝고, ETRI 요구사항은 **그 연구를 어떤 개발 형식과 산출물로 제출할 것인가**에 가깝다. 이 저장소는 두 흐름을 다음처럼 하나로 묶는다.
+
+```text
+교수님 요청 연구
+4-Agent 장애 판단 / action-reward / 안전한 Kubernetes 복구
+
+        +
+
+ETRI 개발 요구사항
+Go Guard / LLM 교차 검증 / 문서 산출물 / AI 응용 배포 준비
+
+        =
+
+Agent 중심 AIOps 서비스 제어 및 관리 자동화 프레임워크
+```
 
 ## 현재 핵심 구성
 
