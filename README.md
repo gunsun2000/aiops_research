@@ -1,6 +1,6 @@
 # AIOps 4-Agent Kubernetes 자동화 연구
 
-![AIOps 4-Agent 프로젝트 진행 구조 및 연결 흐름](docs/assets/project_architecture_overview.png)
+![AIOps 4-Agent 프로젝트 진행 구조 및 연결 흐름](docs/assets/architecture_overview.png)
 
 이 저장소는 **4개의 AI Agent가 Kubernetes 기반 서비스 장애와 AI 응용 배포 조건을 판단하고, Python Validator와 Go Guard를 거쳐 안전한 Kubernetes Action만 실행하는 AIOps 자동화 연구 프로토타입**이다.
 
