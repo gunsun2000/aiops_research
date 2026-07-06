@@ -6,6 +6,22 @@ import aiops_k8s_agents.cli as cli
 from aiops_k8s_agents.cli import main
 
 
+def test_cli_no_longer_exposes_separate_project_extension_commands():
+    help_text = cli.build_parser().format_help()
+
+    removed_commands = [
+        "list-inference-workloads",
+        "recommend-inference-placement",
+        "plan-inference-deployment",
+        "list-ops-llm-candidates",
+        "select-ops-llm",
+        "run-service-operations",
+    ]
+
+    for command in removed_commands:
+        assert command not in help_text
+
+
 def test_cli_mock_run_prints_command_json(capsys):
     exit_code = main(
         [
@@ -320,97 +336,6 @@ def test_cli_validates_registered_agent_action(capsys):
     assert output["agent"] == "AIApplicationManagementAgent"
 
 
-def test_cli_recommends_inference_placement(capsys):
-    exit_code = main(
-        [
-            "recommend-inference-placement",
-            "--config",
-            "config/inference_optimization.json",
-            "--workload",
-            "llm-chat-inference",
-        ]
-    )
-
-    output = json.loads(capsys.readouterr().out)
-
-    assert exit_code == 0
-    assert output["valid"] is True
-    assert output["selected_resource"] == "gpu-vm-l4"
-    assert output["action"] == "deploy_on_gpu_vm"
-
-
-def test_cli_builds_inference_deployment_plan(capsys):
-    exit_code = main(
-        [
-            "plan-inference-deployment",
-            "--config",
-            "config/inference_optimization.json",
-            "--workload",
-            "llm-chat-inference",
-        ]
-    )
-
-    output = json.loads(capsys.readouterr().out)
-
-    assert exit_code == 0
-    assert output["valid"] is True
-    assert output["selected_resource"] == "gpu-vm-l4"
-    assert output["deployment_plan"]["kubernetes"]["namespace"] == "ai-inference"
-    assert output["deployment_plan"]["kubernetes"]["resources"]["limits"][
-        "nvidia.com/gpu"
-    ] == "1"
-
-
-def test_cli_selects_ops_llm_under_quality_policy(capsys):
-    exit_code = main(
-        [
-            "select-ops-llm",
-            "--config",
-            "config/ops_llm_benchmark.json",
-            "--policy",
-            "quality_first",
-        ]
-    )
-
-    output = json.loads(capsys.readouterr().out)
-
-    assert exit_code == 0
-    assert output["valid"] is True
-    assert output["selected_model"] == "gpt-5.5"
-    assert output["ranking"][0]["model"] == "gpt-5.5"
-
-
-def test_cli_runs_service_operations_pipeline_in_mock_mode(capsys):
-    exit_code = main(
-        [
-            "run-service-operations",
-            "--mode",
-            "mock",
-            "--guard-backend",
-            "go",
-            "--llm-policy",
-            "quality_first",
-            "--workload",
-            "llm-chat-inference",
-            "--namespace",
-            "online-boutique",
-            "--deployment",
-            "paymentservice",
-        ]
-    )
-
-    output = json.loads(capsys.readouterr().out)
-
-    assert exit_code == 0
-    assert output["command"] == "run-service-operations"
-    assert output["selected_llm"] == "gpt-5.5"
-    assert output["selected_resource"] == "gpu-vm-l4"
-    assert output["deployment_manifest"]["kind"] == "Deployment"
-    assert output["deployment_dry_run"]["valid"] is True
-    assert output["recovery_pipeline_ready"] is True
-    assert output["guard_backend"] == "go"
-
-
 def test_cli_runs_autonomous_closed_loop_in_mock_mode(capsys):
     exit_code = main(
         [
@@ -449,22 +374,6 @@ def test_cli_runs_autonomous_closed_loop_in_mock_mode(capsys):
     assert output["execution_result"]["command"] == (
         "kubectl scale deployment paymentservice --replicas=3 -n online-boutique"
     )
-
-
-def test_cli_lists_ops_llm_candidates(capsys):
-    exit_code = main(
-        [
-            "list-ops-llm-candidates",
-            "--config",
-            "config/ops_llm_benchmark.json",
-        ]
-    )
-
-    output = json.loads(capsys.readouterr().out)
-
-    assert exit_code == 0
-    assert output["command"] == "list-ops-llm-candidates"
-    assert "gpt-5.5" in [candidate["model"] for candidate in output["candidates"]]
 
 
 def test_cli_passes_go_guard_backend_to_recovery_executor(monkeypatch, capsys):

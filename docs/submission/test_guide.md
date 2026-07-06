@@ -1,8 +1,8 @@
 # 시험 가이드
 
-## 1. Python 단위 테스트
+이 문서는 현재 연구 본체를 검증하기 위한 시험 항목을 정리합니다.
 
-로컬 또는 서버에서 다음을 실행한다.
+## 1. 단위 테스트
 
 ```bash
 cd ~/geonhae/aiops_research
@@ -10,96 +10,82 @@ conda activate aiops_research
 python -m pytest
 ```
 
-Windows 로컬에서는:
+검증 내용:
 
-```powershell
-cd C:\Users\geonhae\Documents\aiops_research
-.\.venv\Scripts\python.exe -m pytest
-```
-
-검증 범위:
-
-- 기존 deterministic 4-Agent 판단
-- AutoGen structured decision 경로
-- Agent registry와 action 검증
+- 4-Agent 판단 로직
 - Action/Reward 정책
-- Python Validator 안전 검증
-- Evidence Collector 기반 autonomous loop
-- Recovery Monitor와 bounded replanning
-- Chaos Mesh recovery action runner
-- 정량 통계/그래프 생성
-- CLI backward compatibility
+- Validator 안전 검증
+- Executor mock/dry-run/real 명령 생성
+- Autonomous mock/test loop
+- Recovery action runner
+- 정량 분석 로직
 
-Ops LLM 선정, CPU/GPU VM 배치 추천, AI 서비스 deployment manifest 생성, Go Guard 연결은 현재 대학원 연구 본체가 아니라 보조/보관 기능으로 분리한다.
-
-autonomous loop 테스트에서 `observe_only`는 Kubernetes 상태 변경 action이 아니라 read-only observation으로 해석한다. 즉 `observe_only` 결과는 `state_changed: false`, `action_effect_type: "read_only_observation"`으로 확인하고, `rollout_restart`와 `scale_out`은 상태 변경 action으로 구분한다.
-
-## 2. 선택적 Go Guard 테스트
-
-Go Guard는 대학원 연구 본체의 필수 실행 경로가 아니라 Python Validator 이후 한 번 더 검증할 수 있는 선택적 이중 안전 검증 모듈이다.
+## 2. Go Guard 테스트
 
 ```bash
 cd ~/geonhae/aiops_research/go/aiops-guard
 go test ./...
-go run ./cmd/aiops-guard --input ../../examples/go_guard_scale_action.json
+cd ~/geonhae/aiops_research
 ```
 
-## 3. Agent Registry 시험
+검증 내용:
+
+- Go 기반 최종 action 검증
+- namespace/deployment allowlist
+- replica limit
+- 위험 명령 차단
+
+## 3. Mock 실행 시험
 
 ```bash
-aiops-k8s-agents list-agents \
-  --registry config/agent_registry.json
-
-aiops-k8s-agents validate-agent-action \
-  --registry config/agent_registry.json \
-  --agent AIApplicationManagementAgent \
-  --action app_scale_deployment
+aiops-k8s-agents run \
+  --mode mock \
+  --namespace online-boutique \
+  --service paymentservice \
+  --metric cpu \
+  --value 95 \
+  --threshold 80 \
+  --allowed-namespace online-boutique \
+  --allowed-deployment paymentservice
 ```
 
-기대 결과:
+성공 기준:
 
-- 4개 Agent가 조회된다.
-- `app_scale_deployment`는 허용된다.
-- registry에 없는 action은 거부된다.
+- `"valid": true`
+- 실제 Kubernetes resource 변경 없음
+- `metadata`에 4-Agent decision, action, reward가 포함됨
 
-## 4. 보조/보관 기능: 추론 최적화 시험
-
-아래 시험은 CPU/GPU VM 기반 AI 응용 배포/제어 과제 쪽으로 확장할 때 사용하는 보조 기능이다. 현재 대학원 연구 발표와 논문 본문에서는 장애 감시/복구 실험과 구분해서 사용한다.
+## 4. Autonomous mock 시험
 
 ```bash
-aiops-k8s-agents recommend-inference-placement \
-  --config config/inference_optimization.json \
-  --workload llm-chat-inference
+aiops-k8s-agents autonomous-run \
+  --mode mock \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --metric cpu \
+  --threshold 80 \
+  --evidence-value 95 \
+  --allowed-namespace online-boutique \
+  --allowed-deployment paymentservice
 ```
 
-기대 결과:
+성공 기준:
 
-- `selected_resource`: `gpu-vm-l4`
-- `action`: `deploy_on_gpu_vm`
-- `slo_satisfied`: `true`
+- `"valid": true`
+- `"metadata.autonomous": "closed_loop"`
+- FakeEvidenceProvider 기반 evidence summary 출력
 
-```bash
-aiops-k8s-agents recommend-inference-placement \
-  --config config/inference_optimization.json \
-  --workload text-classifier
+주의:
+
+```text
+Autonomous evidence flow는 mock/test 환경에서 FakeEvidenceProvider 기반으로 구현되어 있다.
+KubernetesEvidenceProvider는 deployment/pod snapshot 중심의 제한적 provider다.
+Prometheus metric, log enrichment, full real-cluster evidence fusion은 후속 확장이다.
 ```
 
-기대 결과:
+## 5. Prometheus 연결 시험
 
-- `selected_resource`: `cpu-vm-standard`
-- `action`: `deploy_on_cpu_vm`
-
-## 5. Kubernetes real 실험
-
-전제:
-
-```bash
-export PATH="$HOME/bin:$PATH"
-export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
-kubectl get nodes
-```
-
-Prometheus port-forward가 별도 터미널에서 실행 중이어야 한다.
+터미널 A:
 
 ```bash
 kubectl port-forward \
@@ -108,7 +94,20 @@ kubectl port-forward \
   9091:9090
 ```
 
-36회 recovery action 실험:
+터미널 B:
+
+```bash
+export PROM=http://127.0.0.1:9091
+curl -sS "$PROM/-/ready"
+curl -sSG "$PROM/api/v1/query" --data-urlencode 'query=up'
+```
+
+성공 기준:
+
+- `Prometheus Server is Ready.`
+- Prometheus query response에 `"status":"success"` 포함
+
+## 6. Real recovery action 36회 시험
 
 ```bash
 export NETWORK_LATENCY_QUERY='max(probe_duration_seconds{target="paymentservice"})'
@@ -116,67 +115,73 @@ export NETWORK_LATENCY_QUERY='max(probe_duration_seconds{target="paymentservice"
 GUARD_BACKEND=go \
 MODE=real \
 REPETITIONS=3 \
-PROMETHEUS_URL=http://127.0.0.1:9091 \
+PROMETHEUS_URL="$PROM" \
+NETWORK_LATENCY_QUERY="$NETWORK_LATENCY_QUERY" \
 bash scripts/server_recovery_action_pilot.sh
 ```
 
-실험이 오래 걸릴 때 진행 상태를 계속 표시하려면 다음 wrapper를 사용한다.
-
-```bash
-GUARD_BACKEND=go \
-MODE=real \
-REPETITIONS=3 \
-PROMETHEUS_URL=http://127.0.0.1:9091 \
-NETWORK_LATENCY_QUERY="$NETWORK_LATENCY_QUERY" \
-bash scripts/run_with_progress.sh \
-  --label "recovery real 36 runs" \
-  --interval-seconds 10 \
-  -- \
-  bash scripts/server_recovery_action_pilot.sh
-```
-
-`server_finalize_research.sh`는 개별 시나리오 일부가 실패하더라도 생성된 feedback loop report가 있으면 `final_summary.md`와 `final_summary.csv`를 끝까지 만든다. 따라서 최종 요약 파일이 없으면 먼저 `runs/final-real/<run>/` 아래에 `*feedback_loop_report.json`이 생성됐는지 확인한다.
-
 성공 기준:
-
-- `outcomes.jsonl`이 36줄이어야 한다.
-- `analysis/reward_policy_comparison.md`가 생성되어야 한다.
-- 장애별 action ranking이 기록되어야 한다.
-
-## 6. Recovery 정량 그래프/통계 검증
-
-Recovery action 실험 결과에서 평균 복구 시간, 성공률, reward 정책 차이 그래프를 생성한다.
 
 ```bash
 LATEST=$(ls -dt runs/recovery-action-pilot/*/ | head -1)
+wc -l "$LATEST/outcomes.jsonl"
+```
 
-aiops-k8s-agents summarize-recovery-statistics \
-  --input "$LATEST/outcomes.jsonl" \
-  --output-dir "$LATEST/statistics"
+정상 기준:
+
+```text
+36 .../outcomes.jsonl
+```
+
+실패 항목 확인:
+
+```bash
+python - "$LATEST/outcomes.jsonl" <<'PY'
+import json, sys
+
+for line in open(sys.argv[1], encoding="utf-8"):
+    row = json.loads(line)
+    if not row.get("measurement_valid"):
+        print(row.get("treatment_id"), row.get("error"))
+PY
+```
+
+## 7. 정량 분석 시험
+
+```bash
+bash scripts/server_recovery_statistics.sh
 ```
 
 성공 기준:
 
-- `statistics/quantitative_summary.md`가 생성되어야 한다.
-- `statistics/scenario_action_statistics.csv`가 생성되어야 한다.
-- `statistics/policy_reward_statistics.csv`가 생성되어야 한다.
-- `statistics/mean_recovery_seconds_by_action.svg`가 생성되어야 한다.
-- `statistics/mean_recovery_seconds_by_action.png`가 생성되어야 한다.
-- `statistics/success_rate_by_action.svg`가 생성되어야 한다.
-- `statistics/success_rate_by_action.png`가 생성되어야 한다.
-- `statistics/reward_by_policy.svg`가 생성되어야 한다.
-- `statistics/reward_by_policy.png`가 생성되어야 한다.
+```bash
+LATEST=$(ls -dt runs/recovery-action-pilot/*/ | head -1)
+ls "$LATEST/statistics"
+cat "$LATEST/statistics/quantitative_summary.md"
+```
 
-## 7. CI/CD
+다음 파일이 생성되어야 합니다.
 
-GitHub Actions는 push 또는 pull request 시 다음을 검증한다.
+- `quantitative_summary.md`
+- `quantitative_summary.json`
+- `scenario_action_statistics.csv`
+- `policy_reward_statistics.csv`
+- `mean_recovery_seconds_by_action.png`
+- `success_rate_by_action.png`
+- `reward_by_policy.png`
 
-- Python test
-- Go guard test
-- 기본 코드 품질 확인
-
-워크플로 파일:
+## 8. AIOpsLab benchmark 시험
 
 ```bash
-.github/workflows/ci.yml
+cd ~/geonhae/aiops_research
+conda activate aiopslab
+
+bash scripts/server_aiopslab_auto_detection.sh
+```
+
+반복 시험:
+
+```bash
+bash scripts/server_aiopslab_repeat_detection.sh
+bash scripts/server_aiopslab_summarize_runs.sh
 ```

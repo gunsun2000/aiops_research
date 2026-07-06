@@ -10,10 +10,16 @@ from docx.oxml.ns import qn
 from docx.shared import Inches, Pt, RGBColor
 
 
-OUTPUT = Path("docs/requirements_definition.docx")
+OUTPUT = Path("docs/submission/requirements_definition.docx")
 
 
-def set_font(run, name: str = "Malgun Gothic", size: float | None = None, bold=None, color: str | None = None) -> None:
+def set_font(
+    run,
+    name: str = "Malgun Gothic",
+    size: float | None = None,
+    bold: bool | None = None,
+    color: str | None = None,
+) -> None:
     run.font.name = name
     run._element.rPr.rFonts.set(qn("w:ascii"), name)
     run._element.rPr.rFonts.set(qn("w:hAnsi"), name)
@@ -91,6 +97,12 @@ def add_heading(doc: Document, text: str, level: int = 1) -> None:
         set_font(run, size=16 if level == 1 else 13, bold=True, color="2E74B5")
 
 
+def add_bullets(doc: Document, items: list[str]) -> None:
+    for item in items:
+        paragraph = doc.add_paragraph(style="List Bullet")
+        set_font(paragraph.add_run(item), size=10.5)
+
+
 def build_docx() -> None:
     doc = Document()
     configure_document(doc)
@@ -98,7 +110,7 @@ def build_docx() -> None:
     title = doc.add_paragraph()
     title.alignment = WD_ALIGN_PARAGRAPH.CENTER
     set_font(
-        title.add_run("AIOps 4-Agent 서비스 제어 자동화 요구사항 정의서"),
+        title.add_run("AIOps 4-Agent Kubernetes 장애 복구 연구 요구사항 정의서"),
         size=18,
         bold=True,
         color="0B2545",
@@ -107,117 +119,112 @@ def build_docx() -> None:
     subtitle = doc.add_paragraph()
     subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
     set_font(
-        subtitle.add_run("AI 기반 서비스 제어 및 관리 자동화 프레임워크"),
+        subtitle.add_run("Safety-Bounded Closed-Loop Autonomous 4-Agent AIOps Framework"),
         size=11,
         color="555555",
     )
 
     doc.add_paragraph(
-        "본 문서는 AIOps 4-Agent 연구 프로토타입의 구현 범위, 기능 요구사항, 시험 방법, 산출물 구성을 정리한 제출용 요구사항 정의서이다."
-    )
-    paragraph = doc.add_paragraph()
-    set_font(paragraph.add_run("핵심 정의: "), bold=True)
-    set_font(
-        paragraph.add_run(
-            "4개의 AI Agent가 장애 상태를 역할별로 판단하고, 구조화된 action과 reward 정책을 통해 Kubernetes 제어 명령을 안전하게 생성·검증·실행한다."
-        )
+        "본 문서는 Kubernetes 서비스 장애 감시와 복구 자동화를 위한 4-Agent AIOps 연구 프로토타입의 구현 범위, 기능 요구사항, 시험 방법, 산출물 구성을 정리한다."
     )
 
-    add_heading(doc, "1. 연구 개발 범위")
-    for item in [
-        "AI LLM 운영 관리 구조 설계 및 프로토타입",
-        "AI 에이전트 등록 관리 프로토타입",
-        "AI 응용 자동화 에이전트 설계 및 프로토타입",
-        "CPU/GPU VM 기반 AI 응용 배포/제어 추론 최적화 전략",
-        "Go 언어 기반 최종 Kubernetes action guard",
-        "최소 2종 이상의 LLM/코딩 에이전트 관점 교차 검증",
-    ]:
-        doc.add_paragraph(item, style="List Bullet")
+    add_heading(doc, "1. 연구 목적")
+    add_bullets(
+        doc,
+        [
+            "4개의 AI Agent가 역할별로 장애를 판단하고 복구 action을 제안한다.",
+            "Action/Reward 정책으로 Agent 판단을 교차 검증한다.",
+            "Python Validator와 선택적 Go Guard를 통해 위험한 Kubernetes action을 차단한다.",
+            "Chaos Mesh, AIOpsLab, Prometheus, Kubernetes 환경에서 실험 결과를 수집한다.",
+        ],
+    )
 
     add_heading(doc, "2. 기능 요구사항")
     add_table(
         doc,
         ["ID", "요구사항", "상태"],
         [
-            ["FR-01", "4-Agent 역할 분리 및 action/reward 정책 설계", "완료"],
-            ["FR-02", "AutoGen GroupChat 기반 Agent 대화 경로", "완료"],
-            ["FR-03", "Prometheus metric 입력 기반 실행 경로", "완료"],
-            ["FR-04", "Chaos Mesh 장애 4종 실험", "완료"],
-            ["FR-05", "AIOpsLab Hotel Reservation 탐지 benchmark 연동", "완료"],
-            ["FR-06", "Kubernetes dry-run/real 제어 및 상태 확인", "완료"],
-            ["FR-07", "Go 언어 기반 최종 action guard", "완료"],
-            ["FR-08", "Agent 등록 관리 프로토타입", "완료"],
-            ["FR-09", "CPU/GPU VM 기반 추론 배치 최적화 추천", "완료"],
-            ["FR-10", "Reward 정책 변화와 장애별 action ranking 비교", "완료"],
-            ["FR-11", "HTTP API 서버 형태의 Agent Registry 서비스", "향후 확장"],
+            ["FR-01", "장애 입력을 구조화된 AlertEvent로 변환", "완료"],
+            ["FR-02", "HA Agent의 장애 원인 및 복구 필요성 판단", "완료"],
+            ["FR-03", "Application Agent의 bounded recovery action 후보 생성", "완료"],
+            ["FR-04", "Infrastructure Agent의 replica/deployment 안전성 검토", "완료"],
+            ["FR-05", "Cost Agent의 비용 및 과잉 action 검토", "완료"],
+            ["FR-06", "Python Validator 기반 allowlist와 replica limit 검증", "완료"],
+            ["FR-07", "선택적 Go Guard 기반 이중 안전 검증", "완료"],
+            ["FR-08", "mock, dry-run, real 실행 모드 제공", "완료"],
+            ["FR-09", "Chaos Mesh 기반 4종 장애 반복 실험", "완료"],
+            ["FR-10", "JSONL/CSV/Markdown/PNG/SVG 결과 산출", "완료"],
         ],
-        [0.8, 4.8, 0.9],
+        [0.8, 5.0, 0.8],
     )
 
-    add_heading(doc, "3. Agent 역할 정의")
+    add_heading(doc, "3. Agent 역할")
     add_table(
         doc,
         ["Agent", "역할", "대표 action"],
         [
-            ["AIServiceHASupportAgent", "장애 진단, 가용성 판단, 자율 복구 필요성 평가", "ha_scale_out_required"],
-            ["AIApplicationManagementAgent", "응용 배포, 복구 action 선택, Kubernetes 제어", "app_scale_deployment"],
-            ["AISemiconductorInfraOpsAgent", "CPU/GPU/NPU 자원 수용성 및 VM 배치 가능성 검증", "infra_capacity_approved"],
-            ["CostOptimizationAgent", "자원 사용량과 비용 정책 검증", "cost_budget_approved"],
+            ["AIServiceHASupportAgent", "서비스 장애 진단, 가용성 판단, 복구 필요성 평가", "ha_scale_out_required"],
+            ["AIApplicationManagementAgent", "observe, restart, scale-out action 후보 생성", "app_scale_deployment"],
+            ["AISemiconductorInfraOpsAgent", "Kubernetes replica/deployment 안전성 검토", "infra_capacity_approved"],
+            ["CostOptimizationAgent", "비용 증가와 과잉 action 검토", "cost_budget_approved"],
         ],
-        [2.0, 3.4, 1.1],
+        [2.0, 3.5, 1.2],
     )
 
-    add_heading(doc, "4. CPU/GPU VM 추론 최적화 전략")
-    doc.add_paragraph(
-        "추론 최적화 모듈은 workload의 accelerator 필요 여부, VRAM 요구량, latency SLO, throughput 요구량, VM 비용, 가용 replica 수를 기준으로 CPU/GPU VM 후보를 평가한다."
-    )
-    add_table(
-        doc,
-        ["Workload", "선택 Resource", "Action", "판단 근거"],
-        [
-            ["llm-chat-inference", "gpu-vm-l4", "deploy_on_gpu_vm", "LLM은 GPU가 필요하며 L4가 SLO와 비용 균형을 만족"],
-            ["text-classifier", "cpu-vm-standard", "deploy_on_cpu_vm", "CPU VM으로도 SLO를 만족하여 비용 효율적"],
-        ],
-        [1.7, 1.4, 1.5, 1.9],
-    )
-
-    add_heading(doc, "5. 시험 및 검증 방법")
+    add_heading(doc, "4. 시험 방법")
     add_table(
         doc,
         ["시험", "명령", "성공 기준"],
         [
             ["Python 단위 테스트", "python -m pytest", "전체 테스트 passed"],
-            ["Go guard 테스트", "go test ./...", "Go validator 테스트 통과"],
+            ["Go Guard 테스트", "go test ./...", "Go guard 테스트 통과"],
             ["Agent Registry", "aiops-k8s-agents list-agents", "4개 Agent 조회"],
-            ["Inference Optimizer", "recommend-inference-placement", "워크로드별 적합 VM 추천"],
-            ["Recovery 실험", "server_recovery_action_pilot.sh", "36개 결과 기록"],
+            ["Autonomous mock", "aiops-k8s-agents autonomous-run", "valid=true"],
+            ["Recovery 실험", "server_recovery_action_pilot.sh", "36개 outcome 기록"],
+            ["정량 분석", "server_recovery_statistics.sh", "PNG/SVG/CSV/JSON 산출"],
         ],
-        [1.4, 2.6, 2.5],
+        [1.5, 2.7, 2.3],
     )
 
-    add_heading(doc, "6. 산출물")
+    add_heading(doc, "5. 산출물")
     add_table(
         doc,
-        ["산출물", "설명"],
+        ["산출물", "위치"],
         [
-            ["config/agent_registry.json", "4-Agent 등록 관리 설정"],
-            ["config/inference_optimization.json", "CPU/GPU VM 추론 배치 정책"],
-            ["go/aiops-guard", "Go 언어 기반 최종 action guard"],
-            ["docs/functional_api_guide.md", "기능/API 사용 가이드"],
-            ["docs/test_guide.md", "시험 검증 가이드"],
-            ["docs/requirements_definition.docx", "제출용 요구사항 정의서"],
+            ["요구사항 정의서", "docs/submission/requirements_definition.md"],
+            ["Word 요구사항 정의서", "docs/submission/requirements_definition.docx"],
+            ["설치 및 실행 가이드", "docs/submission/install_and_run_guide.md"],
+            ["시험 가이드", "docs/submission/test_guide.md"],
+            ["Agent Registry", "config/agent_registry.json"],
+            ["Action/Reward 정책", "docs/design/agent_action_reward_policy.md"],
+            ["Recovery 실험 결과", "runs/recovery-action-pilot/<run>/"],
+            ["정량 분석 그래프", "runs/recovery-action-pilot/<run>/statistics/"],
         ],
-        [2.6, 3.9],
+        [2.4, 4.1],
+    )
+
+    add_heading(doc, "6. 제외 범위")
+    add_bullets(
+        doc,
+        [
+            "Ops LLM 모델 선정 기능은 연구 본체에서 제거한다.",
+            "CPU/GPU VM 기반 AI App 배치 기능은 연구 본체에서 제거한다.",
+            "AI App deployment manifest 생성은 연구 본체에서 제거한다.",
+            "Swagger/OpenAPI 서버는 현재 연구 범위가 아니다.",
+        ],
     )
 
     add_heading(doc, "7. 향후 확장")
-    for item in [
-        "single-agent baseline 및 Agent 제거 ablation 실험",
-        "AutoGen multi-round real action 선택 실험",
-        "실제 GPU/NPU Kubernetes scheduling과 모델 추론 서비스 연동",
-        "HTTP API 서버 기반 Agent Registry 관리 기능 구현",
-    ]:
-        doc.add_paragraph(item, style="List Bullet")
+    add_bullets(
+        doc,
+        [
+            "single-agent baseline 비교",
+            "Agent 제거 ablation 실험",
+            "reward 민감도 분석",
+            "AutoGen multi-round real action 선택",
+            "Prometheus metric과 log enrichment 기반 full evidence fusion",
+        ],
+    )
 
     footer = doc.sections[0].footer.paragraphs[0]
     footer.alignment = WD_ALIGN_PARAGRAPH.RIGHT

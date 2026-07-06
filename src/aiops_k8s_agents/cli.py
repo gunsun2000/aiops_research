@@ -48,23 +48,12 @@ from aiops_k8s_agents.aiopslab_results import (
     summarize_aiopslab_reports,
     write_aiopslab_summary_files,
 )
-from aiops_k8s_agents.inference_optimizer import (
-    InferenceOptimizationError,
-    build_inference_deployment_plan,
-    load_inference_optimization_config,
-    recommend_inference_placement,
-)
 from aiops_k8s_agents.kubernetes_status import collect_kubernetes_snapshot
 from aiops_k8s_agents.models import (
     AlertEvent,
     CommandResult,
     RecoveryAction,
     RecoveryActionKind,
-)
-from aiops_k8s_agents.ops_llm_selection import (
-    OpsLLMSelectionError,
-    load_ops_llm_benchmark_config,
-    select_ops_llm,
 )
 from aiops_k8s_agents.recovery_experiments import (
     analyze_recovery_outcomes,
@@ -80,7 +69,6 @@ from aiops_k8s_agents.recovery_runner import (
     run_recovery_matrix,
 )
 from aiops_k8s_agents.recovery_monitor import FakeRecoveryMonitor
-from aiops_k8s_agents.service_operations import AIServiceOperationsPipeline
 from aiops_k8s_agents.prometheus import (
     PrometheusAdapter,
     PrometheusAdapterError,
@@ -92,8 +80,6 @@ from aiops_k8s_agents.validator import CommandValidationError, CommandValidator
 
 DEFAULT_OPENAI_MODEL = os.environ.get("AIOPS_OPENAI_MODEL", "gpt-5.5")
 DEFAULT_AGENT_REGISTRY = "config/agent_registry.json"
-DEFAULT_INFERENCE_OPTIMIZATION_CONFIG = "config/inference_optimization.json"
-DEFAULT_OPS_LLM_BENCHMARK_CONFIG = "config/ops_llm_benchmark.json"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -341,92 +327,6 @@ def build_parser() -> argparse.ArgumentParser:
     register_agent_parser.add_argument("--overwrite", action="store_true")
     _add_result_logging_argument(register_agent_parser)
 
-    list_inference_parser = subparsers.add_parser(
-        "list-inference-workloads",
-        help="List CPU/GPU VM inference workloads and candidate resources.",
-    )
-    list_inference_parser.add_argument(
-        "--config",
-        default=DEFAULT_INFERENCE_OPTIMIZATION_CONFIG,
-    )
-    _add_result_logging_argument(list_inference_parser)
-
-    inference_parser = subparsers.add_parser(
-        "recommend-inference-placement",
-        help="Recommend a CPU/GPU VM placement for one inference workload.",
-    )
-    inference_parser.add_argument(
-        "--config",
-        default=DEFAULT_INFERENCE_OPTIMIZATION_CONFIG,
-    )
-    inference_parser.add_argument("--workload", required=True)
-    _add_result_logging_argument(inference_parser)
-
-    inference_plan_parser = subparsers.add_parser(
-        "plan-inference-deployment",
-        help="Build a CPU/GPU VM Kubernetes deployment/control plan for one inference workload.",
-    )
-    inference_plan_parser.add_argument(
-        "--config",
-        default=DEFAULT_INFERENCE_OPTIMIZATION_CONFIG,
-    )
-    inference_plan_parser.add_argument("--workload", required=True)
-    _add_result_logging_argument(inference_plan_parser)
-
-    list_ops_llm_parser = subparsers.add_parser(
-        "list-ops-llm-candidates",
-        help="List Ops LLM benchmark candidates and selection policies.",
-    )
-    list_ops_llm_parser.add_argument(
-        "--config",
-        default=DEFAULT_OPS_LLM_BENCHMARK_CONFIG,
-    )
-    _add_result_logging_argument(list_ops_llm_parser)
-
-    select_ops_llm_parser = subparsers.add_parser(
-        "select-ops-llm",
-        help="Select the best LLM for Ops analysis under a benchmark policy.",
-    )
-    select_ops_llm_parser.add_argument(
-        "--config",
-        default=DEFAULT_OPS_LLM_BENCHMARK_CONFIG,
-    )
-    select_ops_llm_parser.add_argument("--policy", default="quality_first")
-    _add_result_logging_argument(select_ops_llm_parser)
-
-    service_ops_parser = subparsers.add_parser(
-        "run-service-operations",
-        help=(
-            "Run Ops LLM selection, CPU/GPU placement, manifest validation, "
-            "and 4-Agent recovery readiness as one service operations pipeline."
-        ),
-    )
-    service_ops_parser.add_argument(
-        "--mode", choices=[mode.value for mode in ExecutionMode], default="mock"
-    )
-    _add_guard_backend_argument(service_ops_parser)
-    service_ops_parser.add_argument(
-        "--llm-config",
-        default=DEFAULT_OPS_LLM_BENCHMARK_CONFIG,
-    )
-    service_ops_parser.add_argument("--llm-policy", default="quality_first")
-    service_ops_parser.add_argument(
-        "--inference-config",
-        default=DEFAULT_INFERENCE_OPTIMIZATION_CONFIG,
-    )
-    service_ops_parser.add_argument("--workload", required=True)
-    service_ops_parser.add_argument("--namespace", required=True)
-    service_ops_parser.add_argument("--deployment", required=True)
-    service_ops_parser.add_argument("--allowed-namespace", action="append")
-    service_ops_parser.add_argument("--allowed-deployment", action="append")
-    service_ops_parser.add_argument("--metric", default="")
-    service_ops_parser.add_argument("--value", type=float)
-    service_ops_parser.add_argument("--threshold", type=float)
-    service_ops_parser.add_argument("--message", default="")
-    service_ops_parser.add_argument("--min-replicas", type=int, default=1)
-    service_ops_parser.add_argument("--max-replicas", type=int, default=5)
-    _add_result_logging_argument(service_ops_parser)
-
     return parser
 
 
@@ -596,36 +496,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         _emit_json_report(args, report)
         return 0 if report["valid"] else 2
 
-    if args.command == "list-inference-workloads":
-        report = list_inference_workloads(args)
-        _emit_json_report(args, report)
-        return 0
-
-    if args.command == "recommend-inference-placement":
-        report = recommend_inference_placement_cli(args)
-        _emit_json_report(args, report)
-        return 0 if report["valid"] else 2
-
-    if args.command == "plan-inference-deployment":
-        report = plan_inference_deployment_cli(args)
-        _emit_json_report(args, report)
-        return 0 if report["valid"] else 2
-
-    if args.command == "list-ops-llm-candidates":
-        report = list_ops_llm_candidates(args)
-        _emit_json_report(args, report)
-        return 0
-
-    if args.command == "select-ops-llm":
-        report = select_ops_llm_cli(args)
-        _emit_json_report(args, report)
-        return 0 if report["valid"] else 2
-
-    if args.command == "run-service-operations":
-        report = run_service_operations_cli(args)
-        _emit_json_report(args, report)
-        return 0 if report["valid"] else 2
-
     parser.error(f"unsupported command: {args.command}")
     return 2
 
@@ -710,162 +580,6 @@ def register_agent_profile(args: argparse.Namespace) -> dict[str, Any]:
         "agent": profile.to_dict(),
         "stderr": "",
     }
-
-
-def list_inference_workloads(args: argparse.Namespace) -> dict[str, Any]:
-    config = load_inference_optimization_config(args.config)
-    return {
-        "command": "list-inference-workloads",
-        "config": args.config,
-        "version": config.version,
-        "weights": asdict(config.weights),
-        "resources": [
-            config.resources[resource_id].to_dict()
-            for resource_id in sorted(config.resources)
-        ],
-        "workloads": [
-            config.workloads[workload_id].to_dict()
-            for workload_id in sorted(config.workloads)
-        ],
-    }
-
-
-def recommend_inference_placement_cli(args: argparse.Namespace) -> dict[str, Any]:
-    try:
-        config = load_inference_optimization_config(args.config)
-        decision = recommend_inference_placement(config, args.workload)
-    except InferenceOptimizationError as exc:
-        return {
-            "command": "recommend-inference-placement",
-            "valid": False,
-            "config": args.config,
-            "workload": args.workload,
-            "stderr": str(exc),
-        }
-    report = decision.to_dict()
-    report["command"] = "recommend-inference-placement"
-    report["config"] = args.config
-    return report
-
-
-def plan_inference_deployment_cli(args: argparse.Namespace) -> dict[str, Any]:
-    try:
-        config = load_inference_optimization_config(args.config)
-        plan = build_inference_deployment_plan(config, args.workload)
-    except InferenceOptimizationError as exc:
-        return {
-            "command": "plan-inference-deployment",
-            "valid": False,
-            "config": args.config,
-            "workload": args.workload,
-            "stderr": str(exc),
-        }
-    report = plan.to_dict()
-    report["command"] = "plan-inference-deployment"
-    report["config"] = args.config
-    return report
-
-
-def list_ops_llm_candidates(args: argparse.Namespace) -> dict[str, Any]:
-    config = load_ops_llm_benchmark_config(args.config)
-    return {
-        "command": "list-ops-llm-candidates",
-        "config": args.config,
-        "version": config.version,
-        "metadata": config.metadata.to_dict(),
-        "candidates": [
-            config.candidates[model].to_dict()
-            for model in sorted(config.candidates)
-        ],
-        "policies": {
-            name: config.policies[name].to_dict()
-            for name in sorted(config.policies)
-        },
-    }
-
-
-def select_ops_llm_cli(args: argparse.Namespace) -> dict[str, Any]:
-    try:
-        config = load_ops_llm_benchmark_config(args.config)
-        result = select_ops_llm(config, policy_name=args.policy)
-    except OpsLLMSelectionError as exc:
-        return {
-            "command": "select-ops-llm",
-            "valid": False,
-            "config": args.config,
-            "policy": args.policy,
-            "stderr": str(exc),
-        }
-    report = result.to_dict()
-    report["command"] = "select-ops-llm"
-    report["config"] = args.config
-    return report
-
-
-def run_service_operations_cli(args: argparse.Namespace) -> dict[str, Any]:
-    allowed_namespaces = set(args.allowed_namespace or [args.namespace])
-    allowed_deployments = set(args.allowed_deployment or [args.deployment])
-    pipeline = AIServiceOperationsPipeline(
-        llm_config_path=args.llm_config,
-        inference_config_path=args.inference_config,
-        mode=ExecutionMode(args.mode),
-        guard_backend=ExecutionBackend(args.guard_backend),
-        allowed_namespaces=allowed_namespaces,
-        allowed_deployments=allowed_deployments,
-        min_replicas=args.min_replicas,
-        max_replicas=args.max_replicas,
-    )
-    alert = _optional_alert_from_service_ops_args(args)
-    try:
-        return pipeline.run(
-            workload_id=args.workload,
-            llm_policy=args.llm_policy,
-            alert=alert,
-        )
-    except (InferenceOptimizationError, OpsLLMSelectionError, ValueError) as exc:
-        return {
-            "command": "run-service-operations",
-            "valid": False,
-            "selected_llm": "",
-            "selected_resource": "",
-            "deployment_plan": {},
-            "deployment_manifest": {},
-            "deployment_dry_run": {
-                "command": "kubectl apply -f - --dry-run=server",
-                "mode": args.mode,
-                "valid": False,
-                "stdout": "",
-                "stderr": str(exc),
-            },
-            "agent_reviews": {},
-            "recovery": {},
-            "recovery_pipeline_ready": False,
-            "guard_backend": args.guard_backend,
-            "stderr": str(exc),
-        }
-
-
-def _optional_alert_from_service_ops_args(
-    args: argparse.Namespace,
-) -> AlertEvent | None:
-    has_alert_metric = bool(args.metric)
-    has_alert_values = args.value is not None and args.threshold is not None
-    if not has_alert_metric and not has_alert_values:
-        return None
-    if not has_alert_metric or not has_alert_values:
-        raise ValueError(
-            "--metric, --value, and --threshold must be provided together "
-            "when recovery judgment is requested"
-        )
-    return AlertEvent(
-        namespace=args.namespace,
-        service=args.deployment,
-        metric=args.metric,
-        value=args.value,
-        threshold=args.threshold,
-        message=args.message
-        or f"Service operation alert: {args.deployment} {args.metric}={args.value}",
-    )
 
 
 def list_full_stack_experiments(args: argparse.Namespace) -> dict[str, Any]:

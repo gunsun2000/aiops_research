@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
-
 from aiops_k8s_agents.agent_decision import AgentDecision
 from aiops_k8s_agents.models import (
     CandidateEvaluation,
@@ -57,50 +55,6 @@ class CostOptimizationAgent:
             reward=0.60,
             approved=True,
             reason="Requested replicas are within the first-stage cost policy.",
-        )
-
-    def review_operation(
-        self,
-        recovery_action: ScaleAction | RecoveryAction | None = None,
-        placement_decision: Any | None = None,
-    ) -> AgentDecision:
-        if recovery_action is not None:
-            return self.review(recovery_action)
-
-        if placement_decision is None or not getattr(placement_decision, "valid", False):
-            return AgentDecision(
-                agent=self.name,
-                action="cost_placement_rejected",
-                reward=-0.55,
-                approved=False,
-                reason="Valid CPU/GPU VM placement decision is required for cost review.",
-            )
-
-        cost_per_hour = float(getattr(placement_decision, "cost_per_hour", 0.0))
-        if cost_per_hour > self.max_safe_cost_per_hour:
-            return AgentDecision(
-                agent=self.name,
-                action="cost_placement_rejected",
-                reward=-0.55,
-                approved=False,
-                reason=(
-                    f"Selected resource cost {cost_per_hour:.2f}/hour exceeds "
-                    f"safe policy {self.max_safe_cost_per_hour:.2f}/hour."
-                ),
-            )
-
-        return AgentDecision(
-            agent=self.name,
-            action="cost_placement_approved",
-            reward=0.55,
-            approved=True,
-            reason="Selected CPU/GPU VM resource is within the cost policy.",
-            parameters={
-                "selected_resource": str(
-                    getattr(placement_decision, "selected_resource", "")
-                ),
-                "cost_per_hour": f"{cost_per_hour:.2f}",
-            },
         )
 
     def evaluate_candidates(

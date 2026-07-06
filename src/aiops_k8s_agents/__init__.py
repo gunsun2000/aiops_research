@@ -10,7 +10,6 @@ from aiops_k8s_agents.ha_agent import AIServiceHASupportAgent
 from aiops_k8s_agents.infra_agent import AISemiconductorInfraOpsAgent
 from aiops_k8s_agents.models import AlertEvent, CommandResult, Diagnosis, ScaleAction
 from aiops_k8s_agents.prometheus import PrometheusAdapter, PrometheusMetricConfig
-from aiops_k8s_agents.service_operations import AIServiceOperationsPipeline
 from aiops_k8s_agents.validator import CommandValidationError, CommandValidator
 
 __all__ = [
@@ -18,7 +17,6 @@ __all__ = [
     "AlertEvent",
     "AIApplicationManagementAgent",
     "AIMCMPCoordinator",
-    "AIServiceOperationsPipeline",
     "AIServiceHASupportAgent",
     "AISemiconductorInfraOpsAgent",
     "AutoGenGroupChatCoordinator",

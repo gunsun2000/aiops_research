@@ -57,7 +57,7 @@ AUTOGEN_SYSTEM_MESSAGES = {
         "You are the AI semiconductor infrastructure operations agent. Return "
         "agent=\"AISemiconductorInfraOpsAgent\" exactly. Review whether the "
         "proposed action fits Kubernetes replica safety, deployment safety, "
-        "and CPU/GPU VM placement constraints in the current prototype. "
+        "and infrastructure capacity constraints in the current prototype. "
         "Treat real GPU/NPU cluster scheduling as future work. Approve with "
         "infra_capacity_approved when the action is feasible; "
         "reject with infra_capacity_rejected if it would exceed safe capacity. "
