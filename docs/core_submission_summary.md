@@ -32,21 +32,7 @@
 | AIOpsLab benchmark 연동 | 완료 | `scripts/server_aiopslab_auto_detection.py` |
 | 정량 그래프 생성 | 완료 | `src/aiops_k8s_agents/recovery_statistics.py` |
 
-## 4. 현재 제외한 항목
-
-다음 항목은 별도 과제 성격이 강해서 대학원 연구 본체에서 제거했습니다.
-
-| 제외 항목 | 제외 이유 |
-| --- | --- |
-| Ops LLM 선정 모듈 | 연구 중심이 LLM 모델 비교가 아님 |
-| CPU/GPU VM 기반 AI App 배치 | 장애 복구 연구 본체와 직접 관련이 약함 |
-| AI App deployment manifest 생성 | 현재 목표는 장애 감시/복구 action 검증 |
-| Swagger/OpenAPI 문서 | API 서버 개발 범위가 아님 |
-| service operations 통합 CLI | 별도 AI 서비스 배포/운영 파이프라인 성격 |
-
-Go Guard는 별도 과제 기능이 아니라, 현재 연구에서 **이중 안전 검증 근거**로 남겼습니다.
-
-## 5. 핵심 실험
+## 4. 핵심 실험
 
 ### AIOpsLab benchmark
 
@@ -72,7 +58,7 @@ Go Guard는 별도 과제 기능이 아니라, 현재 연구에서 **이중 안�
 Action: observe_only, rollout_restart, scale_out
 ```
 
-## 6. 발표에 사용할 결과물
+## 5. 발표에 사용할 결과물
 
 | 결과물 | 위치 | 의미 |
 | --- | --- | --- |
@@ -82,7 +68,7 @@ Action: observe_only, rollout_restart, scale_out
 | 그래프 PNG | `runs/recovery-action-pilot/<run>/statistics/*.png` | 발표용 시각화 |
 | 그래프 SVG | `runs/recovery-action-pilot/<run>/statistics/*.svg` | 논문/문서용 벡터 이미지 |
 
-## 7. 현재 연구 단계
+## 6. 현재 연구 단계
 
 현재 단계는 **1차 연구: 4-Agent AIOps 구조 구현 및 통합 가능성 검증**으로 정리할 수 있습니다.
 

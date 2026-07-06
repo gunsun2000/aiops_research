@@ -4,7 +4,7 @@
 
 이 저장소는 **4개의 AI Agent가 Kubernetes 서비스 장애를 판단하고, 안전 검증을 거친 복구 action만 실행하는 AIOps 연구 프로토타입**입니다.
 
-연구의 중심은 별도 API 서버나 AI App 배포가 아니라 다음 흐름입니다.
+연구의 중심은 다음 장애 감시/복구 흐름입니다.
 
 ```text
 AIOpsLab / Chaos Mesh 장애 주입

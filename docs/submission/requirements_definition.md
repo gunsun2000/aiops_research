@@ -26,16 +26,6 @@
 | 안전 검증 | Python Validator, 선택적 Go Guard |
 | 결과 분석 | JSONL, CSV, Markdown, PNG, SVG |
 
-### 제외 범위
-
-| 항목 | 이유 |
-| --- | --- |
-| Ops LLM 모델 선정 기능 | 본 연구의 중심은 LLM 모델 비교가 아니라 4-Agent 복구 판단 구조 |
-| CPU/GPU VM 기반 AI App 배치 | 장애 복구 연구 본체와 직접 관련이 약함 |
-| AI App deployment manifest 생성 | 현재 목표는 복구 action 검증 |
-| Swagger/OpenAPI 서버 | API 서버 개발 범위가 아님 |
-| 멀티클라우드 VM 스케줄링 | 후속 확장 가능 범위 |
-
 ## 3. 기능 요구사항
 
 | ID | 요구사항 | 상태 |

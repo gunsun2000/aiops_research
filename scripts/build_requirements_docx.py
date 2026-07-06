@@ -203,18 +203,7 @@ def build_docx() -> None:
         [2.4, 4.1],
     )
 
-    add_heading(doc, "6. 제외 범위")
-    add_bullets(
-        doc,
-        [
-            "Ops LLM 모델 선정 기능은 연구 본체에서 제거한다.",
-            "CPU/GPU VM 기반 AI App 배치 기능은 연구 본체에서 제거한다.",
-            "AI App deployment manifest 생성은 연구 본체에서 제거한다.",
-            "Swagger/OpenAPI 서버는 현재 연구 범위가 아니다.",
-        ],
-    )
-
-    add_heading(doc, "7. 향후 확장")
+    add_heading(doc, "6. 향후 확장")
     add_bullets(
         doc,
         [

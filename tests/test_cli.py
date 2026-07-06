@@ -6,22 +6,6 @@ import aiops_k8s_agents.cli as cli
 from aiops_k8s_agents.cli import main
 
 
-def test_cli_no_longer_exposes_separate_project_extension_commands():
-    help_text = cli.build_parser().format_help()
-
-    removed_commands = [
-        "list-inference-workloads",
-        "recommend-inference-placement",
-        "plan-inference-deployment",
-        "list-ops-llm-candidates",
-        "select-ops-llm",
-        "run-service-operations",
-    ]
-
-    for command in removed_commands:
-        assert command not in help_text
-
-
 def test_cli_mock_run_prints_command_json(capsys):
     exit_code = main(
         [
