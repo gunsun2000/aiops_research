@@ -191,7 +191,7 @@ cat "$LATEST/statistics/quantitative_summary.md"
 - `success_rate_by_action.png`
 - `reward_by_policy.png`
 
-## 9. Full-stack final summary
+## 9. 전체 AIOps 실험 요약
 
 ```bash
 CONFIRM_REAL_RUN=YES \
