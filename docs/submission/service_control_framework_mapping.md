@@ -1,6 +1,8 @@
 # AI 기반 서비스 제어 및 관리 자동화 프레임워크 매핑
 
-이 문서는 대학원 연구와 ETRI 과제의 **AI 기반 서비스 제어 및 관리 자동화 프레임워크** 항목과 현재 `aiops_research` 저장소 구현을 연결해서 설명한다.
+> 보관 문서: 현재 대학원 연구 본체는 4-Agent 기반 Kubernetes 장애 감시/복구 실험이다. 이 문서는 별도 과제 성격의 서비스 제어/AI App 배포 기능을 현재 코드와 어떻게 연결했는지 설명하는 참고 문서이며, README 본문 기준의 핵심 범위는 아니다.
+
+이 문서는 대학원 연구와 별도 과제 성격의 **AI 기반 서비스 제어 및 관리 자동화 프레임워크** 항목을 현재 `aiops_research` 저장소 구현과 어떻게 연결할 수 있는지 설명한다.
 
 핵심 표현은 다음과 같다.
 
@@ -199,6 +201,6 @@ using aiops-k8s-agents summarize-recovery-statistics.
 
 Infra Agent의 현재 구현 범위도 다음처럼 제한해서 해석한다.
 
-> Infra Agent reviews Kubernetes replica safety and CPU/GPU VM placement constraints in the current prototype. Real GPU/NPU cluster scheduling remains future work.
+> Infra Agent reviews Kubernetes replica/deployment safety and infrastructure capacity constraints in the current research prototype. Real GPU/NPU cluster scheduling remains future work.
 
-즉 현재 Infra Agent는 Kubernetes replica 안전성, deployment 안전성, CPU/GPU VM 배치 제약 검토를 담당한다. 실제 GPU/NPU 클러스터 스케줄링과 accelerator-level orchestration은 후속 확장 범위이다.
+즉 현재 Infra Agent는 Kubernetes replica 안전성, deployment 안전성, 인프라 수용 가능성 검토를 담당한다. 실제 CPU/GPU VM 배치, GPU/NPU 클러스터 스케줄링, accelerator-level orchestration은 후속 확장 범위이다.

@@ -35,7 +35,7 @@
 
 ## 3. AI반도체 인프라 운용 자동화 에이전트
 
-역할: 현재 프로토타입에서는 Kubernetes replica/deployment 안전성과 CPU/GPU VM 배치 제약을
+역할: 현재 프로토타입에서는 Kubernetes replica/deployment 안전성과 인프라 수용 가능성을
 검토합니다. 실제 GPU/NPU 클러스터 스케줄링과 accelerator-level orchestration은 후속 확장입니다.
 
 | 조건 | 액션 | 승인 | Reward | 의미 |

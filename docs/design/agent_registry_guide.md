@@ -19,7 +19,7 @@ Agent 등록 관리는 4-Agent 구조를 코드에 고정하지 않고, JSON 설
 | --- | --- |
 | `AIServiceHASupportAgent` | 서비스 장애 진단, 가용성 판단, 자율 복구 필요성 평가 |
 | `AIApplicationManagementAgent` | 응용 배포, Kubernetes 제어 action 선택, 복구 절차 관리 |
-| `AISemiconductorInfraOpsAgent` | Kubernetes replica/deployment 안전성과 CPU/GPU VM 배치 제약 검토 |
+| `AISemiconductorInfraOpsAgent` | Kubernetes replica/deployment 안전성과 인프라 수용 가능성 검토 |
 | `CostOptimizationAgent` | 자원 사용량, replica 증가, VM 비용 정책 검증 |
 
 설정 파일:
@@ -61,7 +61,7 @@ aiops-k8s-agents register-agent \
   --registry config/agent_registry.json \
   --name AIInferenceOptimizationAgent \
   --korean-name "AI 추론 최적화 에이전트" \
-  --role "CPU/GPU VM 기반 추론 배치 최적화" \
+  --role "Kubernetes 인프라 수용 가능성 검토" \
   --responsibility "latency SLO와 비용 제약을 기준으로 추론 VM 후보를 평가한다." \
   --action select_inference_vm \
   --reward-signal "SLO를 만족하면서 비용을 줄이면 양의 reward"

@@ -4,19 +4,18 @@
 
 ## 1. 연구 한 줄 요약
 
-본 프로젝트는 Kubernetes 기반 서비스 장애 상황에서 4개의 AI Agent가 운영 evidence를 수집하고, 장애를 진단하며, 여러 recovery action 후보를 생성·평가한 뒤 Python Validator와 Go Guard를 통과한 action만 실행하는 **안전 제약 기반 폐루프 자율 4-Agent AIOps 프레임워크**이다. 현재 autonomous evidence flow는 mock/test용 `FakeEvidenceProvider`와 제한적인 Kubernetes deployment/pod snapshot provider까지 구현되어 있으며, Prometheus metric과 log를 결합한 full real-cluster evidence fusion은 후속 확장으로 분리한다.
+본 프로젝트는 Kubernetes 기반 서비스 장애 상황에서 4개의 AI Agent가 운영 evidence를 수집하고, 장애를 진단하며, 여러 recovery action 후보를 생성·평가한 뒤 Python Validator를 통과한 action만 실행하는 **안전 제약 기반 폐루프 자율 4-Agent AIOps 프레임워크**이다. 현재 autonomous evidence flow는 mock/test용 `FakeEvidenceProvider`와 제한적인 Kubernetes deployment/pod snapshot provider까지 구현되어 있으며, Prometheus metric과 log를 결합한 full real-cluster evidence fusion은 후속 확장으로 분리한다.
 
-## 2. 과제 개발 가이드 대응 현황
+## 2. 대학원 연구 중심 범위
 
-| 개발 가이드 항목 | 현재 상태 | 프로젝트 산출물 |
-| --- | --- | --- |
-| Go 언어 개발 필수 | 완료 | `go/aiops-guard` |
-| 최소 2종 이상 LLM/코딩 에이전트 활용 | 완료 | AutoGen 4-Agent 경로, Codex 기반 코드 작성/검증, LLM 교차 검증 문서 |
-| 교차 검증 | 완료 | Python validator + Go guard 이중 검증, Agent action/reward 합의 구조 |
-| 프레임워크/프롬프트 중심 문서 작성 | 완료 | `docs/design/agent_registry_guide.md`, `docs/design/go_and_llm_cross_validation.md`, `docs/design/ops_llm_selection_guide.md` |
-| 산출물 문서 최소화 | 정리 완료 | 이 문서 기준으로 핵심 산출물만 설명 |
-| 로그 및 에러 메시지 최대화 | 완료 | `runs/`, `outcomes.jsonl`, `statistics/`, pytest 로그, kubectl 결과 |
-| 개발은 코딩 에이전트, 사람은 시험 검증 위주 | 완료 | Codex가 구현/테스트 작성, 연구자는 서버 실험 실행 및 결과 검증 |
+| 구분 | 현재 처리 |
+| --- | --- |
+| 연구 본체 | 4-Agent 기반 Kubernetes 장애 감시/복구 |
+| 핵심 실험 | AIOpsLab, Chaos Mesh, Prometheus, Kubernetes real action |
+| 핵심 판단 | Action/Reward 정책, 장애별 recovery action 선택 |
+| 기본 안전 검증 | Python Validator |
+| 보조/선택 기능 | Go Guard, AutoGen GroupChat, Agent Registry |
+| 본문에서 내리는 기능 | Ops LLM 선정, CPU/GPU VM 배치, AI App deployment manifest, Swagger/API |
 
 ## 3. 연구에서 실제로 구현한 핵심 기능
 
@@ -27,7 +26,7 @@
 | Action/Reward 정책 | 장애별 후보 action 평가 및 reward 정책별 action ranking | `config/recovery_action_experiments.json`, `docs/design/agent_action_reward_policy.md` |
 | Evidence 기반 자율 판단 | fake evidence 기반 mock/test loop, 제한적 Kubernetes snapshot, 진단, 후보 생성, 후보별 평가, 복구 모니터링, 재계획 | `src/aiops_k8s_agents/evidence.py`, `src/aiops_k8s_agents/autonomous.py`, `src/aiops_k8s_agents/recovery_monitor.py` |
 | Kubernetes 안전 실행 | allowlist, replica 범위, namespace/deployment 검증 | `src/aiops_k8s_agents/validator.py`, `src/aiops_k8s_agents/executor.py` |
-| Go 기반 Guard | 최종 action을 Go 언어로 한 번 더 검증 | `go/aiops-guard` |
+| 선택적 Go Guard | 최종 action을 Go 언어로 한 번 더 검증하는 보조 기능 | `go/aiops-guard` |
 | Prometheus 연동 | metric 기반 상태 관측 및 실험 입력 | `src/aiops_k8s_agents/prometheus.py` |
 | Chaos Mesh 실험 | pod-kill, cpu-stress, memory-stress, network-delay 장애 주입 | `k8s/chaos/` |
 | AIOpsLab 연동 | Hotel Reservation 탐지 benchmark 실험 | `scripts/server_aiopslab_auto_detection.py` |
@@ -78,15 +77,12 @@
 | 산출물 요구 | 현재 파일 |
 | --- | --- |
 | 요구사항 정의서 | `docs/submission/requirements_definition.md`, `docs/submission/requirements_definition.docx` |
-| 기능/API 가이드 | `docs/submission/functional_api_guide.md`, `docs/submission/service_control_framework_mapping.md`, `docs/submission/openapi_agent_registry.yaml` |
 | 설치 활용 가이드 | `docs/submission/install_and_run_guide.md` |
 | 시험 가이드 | `docs/submission/test_guide.md` |
-| Go 개발 설명 | `docs/design/go_and_llm_cross_validation.md`, `go/aiops-guard/README.md` |
 | Agent 등록 관리 설명 | `docs/design/agent_registry_guide.md` |
-| LLM 선정 설명 | `docs/design/ops_llm_selection_guide.md` |
-| 추론 배포 최적화 전략 | `docs/design/inference_optimization_guide.md`, `docs/design/ai_application_deployment_strategy.md` |
 | Recovery 실험 설명 | `docs/experiments/recovery_action_experiment_guide.md` |
 | 정량 분석 설명 | `docs/experiments/recovery_quantitative_analysis_guide.md` |
+| 별도 과제 확장 기능 보관 | `docs/archive/etri_extension.md` |
 
 ## 7. 발표에서 뒤로 빼도 되는 내용
 
@@ -101,13 +97,13 @@
 
 ## 8. 대학원 연구 설명 핵심 문장
 
-본 연구에서는 AI 기반 서비스 제어 및 관리 자동화 프레임워크의 1차 구현으로, 4-Agent 역할 분담 구조와 action/reward 기반 교차 검증 방식을 설계하였다. 또한 Go 언어 기반 안전 검증기를 추가하여 LLM이 제안한 Kubernetes action을 독립적으로 재검증하도록 구성하였다. 이후 AIOpsLab, Chaos Mesh, Prometheus, Kubernetes 환경에서 실제 장애 주입 및 복구 action 실험을 수행하고, 평균 복구 시간과 reward 정책별 action 선택 결과를 정량 분석하였다.
+본 연구에서는 Kubernetes 장애 감시와 복구를 위한 4-Agent 역할 분담 구조와 action/reward 기반 교차 검증 방식을 설계하였다. Agent가 생성한 recovery action은 Python Validator를 통해 안전성을 검증한 뒤 mock, dry-run, real 모드로 실행된다. 이후 AIOpsLab, Chaos Mesh, Prometheus, Kubernetes 환경에서 실제 장애 주입 및 복구 action 실험을 수행하고, 평균 복구 시간과 reward 정책별 action 선택 결과를 정량 분석하였다. Go Guard와 AI App 배포 관련 기능은 본 연구의 중심이 아니라 보조 또는 보관 기능으로 분리한다.
 
 ## 9. 현재 단계와 다음 단계
 
 | 단계 | 내용 | 상태 |
 | --- | --- | --- |
-| 1차 연구 | 4-Agent 구조 설계, Go guard, real 장애 실험, 정량 분석 | 완료에 가까움 |
+| 1차 연구 | 4-Agent 구조 설계, real 장애 실험, 정량 분석 | 완료에 가까움 |
 | 2차 연구 | Agent 제거 실험, single-agent baseline, reward 민감도 확장 | 다음 단계 |
 | 3차 연구 | GPU/NPU 실제 스케줄링, 대규모 AIOpsLab full-scale 확장 | 향후 확장 |
 

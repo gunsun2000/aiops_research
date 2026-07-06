@@ -1,5 +1,7 @@
 # Agent 중심 AI 서비스 운영 통합 실험 환경 및 실행 코드
 
+> 보관 문서: 현재 대학원 연구 본체는 4-Agent 기반 Kubernetes 장애 감시/복구 실험이다. 이 문서는 Ops LLM 선정, CPU/GPU VM 배치, AI 서비스 deployment manifest를 묶은 별도 과제 성격의 확장 runbook이다.
+
 이 문서는 `run-service-operations` 통합 파이프라인을 서버에서 재현하기 위한 환경 설정, 실행 명령, 성공 기준을 정리한 runbook입니다.
 
 ## 1. 실험 목적

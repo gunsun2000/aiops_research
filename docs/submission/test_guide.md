@@ -22,17 +22,21 @@ cd C:\Users\geonhae\Documents\aiops_research
 - 기존 deterministic 4-Agent 판단
 - AutoGen structured decision 경로
 - Agent registry와 action 검증
-- Ops LLM 선정
-- CPU/GPU VM 배치 추천
-- AI 서비스 deployment manifest 생성
-- Python Validator와 Go Guard 연결
+- Action/Reward 정책
+- Python Validator 안전 검증
 - Evidence Collector 기반 autonomous loop
 - Recovery Monitor와 bounded replanning
+- Chaos Mesh recovery action runner
+- 정량 통계/그래프 생성
 - CLI backward compatibility
+
+Ops LLM 선정, CPU/GPU VM 배치 추천, AI 서비스 deployment manifest 생성, Go Guard 연결은 현재 대학원 연구 본체가 아니라 보조/보관 기능으로 분리한다.
 
 autonomous loop 테스트에서 `observe_only`는 Kubernetes 상태 변경 action이 아니라 read-only observation으로 해석한다. 즉 `observe_only` 결과는 `state_changed: false`, `action_effect_type: "read_only_observation"`으로 확인하고, `rollout_restart`와 `scale_out`은 상태 변경 action으로 구분한다.
 
-## 2. Go guard 테스트
+## 2. 선택적 Go Guard 테스트
+
+Go Guard는 대학원 연구 본체의 필수 실행 경로가 아니라 Python Validator 이후 한 번 더 검증할 수 있는 선택적 이중 안전 검증 모듈이다.
 
 ```bash
 cd ~/geonhae/aiops_research/go/aiops-guard
@@ -58,7 +62,9 @@ aiops-k8s-agents validate-agent-action \
 - `app_scale_deployment`는 허용된다.
 - registry에 없는 action은 거부된다.
 
-## 4. 추론 최적화 시험
+## 4. 보조/보관 기능: 추론 최적화 시험
+
+아래 시험은 CPU/GPU VM 기반 AI 응용 배포/제어 과제 쪽으로 확장할 때 사용하는 보조 기능이다. 현재 대학원 연구 발표와 논문 본문에서는 장애 감시/복구 실험과 구분해서 사용한다.
 
 ```bash
 aiops-k8s-agents recommend-inference-placement \

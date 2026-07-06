@@ -2,14 +2,14 @@
 
 ## 1. 문서 목적
 
-이 문서는 프로젝트를 실행할 때 어떤 명령을 어떤 목적에 사용하는지 정리한 설명서이다. 단순 명령어 목록이 아니라, 각 명령이 대학원 연구와 ETRI 과제 중 어느 부분을 검증하는지 함께 설명한다.
+이 문서는 프로젝트를 실행할 때 어떤 명령을 어떤 목적에 사용하는지 정리한 설명서이다. 단순 명령어 목록이 아니라, 대학원 연구 본체인 **4-Agent AIOps 장애 감시/복구 실험**과 보조/보관 기능을 구분해서 설명한다.
 
 ## 2. 실행 환경
 
 | 환경 | 목적 |
 | --- | --- |
 | `base` | Anaconda 기본 환경 |
-| `aiops_research` | 우리 프로젝트 실행, pytest, 4-Agent CLI, Go Guard |
+| `aiops_research` | 우리 프로젝트 실행, pytest, 4-Agent CLI |
 | `aiopslab` | 외부 AIOpsLab 공식 코드 실행 |
 
 일반적으로 우리 프로젝트는 다음 환경에서 실행한다.
@@ -50,9 +50,9 @@ python -m pytest
 - validator 검증
 - CLI 출력 검증
 - recovery action 실험 코드 검증
-- service operations 통합 파이프라인 검증
+- autonomous/recovery action 실험 코드 검증
 
-### 3.3 Go Guard 테스트
+### 3.3 선택적 Go Guard 테스트
 
 ```bash
 cd ~/geonhae/aiops_research/go/aiops-guard
@@ -62,9 +62,9 @@ go run ./cmd/aiops-guard --input ../../examples/go_guard_scale_action.json
 
 의미:
 
-- 과제 요구사항의 Go 언어 개발 항목 검증
 - Python Validator 이후 Go Guard가 동일 action을 한 번 더 검증하는지 확인
 - 위험한 namespace, deployment, replica, action이 차단되는지 확인
+- 현재 대학원 연구 본체가 아니라 선택적 이중 검증 모듈로 보관
 
 ## 4. 대학원 연구 실행 코드
 
@@ -160,9 +160,9 @@ policy_update_recommendations
 - mock mode에서는 실제 Kubernetes resource를 바꾸지 않는다.
 - mock evidence 결과는 실제 Chaos Mesh/Prometheus/Kubernetes real 실험 결과와 구분해서 기록한다.
 
-## 5. 대학원 연구/ETRI 과제 요구 실행 코드
+## 5. 보조/보관 기능 실행 코드
 
-과제 요구의 중심은 AI App 배포/운용, CPU/GPU VM 기반 배치, Ops LLM 선정, Go/LLM 교차 검증이다.
+아래 기능은 개발 과정에서 구현했지만, 현재 대학원 연구 본체에서는 뒤로 뺀다. 별도 과제나 후속 확장에서 AI App 배포/운용, CPU/GPU VM 기반 배치, Ops LLM 선정, Go/LLM 교차 검증이 필요할 때 재사용한다.
 
 ### 5.1 Ops LLM 선정
 
@@ -229,9 +229,9 @@ monitoring_metrics
 - 선택된 CPU/GPU VM 자원에 맞는 Kubernetes 배포 계획을 생성한다.
 - 실제 배포 전 어떤 namespace, deployment, resource request/limit, control action을 사용할지 확인한다.
 
-## 6. 통합 파이프라인 실행 코드
+## 6. 보조/보관: AI 서비스 운영 통합 파이프라인 실행 코드
 
-통합 파이프라인은 대학원 연구와 과제 요구 기능을 하나로 연결한다.
+이 통합 파이프라인은 Ops LLM 선정, CPU/GPU VM 배치, AI 서비스 deployment manifest, 4-Agent 검토를 한 번에 묶어 보여주는 확장 기능이다. 현재 대학원 연구 본체는 Chaos Mesh/AIOpsLab 장애 감시와 Kubernetes recovery action 실험이므로, 이 명령은 부록 또는 후속 과제용으로 분리한다.
 
 ```bash
 aiops-k8s-agents run-service-operations \
@@ -357,12 +357,12 @@ statistics/reward_by_policy.svg
 - reward 정책별 선택 action 비교
 - 발표용 그래프 생성
 
-## 9. 통합 구조의 장점
+## 9. 연구 구조의 장점
 
 | 장점 | 설명 |
 | --- | --- |
-| 연구와 과제의 연결 | 장애 복구 연구와 AI App 배포/운용 과제를 Agent 중심 구조로 연결 |
-| 안전성 강화 | Python Validator와 Go Guard로 이중 안전 검증 |
-| 산출물 명확화 | 요구사항, 기능/API, 설치, 시험, 설계 문서를 분리 |
+| 연구 중심성 | 장애 감시, Agent 판단, 복구 action, 안전 검증, 결과 분석 흐름이 한 프로젝트 안에서 재현됨 |
+| 안전성 강화 | Python Validator를 기본 안전 검증기로 사용하고, 필요하면 Go Guard를 선택적으로 추가 |
+| 산출물 명확화 | 요구사항, 설치, 시험, 실행 코드, 실험 해석 문서를 분리 |
 | 실험 재현성 | CLI, JSON output, runs 로그, statistics 산출물로 재현 가능 |
-| 확장성 | 향후 AWS/Azure/GCP, Swagger, MCP, API Gateway로 확장 가능 |
+| 확장성 | 향후 full evidence fusion, AutoGen multi-round real 실행, baseline/ablation 연구로 확장 가능 |

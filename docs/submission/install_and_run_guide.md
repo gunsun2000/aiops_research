@@ -4,7 +4,7 @@
 
 ## 1. 이 프로젝트가 하는 일
 
-이 저장소는 AIOpsLab 자체가 아니라, AIOpsLab과 Kubernetes 위에서 동작하는 **4-agent AIOps 자동 감시/관리 모듈**입니다.
+이 저장소는 AIOpsLab 자체가 아니라, AIOpsLab과 Kubernetes 위에서 동작하는 **4-Agent AIOps 장애 감시/복구 연구 모듈**입니다.
 
 전체 흐름은 아래와 같습니다.
 
@@ -13,17 +13,18 @@ AIOpsLab / Kubernetes 장애 상태
 -> logs / metrics / alerts 수집
 -> 4개 에이전트가 역할별 판단
 -> action/reward 기반 합의
--> Referee / Validator 안전 검증
--> AIOpsLab API 또는 kubectl action 실행
+-> Python Validator 안전 검증
+-> kubectl mock / dry-run / real action 실행
 -> 결과를 JSON / CSV / Markdown으로 저장
 ```
 
-현재 초기 연구 검증 단계에서는 두 종류의 실험을 사용합니다.
+현재 연구 검증 단계에서는 아래 실험을 구분해서 사용합니다.
 
 | 실험 | 성격 | 목적 |
 | --- | --- | --- |
-| Optional CPU 95% smoke test | 사람이 만든 가짜 alert | Kubernetes `scale deployment` action 생성과 검증 |
+| Optional CPU 95% smoke test | 사람이 만든 가짜 alert | Kubernetes `scale deployment` action 생성과 검증을 빠르게 확인 |
 | AIOpsLab Hotel Reservation detection | AIOpsLab 공식 장애 주입 | 실제 fault injection 환경에서 4-agent 자동 탐지 검증 |
+| Chaos Mesh recovery action experiment | 실제 Kubernetes 장애 주입 | 장애별 recovery action과 reward 정책 비교 |
 
 ## 2. 폴더 구조
 
@@ -43,7 +44,7 @@ AIOpsLab / Kubernetes 장애 상태
 | --- | --- |
 | `ha_agent.py` | AI서비스 HA 지원 에이전트. 장애 위험과 HA 복구 필요성 판단 |
 | `application_agent.py` | AI응용관리 자동화 에이전트. 실제 Kubernetes 응용 제어 액션 생성 |
-| `infra_agent.py` | AI반도체 인프라 운용 자동화 에이전트. Kubernetes replica/deployment 안전성과 CPU/GPU VM 배치 제약 검토 |
+| `infra_agent.py` | AI반도체 인프라 운용 자동화 에이전트. 현재 연구에서는 Kubernetes replica/deployment 안전성과 인프라 수용 가능성 검토 |
 | `cost_agent.py` | 비용 최적화 지원 에이전트. 자원 증가가 비용 정책 안에 있는지 검토 |
 | `coordinator.py` | AI-MCMP 통합 관리 에이전트. 4대 에이전트 결정을 모아 최종 실행 여부 결정 |
 | `agent_decision.py` | 각 에이전트가 내는 action, reward, 승인 여부 구조체 |
@@ -552,9 +553,11 @@ RUNS=3 SLEEP_SECONDS=15 bash scripts/server_aiopslab_repeat_detection.sh
 cat runs/aiopslab_detection_summary.md
 ```
 
-## 15. Agent 중심 통합 파이프라인 실행
+## 15. 보조/보관: Agent 중심 통합 파이프라인 실행
 
-이 명령은 현재 프로젝트의 핵심 기능을 하나의 흐름으로 실행합니다.
+이 절은 Ops LLM 선정, CPU/GPU VM 배치 추천, AI 서비스 deployment manifest 생성을 함께 보여주는 확장 기능입니다. 현재 대학원 연구 본체는 4-Agent 기반 장애 감시/복구 실험이므로, 이 절은 부록 또는 별도 과제에서 재사용하는 보조 문서로 봅니다.
+
+이 명령은 별도 과제 성격의 확장 기능을 하나의 흐름으로 실행합니다.
 
 ```text
 Ops LLM 선정
