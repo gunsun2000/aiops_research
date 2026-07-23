@@ -69,6 +69,24 @@ go test ./...
 
 상세 실행 코드는 [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md)에 정리되어 있습니다.
 
+## Control Plane UI
+
+교수님 시연과 연구실 점검을 위해 FastAPI 기반 웹 Control Plane을 제공합니다.
+이 화면은 외부 frontend build 없이 동작하며, 연구 구조와 최신 실험 근거를 한 곳에서 보여줍니다.
+
+```bash
+python -m pip install -e ".[ui,dev,autogen]"
+aiops-control-plane
+```
+
+브라우저:
+
+```text
+http://127.0.0.1:18080/
+```
+
+상세 가이드는 [docs/submission/control_plane_ui_guide.md](docs/submission/control_plane_ui_guide.md)에 있습니다.
+
 ## 핵심 실험
 
 Autonomous mock 확인:

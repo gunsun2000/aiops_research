@@ -13,6 +13,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+ui = [
+  "fastapi>=0.115",
+  "uvicorn[standard]>=0.30",
+]
 autogen = [
   "autogen-agentchat>=0.4",
   "autogen-ext[openai]>=0.4",
@@ -24,6 +28,7 @@ dev = [
 
 [project.scripts]
 aiops-k8s-agents = "aiops_k8s_agents.cli:main"
+aiops-control-plane = "aiops_k8s_agents.control_plane_web:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
