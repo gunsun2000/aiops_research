@@ -5,7 +5,6 @@
     agents: [],
     latestRun: null,
     mockResult: null,
-    errors: [],
     running: false,
     form: {
       namespace: "online-boutique",
@@ -17,27 +16,24 @@
     },
   };
 
-  function node(tag, attrs, children) {
-    const element = document.createElement(tag);
+  function el(tag, attrs, children) {
+    const node = document.createElement(tag);
     Object.entries(attrs || {}).forEach(([key, value]) => {
-      if (key === "className") element.className = value;
-      else if (key === "text") element.textContent = value;
-      else if (key === "html") element.innerHTML = value;
-      else if (key === "disabled") element.disabled = Boolean(value);
-      else if (key === "value") element.value = value;
+      if (key === "className") node.className = value;
+      else if (key === "text") node.textContent = value;
+      else if (key === "disabled") node.disabled = Boolean(value);
+      else if (key === "value") node.value = value;
       else if (key.startsWith("on") && typeof value === "function") {
-        element.addEventListener(key.slice(2).toLowerCase(), value);
+        node.addEventListener(key.slice(2).toLowerCase(), value);
       } else {
-        element.setAttribute(key, value);
+        node.setAttribute(key, value);
       }
     });
     (children || []).forEach((child) => {
       if (child == null) return;
-      element.appendChild(
-        typeof child === "string" ? document.createTextNode(child) : child
-      );
+      node.appendChild(typeof child === "string" ? document.createTextNode(child) : child);
     });
-    return element;
+    return node;
   }
 
   async function getJson(path) {
@@ -47,187 +43,212 @@
   }
 
   function render() {
-    root.replaceChildren(layout());
+    root.replaceChildren(page());
   }
 
-  function layout() {
-    return node("div", { className: "shell" }, [
-      sidebar(),
-      node("main", { className: "main" }, [
-        header(),
-        metricStrip(),
-        architecturePanel(),
-        node("section", { className: "section grid columns-2 wide-left" }, [
-          agentsPanel(),
-          statusPanel(),
+  function page() {
+    return el("div", { className: "site" }, [
+      header(),
+      el("div", { className: "content-layout" }, [
+        sideRail(),
+        el("main", { className: "content-main" }, [
+          hero(),
+          researchFocus(),
+          systemFlow(),
+          agentsSection(),
+          evidenceSection(),
+          safeDemoSection(),
         ]),
-        node("section", { className: "section grid columns-2" }, [
-          operationPanel(),
-          consensusPanel(),
-        ]),
-        resultsPanel(),
-        footerNote(),
       ]),
-    ]);
-  }
-
-  function sidebar() {
-    const items = [
-      ["Overview", "연구 구조"],
-      ["Agents", "4-Agent 역할"],
-      ["Safety", "안전 검증"],
-      ["Evidence", "실험 근거"],
-      ["Artifacts", "논문 자료"],
-    ];
-    return node("aside", { className: "sidebar" }, [
-      node("div", { className: "brand-mark", text: "AI-MCMP" }),
-      node("h2", { className: "brand-title", text: "AIOps Research Control Plane" }),
-      node("p", {
-        className: "brand-subtitle",
-        text:
-          "4-Agent 기반 Kubernetes 장애 대응 연구를 시연하고, 실험 근거를 한 곳에서 확인하는 인터페이스입니다.",
-      }),
-      node(
-        "nav",
-        { className: "nav-section" },
-        items.map(([en, ko], index) =>
-          node("div", { className: `nav-item ${index === 0 ? "active" : ""}` }, [
-            node("span", { text: en }),
-            node("small", { text: ko }),
-          ])
-        )
-      ),
-      node("div", { className: "side-note" }, [
-        node("strong", { text: "Research boundary" }),
-        node("p", {
-          text:
-            "Real 제어는 CLI에서 명시적으로 실행하고, 이 화면은 연구 설명, mock 판단, 결과 조회를 중심으로 제공합니다.",
-        }),
-      ]),
+      footer(),
     ]);
   }
 
   function header() {
-    const ready = Object.values((state.overview && state.overview.health) || {}).filter(Boolean).length;
-    const total = Object.keys((state.overview && state.overview.health) || {}).length || 4;
-    return node("section", { className: "topbar" }, [
-      node("div", {}, [
-        node("div", { className: "eyebrow", text: "Graduate Research Prototype" }),
-        node("h1", { text: "Safety-Bounded 4-Agent AIOps Framework" }),
-        node("p", {
-          className: "lead",
+    return el("header", { className: "site-header" }, [
+      el("a", { className: "brand", href: "#" }, [
+        el("span", { className: "brand-symbol", text: "AI" }),
+        el("span", {}, [
+          el("strong", { text: "AIOps 4-Agent" }),
+          el("small", { text: "Research Control Plane" }),
+        ]),
+      ]),
+      el("nav", { className: "top-nav" }, [
+        navLink("연구 개요", "#overview"),
+        navLink("시스템 구조", "#framework"),
+        navLink("실험 근거", "#evidence"),
+        navLink("안전 데모", "#demo"),
+      ]),
+    ]);
+  }
+
+  function sideRail() {
+    const health = state.overview ? state.overview.health || {} : {};
+    const readyCount = Object.values(health).filter(Boolean).length;
+    const total = Object.keys(health).length || 4;
+    return el("aside", { className: "side-rail" }, [
+      el("div", { className: "side-card side-identity" }, [
+        el("div", { className: "side-mark", text: "AI-MCMP" }),
+        el("h2", { text: "4-Agent AIOps" }),
+        el("p", {
           text:
-            "장애 주입, 관측 데이터, 역할 기반 Agent 판단, 이중 안전 검증, Kubernetes 복구 실행, 정량 분석을 하나의 연구 프레임워크로 묶었습니다.",
+            "장애 대응 판단, 안전 검증, 실험 근거를 연결하는 연구용 Control Plane입니다.",
         }),
       ]),
-      node("div", { className: "status-stack" }, [
-        statusPill("Repository", "Ready"),
-        statusPill("Evidence files", `${ready}/${total}`),
-        statusPill("UI mode", "safe mock"),
+      el("nav", { className: "side-menu" }, [
+        navLink("연구 개요", "#overview"),
+        navLink("시스템 구조", "#framework"),
+        navLink("실험 근거", "#evidence"),
+        navLink("안전 데모", "#demo"),
+      ]),
+      el("div", { className: "side-card" }, [
+        el("h3", { text: "Research status" }),
+        statusLine("Evidence", `${readyCount}/${total}`),
+        statusLine("Mode", "mock-gated UI"),
+        statusLine("Records", state.latestRun ? `${state.latestRun.outcome_count}` : "0"),
+      ]),
+      el("div", { className: "side-card" }, [
+        el("h3", { text: "Documents" }),
+        sideDoc("실행 코드", "docs/submission/execution_code_guide.md"),
+        sideDoc("시험 가이드", "docs/submission/test_guide.md"),
+        sideDoc("정량 분석", "docs/experiments/recovery_quantitative_analysis_guide.md"),
       ]),
     ]);
   }
 
-  function statusPill(label, value) {
-    return node("div", { className: "status-pill" }, [
-      node("span", { text: label }),
-      node("span", {}, [node("i", { className: "dot" }), document.createTextNode(` ${value}`)]),
+  function sideDoc(label, path) {
+    return el("a", { className: "side-doc", href: `/api/artifacts/${path}`, target: "_blank" }, [
+      el("span", { text: label }),
+      el("small", { text: path.split("/").pop() }),
     ]);
   }
 
-  function metricStrip() {
-    const scenarios = state.overview ? state.overview.scenarios.length : 4;
-    const actions = state.overview ? state.overview.actions.length : 3;
-    const latestCount = state.latestRun ? state.latestRun.outcome_count : 0;
-    const metrics = [
-      ["Agents", "4", "HA / App / Infra / Cost"],
-      ["Fault scenarios", String(scenarios), "Chaos Mesh 기반"],
-      ["Bounded actions", String(actions), "Observe / Restart / Scale"],
-      ["Latest records", String(latestCount), "JSONL 실험 근거"],
-    ];
-    return node(
-      "section",
-      { className: "grid columns-4 section" },
-      metrics.map(([label, value, caption]) =>
-        node("div", { className: "panel metric-card" }, [
-          node("div", { className: "metric-label", text: label }),
-          node("div", { className: "metric-value", text: value }),
-          node("div", { className: "metric-caption", text: caption }),
-        ])
-      )
-    );
+  function navLink(label, href) {
+    return el("a", { href, text: label });
   }
 
-  function architecturePanel() {
+  function hero() {
+    const health = state.overview ? state.overview.health || {} : {};
+    const readyCount = Object.values(health).filter(Boolean).length;
+    const total = Object.keys(health).length || 4;
+    return el("section", { className: "hero", id: "overview" }, [
+      el("div", { className: "hero-copy" }, [
+        el("p", { className: "eyebrow", text: "Kyung Hee University · Graduate Research" }),
+        el("h1", { text: "Safety-Bounded 4-Agent AIOps Framework" }),
+        el("p", {
+          className: "hero-lead",
+          text:
+            "Kubernetes 장애 상황에서 4개의 역할 기반 Agent가 복구 action을 판단하고, 안전 검증을 거친 명령만 실행하도록 설계한 폐쇄 루프 AIOps 연구 프레임워크입니다.",
+        }),
+        el("div", { className: "hero-actions" }, [
+          el("a", { className: "button primary", href: "#framework", text: "구조 보기" }),
+          el("a", { className: "button secondary", href: "#demo", text: "안전 데모 실행" }),
+        ]),
+      ]),
+      el("aside", { className: "hero-status" }, [
+        el("div", { className: "status-label", text: "Current Research State" }),
+        statusLine("Evidence files", `${readyCount}/${total}`),
+        statusLine("Execution modes", "mock / dry-run / real"),
+        statusLine("UI execution", "mock-gated"),
+        statusLine("Latest records", state.latestRun ? `${state.latestRun.outcome_count}` : "not loaded"),
+      ]),
+    ]);
+  }
+
+  function statusLine(label, value) {
+    return el("div", { className: "status-line" }, [
+      el("span", { text: label }),
+      el("strong", { text: value }),
+    ]);
+  }
+
+  function researchFocus() {
+    const items = [
+      [
+        "역할 분리",
+        "HA, 응용관리, 인프라, 비용 Agent가 동일 장애를 서로 다른 관점에서 검토합니다.",
+      ],
+      [
+        "안전 경계",
+        "LLM/Agent 판단을 자유 명령으로 실행하지 않고, 구조화 action과 validator를 통과시킵니다.",
+      ],
+      [
+        "실험 근거",
+        "Chaos Mesh, Prometheus, Kubernetes 결과를 JSONL, CSV, 그래프로 남겨 논문 실험으로 확장합니다.",
+      ],
+    ];
+    return el("section", { className: "section narrow" }, [
+      sectionHeading("연구의 핵심", "첫 화면에서는 복잡한 세부 로그보다 연구 질문과 기여를 먼저 보여줍니다."),
+      el(
+        "div",
+        { className: "focus-grid" },
+        items.map(([title, copy]) =>
+          el("article", { className: "focus-card" }, [
+            el("h3", { text: title }),
+            el("p", { text: copy }),
+          ])
+        )
+      ),
+    ]);
+  }
+
+  function systemFlow() {
     const steps = [
-      ["1", "장애 주입", "AIOpsLab / Chaos Mesh"],
-      ["2", "상태 관측", "Prometheus / K8s snapshot"],
-      ["3", "Agent 판단", "4개 역할별 action 검토"],
-      ["4", "교차 합의", "Action / reward 기반 조정"],
-      ["5", "안전 검증", "Python Validator + optional Go Guard"],
-      ["6", "피드백", "JSONL / CSV / graph 분석"],
+      ["Fault", "AIOpsLab / Chaos Mesh"],
+      ["Observe", "Prometheus + Kubernetes snapshot"],
+      ["Reason", "AI-MCMP Coordinator + 4-Agent"],
+      ["Guard", "Python Validator / optional Go Guard"],
+      ["Act", "kubectl mock, dry-run, real"],
+      ["Report", "reward, recovery, graph"],
     ];
-    return node("section", { className: "panel pad section" }, [
-      sectionTitle("전체 프레임워크 흐름", "장애 대응 판단이 어디에서 생성되고, 어디에서 차단되며, 어떤 결과로 남는지 보여줍니다."),
-      node(
+    return el("section", { className: "section", id: "framework" }, [
+      sectionHeading("시스템 구조", "장애를 입력으로 받아 안전한 복구 action과 실험 결과로 변환하는 흐름입니다."),
+      el(
         "div",
-        { className: "pipeline" },
-        steps.map(([num, title, copy]) =>
-          node("div", { className: "pipeline-step" }, [
-            node("div", { className: "step-index", text: num }),
-            node("div", { className: "step-title", text: title }),
-            node("div", { className: "step-copy", text: copy }),
+        { className: "flow-row" },
+        steps.map(([title, copy], index) =>
+          el("article", { className: "flow-step" }, [
+            el("span", { className: "step-number", text: String(index + 1) }),
+            el("h3", { text: title }),
+            el("p", { text: copy }),
           ])
         )
       ),
-      node("div", { className: "architecture-band" }, [
-        bandItem("Input", "metric / log / event"),
-        bandItem("Reasoning", "Coordinator + 4-Agent"),
-        bandItem("Boundary", "allowlist / replica limit / command validation"),
-        bandItem("Evidence", "run report / statistics / policy ranking"),
+    ]);
+  }
+
+  function agentsSection() {
+    return el("section", { className: "section two-column" }, [
+      el("div", {}, [
+        sectionHeading("4-Agent 판단 구조", "Agent는 하나의 거대한 모델이 아니라 역할이 나뉜 협업 판단 단위입니다."),
+        el(
+          "div",
+          { className: "agent-grid" },
+          state.agents.map((agent) =>
+            el("article", { className: "agent-card" }, [
+              el("span", { className: "agent-code", text: shortAgent(agent.name) }),
+              el("div", {}, [
+                el("h3", { text: agent.label || agent.name }),
+                el("p", { text: agent.role || "No role configured." }),
+                el(
+                  "div",
+                  { className: "tag-row" },
+                  (agent.bounded_actions || []).slice(0, 3).map((action) =>
+                    el("span", { className: "tag", text: action })
+                  )
+                ),
+              ]),
+            ])
+          )
+        ),
       ]),
-    ]);
-  }
-
-  function bandItem(label, value) {
-    return node("div", { className: "band-item" }, [
-      node("span", { text: label }),
-      node("strong", { text: value }),
-    ]);
-  }
-
-  function sectionTitle(title, caption) {
-    return node("div", { className: "section-title-row" }, [
-      node("div", {}, [
-        node("h2", { className: "panel-title", text: title }),
-        caption ? node("p", { className: "section-caption", text: caption }) : null,
+      el("aside", { className: "note-panel" }, [
+        el("h3", { text: "Safety principle" }),
+        el("p", {
+          text:
+            "Agent가 만든 action은 바로 실행되지 않습니다. namespace, deployment, replica 범위, 위험 명령 여부를 검증한 뒤 mock, dry-run, real 단계를 분리합니다.",
+        }),
       ]),
-    ]);
-  }
-
-  function agentsPanel() {
-    return node("section", { className: "panel pad" }, [
-      sectionTitle("4-Agent 역할 구조", "각 Agent는 독립 역할과 허용 action을 갖고, 최종 조치는 합의와 안전 검증 후에만 실행됩니다."),
-      node(
-        "div",
-        { className: "agent-list" },
-        state.agents.map((agent) =>
-          node("article", { className: "agent-row" }, [
-            node("div", { className: "agent-initial", text: shortAgent(agent.name) }),
-            node("div", { className: "agent-body" }, [
-              node("div", { className: "agent-name", text: agent.label || agent.name }),
-              node("div", { className: "agent-role", text: agent.role || "role is not configured" }),
-              node(
-                "div",
-                { className: "tag-row" },
-                (agent.bounded_actions || []).slice(0, 4).map((action) =>
-                  node("span", { className: "tag", text: action })
-                )
-              ),
-            ]),
-          ])
-        )
-      ),
     ]);
   }
 
@@ -235,110 +256,86 @@
     if (name.includes("HA")) return "HA";
     if (name.includes("Application")) return "APP";
     if (name.includes("Infra")) return "INF";
-    if (name.includes("Cost")) return "CST";
+    if (name.includes("Cost")) return "COST";
     return "AG";
   }
 
-  function statusPanel() {
-    const health = (state.overview && state.overview.health) || {};
-    const rows = [
-      ["Agent Registry", health.agent_registry],
-      ["Recovery Config", health.recovery_config],
-      ["Chaos Manifests", health.chaos_manifests],
-      ["Runs Directory", health.runs_dir],
-    ];
-    return node("section", { className: "panel pad" }, [
-      sectionTitle("연구 산출물 상태", "실험 재현에 필요한 설정, 장애 manifest, 실행 결과 폴더를 확인합니다."),
-      node(
-        "table",
-        { className: "decision-table" },
-        [
-          node("thead", {}, [
-            node("tr", {}, [
-              node("th", { text: "Item" }),
-              node("th", { text: "Status" }),
-            ]),
-          ]),
-          node(
-            "tbody",
-            {},
-            rows.map(([label, ok]) =>
-              node("tr", {}, [
-                node("td", { text: label }),
-                node("td", {}, [
-                  node("span", {
-                    className: ok ? "status-text ok" : "status-text warn",
-                    text: ok ? "available" : "missing",
-                  }),
-                ]),
-              ])
+  function evidenceSection() {
+    const latest = state.latestRun;
+    const graphs = latest
+      ? (latest.statistics_files || []).filter((path) => path.endsWith(".png")).slice(0, 2)
+      : [];
+    return el("section", { className: "section two-column", id: "evidence" }, [
+      el("div", { className: "evidence-panel" }, [
+        sectionHeading("실험 근거", "최근 recovery 실험 결과와 정량 산출물을 논문 근거로 정리합니다."),
+        latest
+          ? el("div", {}, [
+              el("div", { className: "run-summary" }, [
+                statusLine("latest run", latest.path),
+                statusLine("outcomes", String(latest.outcome_count)),
+              ]),
+              el("pre", {
+                className: "excerpt",
+                text:
+                  latest.reward_policy_excerpt ||
+                  "Reward policy summary has not been generated yet.",
+              }),
+            ])
+          : el("p", {
+              className: "muted",
+              text: "현재 로컬에는 recovery-action-pilot 결과가 없습니다. 서버에서 실험을 실행하면 이 영역에 결과가 표시됩니다.",
+            }),
+      ]),
+      el("div", { className: "artifact-panel" }, [
+        el("h3", { text: "Research artifacts" }),
+        docLink("실행 코드 가이드", "docs/submission/execution_code_guide.md"),
+        docLink("시험 가이드", "docs/submission/test_guide.md"),
+        docLink("Action / Reward 정책", "docs/design/agent_action_reward_policy.md"),
+        docLink("정량 분석 가이드", "docs/experiments/recovery_quantitative_analysis_guide.md"),
+        graphs.length
+          ? el(
+              "div",
+              { className: "graph-strip" },
+              graphs.map((path) => el("img", { src: `/api/artifacts/${path}`, alt: path }))
             )
-          ),
-        ]
-      ),
-      docsLinks(),
+          : null,
+      ]),
     ]);
   }
 
-  function docsLinks() {
-    const links = [
-      ["실행 가이드", "docs/submission/execution_code_guide.md"],
-      ["시험 가이드", "docs/submission/test_guide.md"],
-      ["Agent 정책", "docs/design/agent_action_reward_policy.md"],
-      ["정량 분석", "docs/experiments/recovery_quantitative_analysis_guide.md"],
-    ];
-    return node(
-      "div",
-      { className: "doc-links" },
-      links.map(([label, path]) =>
-        node("a", { href: `/api/artifacts/${path}`, target: "_blank", rel: "noreferrer" }, [
-          node("span", { text: label }),
-          node("small", { text: path }),
-        ])
-      )
-    );
+  function docLink(label, path) {
+    return el("a", { className: "doc-link", href: `/api/artifacts/${path}`, target: "_blank" }, [
+      el("span", { text: label }),
+      el("small", { text: path }),
+    ]);
   }
 
-  function operationPanel() {
-    return node("section", { className: "panel pad" }, [
-      sectionTitle("Controlled 4-Agent Decision", "실제 클러스터를 건드리지 않는 mock 모드에서 Agent 판단과 최종 명령을 확인합니다."),
-      node("div", { className: "form-grid" }, [
-        field("Namespace", "namespace"),
-        field("Deployment", "deployment"),
-        field("Metric", "metric"),
-        field("Value", "value", "number"),
-        field("Threshold", "threshold", "number"),
-        guardSelect(),
-      ]),
-      node("div", { className: "button-row" }, [
-        node("button", {
-          className: "primary-button",
-          disabled: state.running,
-          onClick: runMockDecision,
-          text: state.running ? "Running decision..." : "Generate 4-Agent Decision",
-        }),
-        node("button", {
-          className: "secondary-button",
-          disabled: true,
-          text: "Real mode is CLI-gated",
-        }),
-      ]),
-      state.mockResult
-        ? node("pre", {
-            className: "result-box section",
-            text: JSON.stringify(state.mockResult.result, null, 2),
-          })
-        : node("p", {
-            className: "helper-text",
-            text: "기본 입력은 안전한 smoke test입니다. real 실행은 별도 CLI와 명시 확인 절차에서 수행합니다.",
+  function safeDemoSection() {
+    return el("section", { className: "section demo-section", id: "demo" }, [
+      sectionHeading("안전한 4-Agent 판단 데모", "실제 클러스터를 건드리지 않는 mock 모드에서 Agent 합의와 최종 명령을 확인합니다."),
+      el("div", { className: "demo-grid" }, [
+        el("form", { className: "demo-form", onSubmit: submitMock }, [
+          field("Namespace", "namespace"),
+          field("Deployment", "deployment"),
+          field("Metric", "metric"),
+          field("Value", "value", "number"),
+          field("Threshold", "threshold", "number"),
+          guardSelect(),
+          el("button", {
+            className: "button primary",
+            disabled: state.running,
+            text: state.running ? "Running..." : "Generate Decision",
           }),
+        ]),
+        decisionResult(),
+      ]),
     ]);
   }
 
   function field(label, key, type) {
-    return node("label", { className: "field" }, [
-      node("span", { text: label }),
-      node("input", {
+    return el("label", { className: "field" }, [
+      el("span", { text: label }),
+      el("input", {
         type: type || "text",
         value: state.form[key],
         onInput: (event) => {
@@ -349,21 +346,67 @@
   }
 
   function guardSelect() {
-    return node("label", { className: "field" }, [
-      node("span", { text: "Guard backend" }),
-      node("select", {
+    return el("label", { className: "field" }, [
+      el("span", { text: "Guard backend" }),
+      el("select", {
         value: state.form.backend,
         onChange: (event) => {
           state.form.backend = event.target.value;
         },
       }, [
-        node("option", { value: "python", text: "Python Validator" }),
-        node("option", { value: "go", text: "Go Guard" }),
+        el("option", { value: "python", text: "Python Validator" }),
+        el("option", { value: "go", text: "Go Guard" }),
       ]),
     ]);
   }
 
-  async function runMockDecision() {
+  function decisionResult() {
+    const reviews = state.mockResult ? state.mockResult.agent_reviews || [] : [];
+    return el("div", { className: "decision-panel" }, [
+      el("h3", { text: "Agent consensus" }),
+      reviews.length
+        ? el("table", { className: "decision-table" }, [
+            el("thead", {}, [
+              el("tr", {}, [
+                el("th", { text: "Agent" }),
+                el("th", { text: "Decision" }),
+                el("th", { text: "Action" }),
+                el("th", { text: "Reward" }),
+              ]),
+            ]),
+            el(
+              "tbody",
+              {},
+              reviews.map((review) =>
+                el("tr", {}, [
+                  el("td", { text: shortAgent(review.agent) }),
+                  el("td", { text: review.decision }),
+                  el("td", { text: review.action }),
+                  el("td", {
+                    text:
+                      review.reward == null || Number.isNaN(review.reward)
+                        ? "-"
+                        : Number(review.reward).toFixed(2),
+                  }),
+                ])
+              )
+            ),
+          ])
+        : el("p", {
+            className: "muted",
+            text: "Generate Decision을 누르면 Agent별 판단 결과가 표시됩니다.",
+          }),
+      state.mockResult
+        ? el("pre", {
+            className: "command-box",
+            text: JSON.stringify(state.mockResult.result, null, 2),
+          })
+        : null,
+    ]);
+  }
+
+  async function submitMock(event) {
+    event.preventDefault();
     state.running = true;
     render();
     try {
@@ -382,10 +425,7 @@
       state.mockResult = await response.json();
     } catch (error) {
       state.mockResult = {
-        result: {
-          valid: false,
-          stderr: String(error.message || error),
-        },
+        result: { valid: false, stderr: String(error.message || error) },
         agent_reviews: [],
       };
     } finally {
@@ -394,119 +434,25 @@
     }
   }
 
-  function consensusPanel() {
-    const reviews = state.mockResult ? state.mockResult.agent_reviews || [] : [];
-    return node("section", { className: "panel pad" }, [
-      sectionTitle("Consensus and Safety Boundary", "Agent별 decision, action, reward를 분리해서 보여줍니다."),
-      reviews.length
-        ? node("table", { className: "decision-table" }, [
-            node("thead", {}, [
-              node("tr", {}, [
-                node("th", { text: "Agent" }),
-                node("th", { text: "Decision" }),
-                node("th", { text: "Action" }),
-                node("th", { text: "Reward" }),
-              ]),
-            ]),
-            node(
-              "tbody",
-              {},
-              reviews.map((review) =>
-                node("tr", {}, [
-                  node("td", { text: review.agent }),
-                  node("td", { text: review.decision }),
-                  node("td", { text: review.action }),
-                  node("td", {
-                    text:
-                      review.reward == null || Number.isNaN(review.reward)
-                        ? "-"
-                        : Number(review.reward).toFixed(2),
-                  }),
-                ])
-              )
-            ),
-          ])
-        : node("div", { className: "empty-state" }, [
-            node("strong", { text: "No decision generated yet" }),
-            node("p", { text: "왼쪽에서 mock 판단을 실행하면 4개 Agent의 합의 결과가 표시됩니다." }),
-          ]),
-      safetyList(),
+  function sectionHeading(title, caption) {
+    return el("div", { className: "section-heading" }, [
+      el("h2", { text: title }),
+      caption ? el("p", { text: caption }) : null,
     ]);
   }
 
-  function safetyList() {
-    const items = [
-      "namespace / deployment allowlist",
-      "replica min-max bound",
-      "dangerous command rejection",
-      "mock, dry-run, real mode separation",
-    ];
-    return node(
-      "div",
-      { className: "safety-list" },
-      items.map((item) => node("span", { text: item }))
-    );
-  }
-
-  function resultsPanel() {
-    const latest = state.latestRun;
-    const graphs = latest
-      ? (latest.statistics_files || []).filter((path) => path.endsWith(".png")).slice(0, 4)
-      : [];
-    return node("section", { className: "section grid columns-2" }, [
-      node("div", { className: "panel pad" }, [
-        sectionTitle("Latest Recovery Experiment", "최근 recovery-action-pilot 결과와 reward policy ranking을 확인합니다."),
-        latest
-          ? node("div", {}, [
-              node("div", { className: "run-meta" }, [
-                node("span", { text: latest.path }),
-                node("strong", { text: `${latest.outcome_count} outcomes` }),
-              ]),
-              node("pre", {
-                className: "markdown-excerpt section",
-                text:
-                  latest.reward_policy_excerpt ||
-                  "Reward policy summary has not been generated yet.",
-              }),
-            ])
-          : node("p", { className: "lead", text: "아직 recovery-action-pilot 실행 결과가 없습니다." }),
-      ]),
-      node("div", { className: "panel pad" }, [
-        sectionTitle("Quantitative Artifacts", "성공률, 복구 시간, reward 차이를 논문용 근거로 정리합니다."),
-        graphs.length
-          ? node(
-              "div",
-              { className: "graph-list" },
-              graphs.map((path) =>
-                node("figure", { className: "graph-card" }, [
-                  node("img", { src: `/api/artifacts/${path}`, alt: path }),
-                  node("figcaption", { className: "graph-caption", text: path }),
-                ])
-              )
-            )
-          : node("p", {
-              className: "lead",
-              text: "scripts/server_recovery_statistics.sh 실행 후 PNG/SVG/CSV/JSON 결과가 표시됩니다.",
-            }),
-      ]),
+  function footer() {
+    return el("footer", { className: "site-footer" }, [
+      el("span", { text: "AIOps 4-Agent Kubernetes Recovery Research" }),
+      el("span", { text: "Real-mode experiments remain CLI-gated for safety." }),
     ]);
-  }
-
-  function footerNote() {
-    return node("p", {
-      className: "footer-note",
-      text:
-        "이 UI는 연구 설명과 안전한 mock 판단 확인을 위한 Control Plane입니다. 실제 Kubernetes real 실험은 README의 CLI 절차와 명시적 확인 변수를 통해 수행합니다.",
-    });
   }
 
   async function boot() {
     root.replaceChildren(
-      node("main", { className: "main" }, [
-        node("section", { className: "panel pad loading-panel" }, [
-          node("h1", { text: "AIOps Research Control Plane" }),
-          node("p", { className: "lead", text: "연구 상태와 실험 근거를 불러오는 중입니다." }),
-        ]),
+      el("main", { className: "loading" }, [
+        el("h1", { text: "AIOps Research Control Plane" }),
+        el("p", { text: "연구 상태를 불러오는 중입니다." }),
       ])
     );
     try {
@@ -519,7 +465,7 @@
       state.agents = agents.agents || [];
       state.latestRun = latest.available ? latest.run : null;
     } catch (error) {
-      state.errors.push(String(error.message || error));
+      console.error(error);
     }
     render();
   }

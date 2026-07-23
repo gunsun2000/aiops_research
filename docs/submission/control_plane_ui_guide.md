@@ -66,15 +66,15 @@ aiops-control-plane
 
 | 화면 | 의미 |
 | --- | --- |
-| Header | 연구 목적, 현재 evidence 파일 상태, 기본 실행 모드 |
-| Metric Strip | Agent 수, 장애 시나리오 수, bounded action 수, 최근 실험 record 수 |
-| Framework Flow | 장애 주입부터 피드백 분석까지의 end-to-end 흐름 |
-| 4-Agent 역할 구조 | HA, 응용관리, 인프라, 비용 Agent의 역할과 허용 action |
-| 연구 산출물 상태 | Agent registry, recovery config, chaos manifest, runs 폴더 존재 여부 |
-| Controlled Decision | 실제 클러스터를 건드리지 않는 mock 4-Agent 판단 실행 |
-| Consensus Boundary | Agent별 decision, action, reward 표 |
-| Latest Recovery Experiment | 최근 36회 recovery-action-pilot 결과와 reward policy ranking |
-| Quantitative Artifacts | 성공률, 복구 시간, reward 그래프 |
+| Left Side Panel | 연구 메뉴, 현재 상태, 주요 문서 링크 |
+| Hero | 연구 제목, 핵심 문제, 시연용 진입 버튼 |
+| 연구의 핵심 | 역할 분리, 안전 경계, 실험 근거를 3개 카드로 요약 |
+| 시스템 구조 | 장애 주입부터 피드백 분석까지의 end-to-end 흐름 |
+| 4-Agent 판단 구조 | HA, 응용관리, 인프라, 비용 Agent의 역할과 허용 action |
+| 실험 근거 | 최근 recovery-action-pilot 결과와 reward policy ranking |
+| Research Artifacts | 실행 가이드, 시험 가이드, 정책 문서, 정량 분석 문서 링크 |
+| 안전한 판단 데모 | 실제 클러스터를 건드리지 않는 mock 4-Agent 판단 실행 |
+| Agent Consensus | Agent별 decision, action, reward 표 |
 
 ## 안전 정책
 
