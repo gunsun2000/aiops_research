@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -78,6 +79,34 @@ def test_default_profile_selection_rejects_missing_default():
 
     with pytest.raises(ValueError, match=DEFAULT_PROTOCOL_PROFILE_ID):
         select_default_protocol_profile(profiles)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [("max_negotiation_rounds", 3), ("max_replan_attempts", 0)],
+)
+def test_default_profile_selection_rejects_mutated_round_limits(field, value):
+    profiles = load_protocol_profiles("config/protocol_profiles")
+    profiles[DEFAULT_PROTOCOL_PROFILE_ID] = replace(
+        profiles[DEFAULT_PROTOCOL_PROFILE_ID], **{field: value}
+    )
+
+    with pytest.raises(ValueError, match=field):
+        select_default_protocol_profile(profiles)
+
+
+def test_non_default_profile_selection_remains_configurable():
+    profiles = load_protocol_profiles("config/protocol_profiles")
+    non_default_id = "four-agent-unanimous-v1"
+    profiles[non_default_id] = replace(
+        profiles[non_default_id], max_negotiation_rounds=3, max_replan_attempts=0
+    )
+
+    selected = select_default_protocol_profile(profiles)
+
+    assert selected.profile_id == DEFAULT_PROTOCOL_PROFILE_ID
+    assert profiles[non_default_id].max_negotiation_rounds == 3
+    assert profiles[non_default_id].max_replan_attempts == 0
 
 
 @pytest.mark.parametrize(

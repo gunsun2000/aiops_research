@@ -333,8 +333,20 @@ def select_default_protocol_profile(
     profiles: Mapping[str, ResearchProtocolProfile],
 ) -> ResearchProtocolProfile:
     try:
-        return profiles[DEFAULT_PROTOCOL_PROFILE_ID]
+        profile = profiles[DEFAULT_PROTOCOL_PROFILE_ID]
     except KeyError as exc:
         raise ValueError(
             "default protocol profile is missing: " + DEFAULT_PROTOCOL_PROFILE_ID
         ) from exc
+
+    if profile.max_negotiation_rounds != 2:
+        raise ValueError(
+            "default protocol profile max_negotiation_rounds must be 2; got "
+            + str(profile.max_negotiation_rounds)
+        )
+    if profile.max_replan_attempts != 1:
+        raise ValueError(
+            "default protocol profile max_replan_attempts must be 1; got "
+            + str(profile.max_replan_attempts)
+        )
+    return profile
