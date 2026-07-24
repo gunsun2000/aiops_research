@@ -85,6 +85,9 @@ def test_coordinator_report_records_profile_identity_and_active_runtimes():
     assert report["agent_runtimes"] == {
         agent: "deterministic" for agent in report["active_agents"]
     }
+    assert report["metadata"]["controller"] == (
+        "mutual_supervision_deterministic"
+    )
 
 
 def test_disabled_cost_agent_is_not_called_or_recorded():

@@ -58,7 +58,11 @@ from aiops_k8s_agents.models import (
     RecoveryAction,
     RecoveryActionKind,
 )
-from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
+from aiops_k8s_agents.mutual_supervision import (
+    MutualSupervisionCoordinator,
+    mutual_supervision_controller_name,
+    resolve_mutual_supervision_protocol,
+)
 from aiops_k8s_agents.mutual_supervision_policy import (
     load_mutual_supervision_policy,
 )
@@ -482,7 +486,12 @@ def _add_autogen_transcript_argument(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def main(argv: Sequence[str] | None = None) -> int:
+def main(
+    argv: Sequence[str] | None = None,
+    *,
+    decision_provider: DecisionProvider | None = None,
+    model_client: Any | None = None,
+) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
@@ -564,7 +573,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0 if report["valid"] else 2
 
     if args.command == "mutual-supervision-run":
-        report = run_mutual_supervision_cli(args)
+        report = run_mutual_supervision_cli(
+            args,
+            decision_provider=decision_provider,
+            model_client=model_client,
+        )
         _emit_json_report(args, report)
         if report.get("final_status") == "runtime_unavailable":
             return 1
@@ -847,11 +860,16 @@ def run_mutual_supervision_cli(
             stderr=str(exc),
         )
 
+    policy = (
+        None
+        if protocol is not None
+        else load_mutual_supervision_policy(args.policy)
+    )
+    effective_protocol = resolve_mutual_supervision_protocol(protocol, policy)
     uses_autogen = (
-        protocol is not None
-        and any(
+        any(
             binding.runtime == AUTOGEN_RUNTIME
-            for binding in protocol.enabled_agents
+            for binding in effective_protocol.enabled_agents
         )
     )
     if uses_autogen and decision_provider is None and model_client is None:
@@ -862,28 +880,20 @@ def run_mutual_supervision_cli(
                 "the selected protocol requires an explicitly supplied "
                 "AutoGen model client or decision provider"
             ),
-            protocol=protocol,
+            protocol=effective_protocol,
         )
 
     if args.mode == ExecutionMode.REAL.value and args.evidence_source != "kubernetes":
-        return {
-            "command": "mutual-supervision-run",
-            "valid": False,
-            "mode": args.mode,
-            "final_status": "configuration_rejected",
-            "stderr": (
+        return _mutual_supervision_boundary_failure(
+            args,
+            final_status="configuration_rejected",
+            stderr=(
                 "real mutual supervision requires kubernetes evidence via "
                 "--evidence-source kubernetes; "
                 "fake evidence cannot verify a real recovery"
             ),
-            "human_review_required": True,
-        }
-
-    policy = (
-        None
-        if protocol is not None
-        else load_mutual_supervision_policy(args.policy)
-    )
+            protocol=effective_protocol,
+        )
     adapter_registry = None
     if uses_autogen:
         try:
@@ -896,7 +906,7 @@ def run_mutual_supervision_cli(
                 args,
                 final_status="runtime_unavailable",
                 stderr=str(exc),
-                protocol=protocol,
+                protocol=effective_protocol,
             )
     evidence_provider = _evidence_provider_from_args(args)
     event_store = None
@@ -939,7 +949,7 @@ def run_mutual_supervision_cli(
                 )
             ),
             policy=policy,
-            protocol=protocol,
+            protocol=effective_protocol,
             adapter_registry=adapter_registry,
             mode=ExecutionMode(args.mode),
             backend=ExecutionBackend(args.guard_backend),
@@ -1039,6 +1049,9 @@ def _mutual_supervision_boundary_failure(
         "human_review_required": True,
         "metadata": {
             "coordinator": "AI-MCMP",
+            "controller": mutual_supervision_controller_name(
+                agent_runtimes.values()
+            ),
             "runtime_boundary": final_status,
             "agent_runtimes": agent_runtimes,
         },

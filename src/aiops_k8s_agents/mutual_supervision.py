@@ -4,7 +4,7 @@ from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict, dataclass, field, replace
 import math
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from aiops_k8s_agents.agent_adapters import (
     AgentAdapter,
@@ -102,6 +102,32 @@ class PostReviewFailure(AdapterOutputError):
         self.reviews = tuple(reviews)
 
 
+def resolve_mutual_supervision_protocol(
+    protocol: ResearchProtocolProfile | None,
+    policy: MutualSupervisionPolicy | None,
+) -> ResearchProtocolProfile:
+    if protocol is not None:
+        return protocol
+    default_protocol = load_research_protocol(
+        Path(__file__).resolve().parents[2]
+        / "config"
+        / "protocol_profiles"
+        / "four-agent-role-veto-v1.json"
+    )
+    if policy is None:
+        return default_protocol
+    return _profile_with_legacy_policy(default_protocol, policy)
+
+
+def mutual_supervision_controller_name(runtimes: Iterable[str]) -> str:
+    active_runtimes = set(runtimes)
+    if not active_runtimes or active_runtimes == {"deterministic"}:
+        return "mutual_supervision_deterministic"
+    if active_runtimes == {"autogen-round-robin"}:
+        return "mutual_supervision_autogen"
+    return "mutual_supervision_hybrid"
+
+
 @dataclass
 class MutualSupervisionCoordinator:
     validator: CommandValidator
@@ -126,18 +152,10 @@ class MutualSupervisionCoordinator:
             self.mode = ExecutionMode(self.mode)
         if isinstance(self.backend, str):
             self.backend = ExecutionBackend(self.backend)
-        if self.protocol is None:
-            default_protocol = load_research_protocol(
-                Path(__file__).resolve().parents[2]
-                / "config"
-                / "protocol_profiles"
-                / "four-agent-role-veto-v1.json"
-            )
-            self.protocol = (
-                _profile_with_legacy_policy(default_protocol, self.policy)
-                if self.policy is not None
-                else default_protocol
-            )
+        self.protocol = resolve_mutual_supervision_protocol(
+            self.protocol,
+            self.policy,
+        )
         if self.adapter_registry is None:
             self.adapter_registry = build_default_agent_adapter_registry()
         self.protocol.validate_integrity()
@@ -183,6 +201,7 @@ class MutualSupervisionCoordinator:
         threshold: float,
     ) -> dict[str, Any]:
         run_id = new_trace_id("run")
+        self._begin_adapter_run(run_id)
         self._record(
             "protocol_profiles",
             {
@@ -961,7 +980,9 @@ class MutualSupervisionCoordinator:
             "human_review_required": human_review_required,
             "metadata": {
                 "coordinator": "AI-MCMP",
-                "controller": "mutual_supervision_deterministic",
+                "controller": mutual_supervision_controller_name(
+                    adapter.runtime for adapter in self.adapters.values()
+                ),
                 "safety": "bounded_structured_action",
                 "guard_backend": self.backend.value,
                 "protocol_profile": self._protocol_identity(),
@@ -977,6 +998,13 @@ class MutualSupervisionCoordinator:
             "version": self.protocol.version,
             "config_hash": self.protocol.config_hash,
         }
+
+    def _begin_adapter_run(self, run_id: str) -> None:
+        protocol_identity = self._protocol_identity()
+        for adapter in self.adapters.values():
+            begin_run = getattr(adapter, "begin_run", None)
+            if callable(begin_run):
+                begin_run(run_id, protocol_identity)
 
     def _protocol_snapshot(self) -> dict[str, Any]:
         assert self.protocol is not None
@@ -1069,7 +1097,9 @@ class MutualSupervisionCoordinator:
             "human_review_required": self.protocol.human_review_on_failure,
             "metadata": {
                 "coordinator": "AI-MCMP",
-                "controller": "mutual_supervision_profile_driven",
+                "controller": mutual_supervision_controller_name(
+                    adapter.runtime for adapter in self.adapters.values()
+                ),
                 "safety": "bounded_structured_action",
                 "guard_backend": self.backend.value,
                 "protocol_profile": self._protocol_identity(),

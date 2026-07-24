@@ -57,33 +57,29 @@ AUTOGEN_AGENT_CAPABILITIES = {
     "AISemiconductorInfraOpsAgent": ("review", "post_review"),
     "CostOptimizationAgent": ("review", "post_review"),
 }
+AUTOGEN_ACTION_APPROVAL = {
+    "AIServiceHASupportAgent": {
+        "ha_scale_out_required": True,
+        "ha_recovery_required": True,
+        "ha_no_action": False,
+    },
+    "AIApplicationManagementAgent": {
+        "app_observe_only": True,
+        "app_rollout_restart": True,
+        "app_scale_deployment": True,
+    },
+    "AISemiconductorInfraOpsAgent": {
+        "infra_capacity_approved": True,
+        "infra_capacity_rejected": False,
+    },
+    "CostOptimizationAgent": {
+        "cost_budget_approved": True,
+        "cost_budget_rejected": False,
+    },
+}
 AUTOGEN_ALLOWED_ACTIONS = {
-    "AIServiceHASupportAgent": frozenset(
-        {
-            "ha_scale_out_required",
-            "ha_recovery_required",
-            "ha_no_action",
-        }
-    ),
-    "AIApplicationManagementAgent": frozenset(
-        {
-            "app_observe_only",
-            "app_rollout_restart",
-            "app_scale_deployment",
-        }
-    ),
-    "AISemiconductorInfraOpsAgent": frozenset(
-        {
-            "infra_capacity_approved",
-            "infra_capacity_rejected",
-        }
-    ),
-    "CostOptimizationAgent": frozenset(
-        {
-            "cost_budget_approved",
-            "cost_budget_rejected",
-        }
-    ),
+    agent: frozenset(action_approval)
+    for agent, action_approval in AUTOGEN_ACTION_APPROVAL.items()
 }
 
 AUTOGEN_AGENT_ALIASES = {
@@ -181,6 +177,12 @@ def parse_autogen_decision(payload: Any, expected_agent: str) -> AgentDecision:
     if data["action"] not in AUTOGEN_ALLOWED_ACTIONS.get(agent, frozenset()):
         raise AutoGenDecisionError(
             f"unsupported AutoGen action for {agent}: {data['action']}"
+        )
+    required_approval = AUTOGEN_ACTION_APPROVAL[agent][data["action"]]
+    if data["approved"] is not required_approval:
+        raise AutoGenDecisionError(
+            f"AutoGen action {data['action']} contradicts approved="
+            f"{data['approved']}; required approved={required_approval}"
         )
 
     return AgentDecision(
@@ -309,6 +311,9 @@ class AutoGenRoundRobinDecisionProvider:
     model_client: Any
     transcript_lines: list[str] = field(default_factory=list, init=False)
 
+    def preflight(self) -> None:
+        self._build_team()
+
     async def __call__(self, alert: AlertEvent) -> list[AgentDecision]:
         team = self._build_team()
         result = await team.run(task=build_autogen_task(alert))
@@ -387,6 +392,24 @@ class AutoGenProtocolDecisionSession:
         init=False,
         repr=False,
     )
+    _run_id: str | None = field(default=None, init=False, repr=False)
+    _protocol_identity: tuple[tuple[str, str], ...] = field(
+        default=(),
+        init=False,
+        repr=False,
+    )
+
+    def begin_run(
+        self,
+        run_id: str,
+        protocol_identity: Mapping[str, str],
+    ) -> None:
+        identity = tuple(sorted(protocol_identity.items()))
+        if self._run_id == run_id and self._protocol_identity == identity:
+            return
+        self._cache.clear()
+        self._run_id = run_id
+        self._protocol_identity = identity
 
     def decision_for(
         self,
@@ -409,6 +432,10 @@ class AutoGenProtocolDecisionSession:
         metric: str,
         threshold: float,
     ) -> dict[str, AgentDecision]:
+        if self._run_id is None:
+            raise AutoGenDecisionError(
+                "AutoGen decision session must begin a coordinator run"
+            )
         normalized_metric = _normalize_metric(metric)
         value = evidence.primary_metric_value(normalized_metric)
         if value is None:
@@ -416,12 +443,15 @@ class AutoGenProtocolDecisionSession:
                 f"missing evidence for AutoGen metric: {normalized_metric}"
             )
         key = (
-            evidence.namespace,
-            evidence.deployment,
+            self._run_id,
+            self._protocol_identity,
+            json.dumps(
+                evidence.to_summary(),
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
             normalized_metric,
-            float(value),
             float(threshold),
-            tuple(sorted(evidence.metric_values.items())),
         )
         cached = self._cache.get(key)
         if cached is not None:
@@ -468,6 +498,13 @@ class AutoGenProtocolAdapter:
     @property
     def capabilities(self) -> tuple[str, ...]:
         return self.binding.capabilities
+
+    def begin_run(
+        self,
+        run_id: str,
+        protocol_identity: Mapping[str, str],
+    ) -> None:
+        self.session.begin_run(run_id, protocol_identity)
 
     def diagnose(
         self,
@@ -628,9 +665,11 @@ def build_autogen_agent_adapter_registry(
     if model_client is not None and decision_provider is not None:
         raise ValueError("supply either model_client or decision_provider, not both")
     if decision_provider is None and model_client is not None:
-        decision_provider = AutoGenRoundRobinDecisionProvider(
+        model_provider = AutoGenRoundRobinDecisionProvider(
             model_client=model_client
         )
+        model_provider.preflight()
+        decision_provider = model_provider
     if decision_provider is None:
         return registry
 

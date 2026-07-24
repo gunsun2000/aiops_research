@@ -1,4 +1,5 @@
 import json
+import builtins
 from pathlib import Path
 
 from aiops_k8s_agents.models import CommandResult
@@ -544,6 +545,48 @@ def test_cli_autogen_profile_without_provider_returns_runtime_unavailable(capsys
     assert set(output["agent_runtimes"].values()) == {
         "autogen-round-robin"
     }
+    assert output["metadata"]["controller"] == "mutual_supervision_autogen"
+
+
+def test_cli_model_client_preflight_fails_before_evidence_collection(
+    monkeypatch,
+    capsys,
+):
+    real_import = builtins.__import__
+
+    def import_without_autogen(name, *args, **kwargs):
+        if name.startswith("autogen_agentchat"):
+            raise ImportError("simulated missing AutoGen dependency")
+        return real_import(name, *args, **kwargs)
+
+    def fail_if_evidence_is_constructed(_args):
+        raise AssertionError("evidence constructed before AutoGen preflight")
+
+    monkeypatch.setattr(builtins, "__import__", import_without_autogen)
+    monkeypatch.setattr(
+        cli,
+        "_evidence_provider_from_args",
+        fail_if_evidence_is_constructed,
+    )
+
+    exit_code = main(
+        [
+            "mutual-supervision-run",
+            "--mode",
+            "mock",
+            "--protocol-profile",
+            "four-agent-autogen-v1",
+            *_mutual_supervision_alert_args(),
+        ],
+        model_client=object(),
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert output["final_status"] == "runtime_unavailable"
+    assert output["human_review_required"] is True
+    assert output["executed_actions"] == []
+    assert output["execution_result"]["command"] == ""
 
 
 def test_cli_mutual_supervision_real_mode_rejects_fake_evidence(capsys):
@@ -576,6 +619,13 @@ def test_cli_mutual_supervision_real_mode_rejects_fake_evidence(capsys):
     assert output["valid"] is False
     assert output["final_status"] == "configuration_rejected"
     assert "kubernetes evidence" in output["stderr"]
+    assert output["protocol_profile"]["profile_id"] == (
+        "four-agent-role-veto-v1"
+    )
+    assert set(output["agent_runtimes"].values()) == {"deterministic"}
+    assert output["metadata"]["controller"] == (
+        "mutual_supervision_deterministic"
+    )
 
 
 def _mutual_supervision_alert_args():

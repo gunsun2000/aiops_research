@@ -1,4 +1,5 @@
 import asyncio
+import builtins
 import json
 
 import pytest
@@ -12,12 +13,15 @@ from aiops_k8s_agents.autogen_groupchat import (
     parse_autogen_decision,
 )
 from aiops_k8s_agents.agent_registry import AgentRegistryError
-from aiops_k8s_agents.evidence import FakeEvidenceProvider
+from aiops_k8s_agents.evidence import EvidenceSnapshot, FakeEvidenceProvider
 from aiops_k8s_agents.executor import ExecutionMode
 from aiops_k8s_agents.models import AlertEvent
 from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
 from aiops_k8s_agents.recovery_monitor import FakeRecoveryMonitor
-from aiops_k8s_agents.research_protocol import load_research_protocol
+from aiops_k8s_agents.research_protocol import (
+    ResearchProtocolProfile,
+    load_research_protocol,
+)
 from aiops_k8s_agents.validator import CommandValidationError
 from aiops_k8s_agents.validator import CommandValidator
 
@@ -136,6 +140,65 @@ def test_parse_autogen_decision_rejects_malformed_schema(payload):
         )
 
 
+def test_autogen_action_approval_semantics_are_authoritative_per_agent():
+    assert autogen_groupchat.AUTOGEN_ACTION_APPROVAL == {
+        "AIServiceHASupportAgent": {
+            "ha_scale_out_required": True,
+            "ha_recovery_required": True,
+            "ha_no_action": False,
+        },
+        "AIApplicationManagementAgent": {
+            "app_observe_only": True,
+            "app_rollout_restart": True,
+            "app_scale_deployment": True,
+        },
+        "AISemiconductorInfraOpsAgent": {
+            "infra_capacity_approved": True,
+            "infra_capacity_rejected": False,
+        },
+        "CostOptimizationAgent": {
+            "cost_budget_approved": True,
+            "cost_budget_rejected": False,
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    ("agent", "action", "contradictory_approved"),
+    [
+        ("AIServiceHASupportAgent", "ha_scale_out_required", False),
+        ("AIServiceHASupportAgent", "ha_recovery_required", False),
+        ("AIServiceHASupportAgent", "ha_no_action", True),
+        ("AIApplicationManagementAgent", "app_observe_only", False),
+        ("AIApplicationManagementAgent", "app_rollout_restart", False),
+        ("AIApplicationManagementAgent", "app_scale_deployment", False),
+        ("AISemiconductorInfraOpsAgent", "infra_capacity_approved", False),
+        ("AISemiconductorInfraOpsAgent", "infra_capacity_rejected", True),
+        ("CostOptimizationAgent", "cost_budget_approved", False),
+        ("CostOptimizationAgent", "cost_budget_rejected", True),
+    ],
+)
+def test_parse_autogen_decision_rejects_contradictory_action_approval_pairs(
+    agent,
+    action,
+    contradictory_approved,
+):
+    with pytest.raises(
+        autogen_groupchat.AutoGenDecisionError,
+        match="contradicts",
+    ):
+        parse_autogen_decision(
+            {
+                "agent": agent,
+                "action": action,
+                "reward": 0.5,
+                "approved": contradictory_approved,
+                "reason": "Contradictory structured output must fail closed.",
+            },
+            expected_agent=agent,
+        )
+
+
 def test_decision_schema_is_strict_openai_response_format_compatible():
     schema = _decision_schema().model_json_schema()
 
@@ -200,6 +263,32 @@ def test_autogen_runtime_is_registered_only_with_explicit_provider():
     }
 
 
+def test_model_client_preflights_autogen_but_fake_provider_stays_offline(
+    monkeypatch,
+):
+    real_import = builtins.__import__
+
+    def import_without_autogen(name, *args, **kwargs):
+        if name.startswith("autogen_agentchat"):
+            raise ImportError("simulated missing AutoGen dependency")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", import_without_autogen)
+
+    with pytest.raises(RuntimeError, match="AutoGen extras are not installed"):
+        autogen_groupchat.build_autogen_agent_adapter_registry(
+            model_client=object()
+        )
+
+    async def fake_provider(_alert):
+        return _autogen_decisions(replicas=3)
+
+    registry = autogen_groupchat.build_autogen_agent_adapter_registry(
+        decision_provider=fake_provider
+    )
+    assert "autogen-round-robin" in registry.factories
+
+
 def test_autogen_profile_normalizes_identity_and_cannot_bypass_validator():
     class FakeProvider:
         def __init__(self):
@@ -252,6 +341,7 @@ def test_autogen_profile_normalizes_identity_and_cannot_bypass_validator():
     assert set(report["agent_runtimes"].values()) == {
         "autogen-round-robin"
     }
+    assert report["metadata"]["controller"] == "mutual_supervision_autogen"
     assert all(
         decision["run_id"] == report["run_id"]
         and decision["policy_version"] == profile.version
@@ -264,6 +354,231 @@ def test_autogen_profile_normalizes_identity_and_cannot_bypass_validator():
         and review["reviewer"] in report["active_agents"]
         for review in report["peer_reviews"]
     )
+
+
+def test_hybrid_profile_reports_mixed_runtime_controller():
+    async def fake_provider(_alert):
+        return _autogen_decisions(replicas=99)
+
+    source = load_research_protocol(
+        "config/protocol_profiles/four-agent-autogen-v1.json"
+    ).to_canonical_dict()
+    source.pop("config_hash")
+    source["profile_id"] = "four-agent-hybrid-test-v1"
+    source["agents"][0]["implementation_id"] = "deterministic-ha"
+    source["agents"][0]["runtime"] = "deterministic"
+    profile = ResearchProtocolProfile.from_dict(source)
+    coordinator = MutualSupervisionCoordinator(
+        validator=CommandValidator(
+            allowed_namespaces={"online-boutique"},
+            allowed_deployments={"paymentservice"},
+            min_replicas=1,
+            max_replicas=5,
+        ),
+        evidence_provider=FakeEvidenceProvider.cpu_saturation(
+            namespace="online-boutique",
+            deployment="paymentservice",
+            value=95.0,
+        ),
+        recovery_monitor=FakeRecoveryMonitor(),
+        mode=ExecutionMode.MOCK,
+        protocol=profile,
+        adapter_registry=(
+            autogen_groupchat.build_autogen_agent_adapter_registry(
+                decision_provider=fake_provider
+            )
+        ),
+    )
+
+    report = coordinator.run(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+    )
+
+    assert set(report["agent_runtimes"].values()) == {
+        "deterministic",
+        "autogen-round-robin",
+    }
+    assert report["metadata"]["controller"] == "mutual_supervision_hybrid"
+
+
+def test_autogen_provider_cache_isolated_between_sequential_runs():
+    class SequentialEvidenceProvider:
+        def __init__(self):
+            self.snapshots = [
+                EvidenceSnapshot(
+                    namespace="online-boutique",
+                    deployment="paymentservice",
+                    metric_values={"cpu": 95.0},
+                    events=("first-run-event",),
+                    log_summary="first-run-log",
+                    source="sequential-fake",
+                ),
+                EvidenceSnapshot(
+                    namespace="online-boutique",
+                    deployment="paymentservice",
+                    metric_values={"cpu": 95.0},
+                    events=("second-run-event",),
+                    log_summary="second-run-log",
+                    source="sequential-fake",
+                ),
+            ]
+            self.call_count = 0
+
+        def collect(self, namespace, deployment):
+            snapshot = self.snapshots[self.call_count]
+            self.call_count += 1
+            assert snapshot.namespace == namespace
+            assert snapshot.deployment == deployment
+            return snapshot
+
+    class SequentialDecisionProvider:
+        def __init__(self):
+            self.alerts = []
+
+        async def __call__(self, alert):
+            self.alerts.append(alert)
+            decisions = _autogen_decisions(replicas=99)
+            if len(self.alerts) == 2:
+                decisions[-1] = parse_autogen_decision(
+                    {
+                        "agent": "CostOptimizationAgent",
+                        "action": "cost_budget_rejected",
+                        "reward": -0.8,
+                        "approved": False,
+                        "reason": "Second-run evidence exceeds the cost boundary.",
+                    },
+                    expected_agent="CostOptimizationAgent",
+                )
+            return decisions
+
+    evidence_provider = SequentialEvidenceProvider()
+    decision_provider = SequentialDecisionProvider()
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-autogen-v1.json"
+    )
+    coordinator = MutualSupervisionCoordinator(
+        validator=CommandValidator(
+            allowed_namespaces={"online-boutique"},
+            allowed_deployments={"paymentservice"},
+            min_replicas=1,
+            max_replicas=5,
+        ),
+        evidence_provider=evidence_provider,
+        recovery_monitor=FakeRecoveryMonitor(),
+        mode=ExecutionMode.MOCK,
+        protocol=profile,
+        adapter_registry=(
+            autogen_groupchat.build_autogen_agent_adapter_registry(
+                decision_provider=decision_provider
+            )
+        ),
+    )
+
+    first_report = coordinator.run(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+    )
+    second_report = coordinator.run(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+    )
+
+    assert [alert.message for alert in decision_provider.alerts] == [
+        "first-run-log",
+        "second-run-log",
+    ]
+    assert first_report["run_id"] != second_report["run_id"]
+    assert any(
+        review["reviewer"] == "CostOptimizationAgent"
+        and review["verdict"] == "approve"
+        for review in first_report["peer_reviews"]
+    )
+    assert any(
+        review["reviewer"] == "CostOptimizationAgent"
+        and review["verdict"] == "veto"
+        for review in second_report["peer_reviews"]
+    )
+    assert first_report["executed_actions"] == []
+    assert second_report["executed_actions"] == []
+
+
+@pytest.mark.parametrize(
+    ("agent", "action", "approved"),
+    [
+        ("AIServiceHASupportAgent", "ha_no_action", True),
+        ("AIApplicationManagementAgent", "app_scale_deployment", False),
+        ("AISemiconductorInfraOpsAgent", "infra_capacity_rejected", True),
+        ("CostOptimizationAgent", "cost_budget_rejected", True),
+    ],
+)
+def test_contradictory_provider_output_safe_stops_without_approval(
+    agent,
+    action,
+    approved,
+):
+    async def contradictory_provider(_alert):
+        payloads = [
+            {
+                "agent": decision.agent,
+                "action": decision.action,
+                "reward": decision.reward,
+                "approved": decision.approved,
+                "reason": decision.reason,
+                "parameters": decision.parameters,
+            }
+            for decision in _autogen_decisions(replicas=3)
+        ]
+        contradictory = next(
+            payload for payload in payloads if payload["agent"] == agent
+        )
+        contradictory["action"] = action
+        contradictory["approved"] = approved
+        return payloads
+
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-autogen-v1.json"
+    )
+    coordinator = MutualSupervisionCoordinator(
+        validator=CommandValidator(
+            allowed_namespaces={"online-boutique"},
+            allowed_deployments={"paymentservice"},
+        ),
+        evidence_provider=FakeEvidenceProvider.cpu_saturation(
+            namespace="online-boutique",
+            deployment="paymentservice",
+            value=95.0,
+        ),
+        recovery_monitor=FakeRecoveryMonitor(),
+        mode=ExecutionMode.MOCK,
+        protocol=profile,
+        adapter_registry=(
+            autogen_groupchat.build_autogen_agent_adapter_registry(
+                decision_provider=contradictory_provider
+            )
+        ),
+    )
+
+    report = coordinator.run(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+    )
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["human_review_required"] is True
+    assert report["initial_decisions"] == []
+    assert report["peer_reviews"] == []
+    assert report["executed_actions"] == []
+    assert "contradicts" in " ".join(report["configuration_errors"])
 
 
 def test_malformed_autogen_runtime_output_fails_without_execution():
