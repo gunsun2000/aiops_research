@@ -2,6 +2,25 @@
 
 이 폴더는 대학원 연구 본체인 **4-Agent 기반 Kubernetes 장애 감시/복구 자동화**를 설명하는 문서만 중심으로 정리합니다.
 
+## 공식 DOCX 산출물
+
+사람이 읽고 검토하는 문서는 `deliverables/`의 DOCX를 우선 사용합니다.
+
+| 문서 | 내용 |
+| --- | --- |
+| `deliverables/AIOps_4Agent_Research_Report.docx` | 연구 개요·설계·실험 결과 종합 보고서 |
+| `deliverables/AIOps_Experiment_Operations_Guide.docx` | 설치·실행·시험·결과 확인 가이드 |
+| `deliverables/AIOps_Agent_Policy_Specification.docx` | 4-Agent action/reward 및 안전 정책 명세 |
+
+재생성:
+
+```bash
+python -m pip install -e ".[docs]"
+python scripts/build_research_documents.py
+```
+
+Markdown 파일은 DOCX의 기술 원본과 세부 참고 문서로 유지합니다.
+
 ## 먼저 볼 문서
 
 | 문서 | 목적 |
@@ -16,6 +35,7 @@
 
 ```text
 docs/
+  deliverables/    # 교수님·외부 검토자용 공식 DOCX
   core_submission_summary.md
   README.md
 

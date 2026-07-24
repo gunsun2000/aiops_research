@@ -1155,14 +1155,20 @@ select:focus-visible {
   display: grid;
 }
 
+.document-intro {
+  margin: -2px 0 10px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.6;
+}
+
 .document-row {
-  min-height: 75px;
+  min-height: 88px;
   display: grid;
-  grid-template-columns: 42px minmax(0, 1fr) auto;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
   align-items: center;
   gap: 14px;
   color: var(--ink);
-  text-decoration: none;
   border-bottom: 1px solid var(--line);
 }
 
@@ -1170,13 +1176,9 @@ select:focus-visible {
   border-bottom: 0;
 }
 
-.document-row:hover strong {
-  color: var(--blue);
-}
-
 .document-type {
-  width: 36px;
-  height: 30px;
+  width: 46px;
+  height: 32px;
   display: grid;
   place-items: center;
   background: #eef5fb;
@@ -1191,6 +1193,13 @@ select:focus-visible {
   gap: 5px;
 }
 
+.document-row .document-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
 .document-row strong {
   font-size: 12px;
 }
@@ -1198,6 +1207,37 @@ select:focus-visible {
 .document-row small {
   color: var(--muted);
   font-size: 10px;
+}
+
+.document-open,
+.document-source {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-size: 9px;
+  font-weight: 800;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.document-open {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+
+.document-open:hover {
+  background: var(--blue);
+  border-color: var(--blue);
+}
+
+.document-source:hover {
+  border-color: var(--blue);
+  color: var(--blue);
 }
 
 .architecture-link {
@@ -1420,10 +1460,12 @@ select:focus-visible {
 
   .document-row {
     grid-template-columns: 38px minmax(0, 1fr);
+    padding: 12px 0;
   }
 
-  .document-row code {
-    display: none;
+  .document-row .document-actions {
+    grid-column: 2;
+    justify-content: flex-start;
   }
 
   .section-title {

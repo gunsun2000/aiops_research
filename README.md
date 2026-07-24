@@ -4,6 +4,23 @@
 
 이 저장소는 **4개의 AI Agent가 Kubernetes 서비스 장애를 판단하고, 안전 검증을 거친 복구 action만 실행하는 AIOps 연구 프로토타입**입니다.
 
+## 공식 연구 문서
+
+교수님·외부 검토자에게 공유하는 문서는 Markdown 원문이 아니라 아래의 Word 문서를 기준으로 합니다.
+
+| 문서 | 용도 |
+| --- | --- |
+| [AIOps 4-Agent 연구 보고서](docs/deliverables/AIOps_4Agent_Research_Report.docx) | 연구 배경, 아키텍처, 실험 설계, 결과, 한계와 후속 연구 |
+| [AIOps 실험 실행 및 검증 가이드](docs/deliverables/AIOps_Experiment_Operations_Guide.docx) | 설치, Control Plane, mock/dry-run/real 실험, 정량 분석 재현 |
+| [4-Agent Action 및 Reward 정책 명세서](docs/deliverables/AIOps_Agent_Policy_Specification.docx) | Agent 역할, 합의, action/reward, 승인·거부와 안전 경계 |
+
+Markdown 문서는 코드와 함께 갱신하기 쉬운 기술 원본으로 유지합니다. DOCX는 다음 명령으로 다시 생성할 수 있습니다.
+
+```bash
+python -m pip install -e ".[docs]"
+python scripts/build_research_documents.py
+```
+
 연구의 중심은 다음 장애 감시/복구 흐름입니다.
 
 ```text
@@ -49,7 +66,7 @@ Agent 등록 정보는 [config/agent_registry.json](config/agent_registry.json)�
 cd ~/geonhae/aiops_research
 git pull origin master
 conda activate aiops_research
-python -m pip install -e ".[dev,autogen]"
+python -m pip install -e ".[dev,autogen,ui,docs]"
 python -m pytest
 ```
 

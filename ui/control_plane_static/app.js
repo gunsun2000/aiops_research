@@ -45,29 +45,22 @@
 
   const DOCUMENTS = [
     {
-      label: "전체 실행 코드",
-      path: "docs/submission/execution_code_guide.md",
-      description: "환경 준비부터 mock, dry-run, real 실험까지의 실행 순서",
+      label: "4-Agent 연구 보고서",
+      path: "docs/deliverables/AIOps_4Agent_Research_Report.docx",
+      sourcePath: "docs/core_submission_summary.md",
+      description: "연구 배경, 전체 아키텍처, 실험 설계, 결과, 한계와 후속 연구",
     },
     {
-      label: "시험 가이드",
-      path: "docs/submission/test_guide.md",
-      description: "단위 시험과 서버 통합 시험의 검증 기준",
+      label: "실험 실행 및 검증 가이드",
+      path: "docs/deliverables/AIOps_Experiment_Operations_Guide.docx",
+      sourcePath: "docs/submission/execution_code_guide.md",
+      description: "환경 준비부터 mock, dry-run, real 실험과 정량 분석까지의 재현 절차",
     },
     {
-      label: "Agent 정책",
-      path: "docs/design/agent_action_reward_policy.md",
-      description: "4-Agent action, reward, 승인·거부 조건",
-    },
-    {
-      label: "정량 분석",
-      path: "docs/experiments/recovery_quantitative_analysis_guide.md",
-      description: "성공률, 복구 시간, reward 비교와 그래프 생성 절차",
-    },
-    {
-      label: "Control Plane UI",
-      path: "docs/submission/control_plane_ui_guide.md",
-      description: "연구 운영 플랫폼 실행과 안전 경계",
+      label: "Agent Action 및 Reward 정책서",
+      path: "docs/deliverables/AIOps_Agent_Policy_Specification.docx",
+      sourcePath: "docs/design/agent_action_reward_policy.md",
+      description: "4-Agent 역할, 의사결정, 합의, reward, 승인·거부와 안전 경계",
     },
   ];
 
@@ -734,20 +727,33 @@
   function documentsView() {
     return h("div", { className: "documents-layout" }, [
       h("section", { className: "surface" }, [
-        sectionTitle("연구 문서", "실행과 재현을 위한 핵심 문서"),
+        sectionTitle("공식 연구 문서", "교수님·외부 검토자용 DOCX 산출물"),
+        h("p", {
+          className: "document-intro",
+          text: "DOCX는 읽기와 검토를 위한 공식 문서이며, MD는 코드와 함께 갱신하는 기술 원본입니다.",
+        }),
         h("div", { className: "document-list" },
           DOCUMENTS.map((document) =>
-            h("a", {
-              href: `/api/artifacts/${document.path}`,
-              target: "_blank",
-              className: "document-row",
-            }, [
-              h("span", { className: "document-type", text: "MD" }),
+            h("div", { className: "document-row" }, [
+              h("span", { className: "document-type", text: "DOCX" }),
               h("div", {}, [
                 h("strong", { text: document.label }),
                 h("small", { text: document.description }),
               ]),
-              h("code", { text: document.path.split("/").pop() }),
+              h("div", { className: "document-actions" }, [
+                h("a", {
+                  href: `/api/artifacts/${document.path}`,
+                  target: "_blank",
+                  className: "document-open",
+                  text: "DOCX 열기",
+                }),
+                h("a", {
+                  href: `/api/artifacts/${document.sourcePath}`,
+                  target: "_blank",
+                  className: "document-source",
+                  text: "MD 원본",
+                }),
+              ]),
             ])
           )
         ),
