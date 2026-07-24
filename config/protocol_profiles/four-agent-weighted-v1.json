@@ -58,6 +58,7 @@
   "max_negotiation_rounds": 2,
   "max_replan_attempts": 1,
   "fallback_action": "observe_only",
+  "human_review_on_failure": true,
   "action_space": ["observe_only", "rollout_restart", "scale_out"],
   "reward_weights": {
     "availability_recovery": 0.4,

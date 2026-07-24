@@ -12,6 +12,9 @@ from typing import Any, Mapping
 from aiops_k8s_agents.models import RecoveryActionKind
 
 
+DEFAULT_PROTOCOL_PROFILE_ID = "four-agent-role-veto-v1"
+
+
 class ConsensusStrategy(str, Enum):
     ROLE_BASED_VETO = "role_based_veto"
     UNANIMOUS_VETO = "unanimous_veto"
@@ -38,6 +41,7 @@ _PROFILE_KEYS = frozenset(
         "max_negotiation_rounds",
         "max_replan_attempts",
         "fallback_action",
+        "human_review_on_failure",
         "action_space",
         "reward_weights",
         "experiment_tags",
@@ -131,6 +135,7 @@ class ResearchProtocolProfile:
     max_negotiation_rounds: int
     max_replan_attempts: int
     fallback_action: RecoveryActionKind
+    human_review_on_failure: bool
     action_space: tuple[RecoveryActionKind, ...]
     reward_weights: Mapping[str, float]
     experiment_tags: tuple[str, ...]
@@ -207,6 +212,12 @@ class ResearchProtocolProfile:
             fallback_action = RecoveryActionKind(fallback_raw)
         except ValueError as exc:
             raise ValueError(f"unknown fallback_action: {fallback_raw}") from exc
+        if fallback_action is not RecoveryActionKind.OBSERVE_ONLY:
+            raise ValueError("fallback_action must be observe_only")
+
+        human_review_on_failure = source.get("human_review_on_failure")
+        if human_review_on_failure is not True:
+            raise ValueError("human_review_on_failure must be true")
 
         raw_actions = _required_list(source.get("action_space"), "action_space")
         try:
@@ -257,6 +268,7 @@ class ResearchProtocolProfile:
                 source.get("max_replan_attempts"), "max_replan_attempts", 0
             ),
             fallback_action=fallback_action,
+            human_review_on_failure=human_review_on_failure,
             action_space=action_space,
             reward_weights=MappingProxyType(reward_weights),
             experiment_tags=experiment_tags,
@@ -293,10 +305,36 @@ def load_protocol_profiles(
     directory: str | Path,
 ) -> dict[str, ResearchProtocolProfile]:
     profile_directory = Path(directory)
+    if not profile_directory.exists():
+        raise ValueError(
+            f"protocol profile directory does not exist: {profile_directory}"
+        )
+    if not profile_directory.is_dir():
+        raise ValueError(
+            f"protocol profile path is not a directory: {profile_directory}"
+        )
+
+    profile_paths = sorted(profile_directory.glob("*.json"))
+    if not profile_paths:
+        raise ValueError(
+            f"protocol profile directory contains no JSON profiles: {profile_directory}"
+        )
+
     profiles: dict[str, ResearchProtocolProfile] = {}
-    for path in sorted(profile_directory.glob("*.json")):
+    for path in profile_paths:
         profile = load_research_protocol(path)
         if profile.profile_id in profiles:
             raise ValueError(f"duplicate profile_id: {profile.profile_id}")
         profiles[profile.profile_id] = profile
     return profiles
+
+
+def select_default_protocol_profile(
+    profiles: Mapping[str, ResearchProtocolProfile],
+) -> ResearchProtocolProfile:
+    try:
+        return profiles[DEFAULT_PROTOCOL_PROFILE_ID]
+    except KeyError as exc:
+        raise ValueError(
+            "default protocol profile is missing: " + DEFAULT_PROTOCOL_PROFILE_ID
+        ) from exc
