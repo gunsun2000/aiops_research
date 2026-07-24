@@ -15,6 +15,7 @@ class EvidenceSnapshot:
     available_replicas: int = 1
     restart_count: int = 0
     pod_statuses: tuple[str, ...] = ("Running",)
+    pod_identities: tuple[str, ...] = ()
     events: tuple[str, ...] = ()
     latency_ms: float | None = None
     error_rate: float | None = None
@@ -49,6 +50,7 @@ class FakeEvidenceProvider:
             available_replicas=self.snapshot.available_replicas,
             restart_count=self.snapshot.restart_count,
             pod_statuses=tuple(self.snapshot.pod_statuses),
+            pod_identities=tuple(self.snapshot.pod_identities),
             events=tuple(self.snapshot.events),
             latency_ms=self.snapshot.latency_ms,
             error_rate=self.snapshot.error_rate,
@@ -93,10 +95,15 @@ class KubernetesEvidenceProvider:
     def collect(self, namespace: str, deployment: str) -> EvidenceSnapshot:
         snapshot = collect_kubernetes_snapshot(namespace=namespace, deployment=deployment)
         deployment_status = snapshot.get("deployment_status") or {}
-        pod_status = snapshot.get("pod_status") or {}
-        pods = pod_status.get("pods") or []
+        pod_status = snapshot.get("pods") or {}
+        pods = pod_status.get("items") or []
         restart_count = sum(int(pod.get("restarts", 0) or 0) for pod in pods)
-        pod_statuses = tuple(str(pod.get("status", "Unknown")) for pod in pods)
+        pod_statuses = tuple(str(pod.get("phase", "Unknown")) for pod in pods)
+        pod_identities = tuple(
+            str(pod.get("uid") or pod.get("name") or "")
+            for pod in pods
+            if pod.get("uid") or pod.get("name")
+        )
         return EvidenceSnapshot(
             namespace=namespace,
             deployment=deployment,
@@ -107,6 +114,7 @@ class KubernetesEvidenceProvider:
             ),
             restart_count=restart_count,
             pod_statuses=pod_statuses or ("Unknown",),
+            pod_identities=pod_identities,
             events=(),
             source=self.source,
         )

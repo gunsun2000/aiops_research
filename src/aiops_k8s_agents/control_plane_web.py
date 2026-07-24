@@ -11,6 +11,7 @@ from aiops_k8s_agents.control_plane_data import (
     latest_recovery_run,
     project_root,
     run_mock_alert,
+    run_mutual_supervision_mock,
 )
 
 try:
@@ -79,6 +80,25 @@ def api_latest_recovery_run() -> dict[str, object]:
 def api_mock_alert(request: MockAlertRequest) -> dict[str, object]:
     try:
         return run_mock_alert(
+            namespace=request.namespace,
+            deployment=request.deployment,
+            metric=request.metric,
+            value=request.value,
+            threshold=request.threshold,
+            min_replicas=request.min_replicas,
+            max_replicas=request.max_replicas,
+            backend=request.backend,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/mutual-supervision/mock")
+def api_mutual_supervision_mock(
+    request: MockAlertRequest,
+) -> dict[str, object]:
+    try:
+        return run_mutual_supervision_mock(
             namespace=request.namespace,
             deployment=request.deployment,
             metric=request.metric,

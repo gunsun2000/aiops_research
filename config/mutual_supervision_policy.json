@@ -1,0 +1,25 @@
+{
+  "version": "mutual-supervision-v1",
+  "max_negotiation_rounds": 2,
+  "max_replan_attempts": 1,
+  "fallback_action": "observe_only",
+  "review_matrix": {
+    "AIServiceHASupportAgent": [
+      "AIApplicationManagementAgent",
+      "AISemiconductorInfraOpsAgent"
+    ],
+    "AIApplicationManagementAgent": [
+      "AIServiceHASupportAgent",
+      "AISemiconductorInfraOpsAgent",
+      "CostOptimizationAgent"
+    ],
+    "AISemiconductorInfraOpsAgent": [
+      "AIApplicationManagementAgent",
+      "CostOptimizationAgent"
+    ],
+    "CostOptimizationAgent": [
+      "AIApplicationManagementAgent",
+      "AISemiconductorInfraOpsAgent"
+    ]
+  }
+}

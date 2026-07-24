@@ -17,6 +17,7 @@ def test_control_plane_uses_independent_hash_routes():
         "dashboard",
         "experiments",
         "decision",
+        "supervision",
         "safety",
         "evidence",
         "documents",
@@ -35,6 +36,7 @@ def test_control_plane_has_one_renderer_for_each_workspace():
         "dashboardView",
         "experimentsView",
         "decisionView",
+        "supervisionView",
         "safetyView",
         "evidenceView",
         "documentsView",
@@ -44,6 +46,16 @@ def test_control_plane_has_one_renderer_for_each_workspace():
     assert "function workspaceView(" in source
     assert "function hero(" not in source
     assert "function evidenceAndDemo(" not in source
+
+
+def test_control_plane_mutual_supervision_workspace_has_research_timeline():
+    source = _source(APP_JS)
+
+    assert 'fetch("/api/mutual-supervision/mock"' in source
+    assert "mutualResult" in source
+    assert "peer-review-timeline" in source
+    assert "negotiation-rounds" in source
+    assert "post-execution-review" in source
 
 
 def test_control_plane_styles_separate_navigation_and_workspace():

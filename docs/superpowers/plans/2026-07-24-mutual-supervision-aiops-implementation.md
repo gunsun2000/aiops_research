@@ -579,7 +579,57 @@ Expected: all tests pass.
 
 ---
 
-### Task 7: Full Regression and Verification
+### Task 7: Control Plane Mutual-Supervision Workspace
+
+**Files:**
+- Modify: `src/aiops_k8s_agents/control_plane_data.py`
+- Modify: `src/aiops_k8s_agents/control_plane_web.py`
+- Modify: `ui/control_plane_static/app.js`
+- Modify: `ui/control_plane_static/styles.css`
+- Modify: `tests/test_control_plane_data.py`
+- Modify: `tests/test_control_plane_ui.py`
+
+**Interfaces:**
+- Adds mock-only endpoint `POST /api/mutual-supervision/mock`.
+- Adds independent sidebar route `#/supervision`.
+- Displays initial decisions, peer reviews, negotiation rounds, safety execution,
+  and post-execution reviews without extending the dashboard page.
+
+- [ ] **Step 1: Write failing backend and route tests**
+
+Test that the platform mock API uses the real deterministic
+`MutualSupervisionCoordinator`, returns at least three peer reviews and four
+post-execution reviews, and that the UI defines the independent supervision
+route and timeline renderers.
+
+- [ ] **Step 2: Verify RED**
+
+Run:
+
+```powershell
+python -m pytest tests/test_control_plane_data.py tests/test_control_plane_ui.py -v
+```
+
+Expected: failures for the missing API function and supervision route.
+
+- [ ] **Step 3: Implement the mock API and separate workspace**
+
+Keep real execution CLI-gated. Reuse the existing form state and render:
+
+1. initial Agent decisions;
+2. peer review verdicts;
+3. negotiation rounds and revisions;
+4. safety validation and bounded command;
+5. four role-specific post-execution reviews.
+
+- [ ] **Step 4: Run platform tests and browser verification**
+
+Run platform tests, start `aiops-control-plane`, and inspect desktop and mobile
+viewports with the supervision route selected.
+
+---
+
+### Task 8: Full Regression and Verification
 
 **Files:**
 - Verify all files changed in Tasks 1-6.

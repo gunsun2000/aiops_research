@@ -8,8 +8,14 @@ from typing import Any
 
 from aiops_k8s_agents.agent_registry import load_agent_registry
 from aiops_k8s_agents.coordinator import AIMCMPCoordinator
+from aiops_k8s_agents.evidence import EvidenceSnapshot, FakeEvidenceProvider
 from aiops_k8s_agents.executor import ExecutionBackend, ExecutionMode
 from aiops_k8s_agents.models import AlertEvent, CommandResult
+from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
+from aiops_k8s_agents.mutual_supervision_policy import (
+    load_mutual_supervision_policy,
+)
+from aiops_k8s_agents.recovery_monitor import FakeRecoveryMonitor
 from aiops_k8s_agents.validator import CommandValidator
 
 
@@ -156,6 +162,57 @@ def run_mock_alert(
         "result": command_result_to_dict(result),
         "agent_reviews": parse_agent_reviews(result.metadata),
     }
+
+
+def run_mutual_supervision_mock(
+    *,
+    namespace: str,
+    deployment: str,
+    metric: str,
+    value: float,
+    threshold: float,
+    min_replicas: int = 1,
+    max_replicas: int = 5,
+    backend: str = "python",
+) -> dict[str, Any]:
+    repo = project_root()
+    execution_backend = (
+        ExecutionBackend.GO
+        if backend == "go"
+        else ExecutionBackend.PYTHON
+    )
+    normalized_metric = metric.strip().lower().replace("-", "_")
+    coordinator = MutualSupervisionCoordinator(
+        validator=CommandValidator(
+            allowed_namespaces={namespace},
+            allowed_deployments={deployment},
+            min_replicas=min_replicas,
+            max_replicas=max_replicas,
+        ),
+        evidence_provider=FakeEvidenceProvider(
+            EvidenceSnapshot(
+                namespace=namespace,
+                deployment=deployment,
+                metric_values={normalized_metric: value},
+                desired_replicas=1,
+                available_replicas=1,
+                events=("control-plane mutual-supervision mock",),
+                source="control-plane-fake",
+            )
+        ),
+        recovery_monitor=FakeRecoveryMonitor(default_success=True),
+        policy=load_mutual_supervision_policy(
+            repo / "config" / "mutual_supervision_policy.json"
+        ),
+        mode=ExecutionMode.MOCK,
+        backend=execution_backend,
+    )
+    return coordinator.run(
+        namespace=namespace,
+        deployment=deployment,
+        metric=normalized_metric,
+        threshold=threshold,
+    )
 
 
 def command_result_to_dict(result: CommandResult) -> dict[str, Any]:

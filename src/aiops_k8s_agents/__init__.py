@@ -9,6 +9,8 @@ from aiops_k8s_agents.executor import ExecutionMode, KubernetesExecutor
 from aiops_k8s_agents.ha_agent import AIServiceHASupportAgent
 from aiops_k8s_agents.infra_agent import AISemiconductorInfraOpsAgent
 from aiops_k8s_agents.models import AlertEvent, CommandResult, Diagnosis, ScaleAction
+from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
+from aiops_k8s_agents.mutual_supervision_models import PeerReview, ReviewVerdict
 from aiops_k8s_agents.prometheus import PrometheusAdapter, PrometheusMetricConfig
 from aiops_k8s_agents.validator import CommandValidationError, CommandValidator
 
@@ -28,7 +30,10 @@ __all__ = [
     "ExecutionMode",
     "FourAgentPipeline",
     "KubernetesExecutor",
+    "MutualSupervisionCoordinator",
+    "PeerReview",
     "PrometheusAdapter",
     "PrometheusMetricConfig",
+    "ReviewVerdict",
     "ScaleAction",
 ]

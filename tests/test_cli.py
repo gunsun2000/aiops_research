@@ -360,6 +360,76 @@ def test_cli_runs_autonomous_closed_loop_in_mock_mode(capsys):
     )
 
 
+def test_cli_mutual_supervision_run_emits_peer_reviews_and_artifacts(
+    tmp_path,
+    capsys,
+):
+    exit_code = main(
+        [
+            "mutual-supervision-run",
+            "--mode",
+            "mock",
+            "--namespace",
+            "online-boutique",
+            "--deployment",
+            "paymentservice",
+            "--metric",
+            "cpu",
+            "--threshold",
+            "80",
+            "--evidence-value",
+            "95",
+            "--allowed-namespace",
+            "online-boutique",
+            "--allowed-deployment",
+            "paymentservice",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["command"] == "mutual-supervision-run"
+    assert output["valid"] is True
+    assert output["negotiation"]["consensus"] == "approved"
+    assert len(output["peer_reviews"]) >= 3
+    assert Path(output["artifacts"]["final_report_json"]).exists()
+
+
+def test_cli_mutual_supervision_real_mode_rejects_fake_evidence(capsys):
+    exit_code = main(
+        [
+            "mutual-supervision-run",
+            "--mode",
+            "real",
+            "--namespace",
+            "online-boutique",
+            "--deployment",
+            "paymentservice",
+            "--metric",
+            "cpu",
+            "--threshold",
+            "80",
+            "--evidence-value",
+            "95",
+            "--allowed-namespace",
+            "online-boutique",
+            "--allowed-deployment",
+            "paymentservice",
+            "--no-save",
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert output["valid"] is False
+    assert output["final_status"] == "configuration_rejected"
+    assert "kubernetes evidence" in output["stderr"]
+
+
 def test_cli_passes_go_guard_backend_to_recovery_executor(monkeypatch, capsys):
     captured = {}
 

@@ -89,7 +89,7 @@ go test ./...
 ## Control Plane UI
 
 교수님 시연과 연구실 점검을 위해 FastAPI 기반 웹 Control Plane을 제공합니다.
-사이드바에서 대시보드, 장애 실험, 4-Agent 판단, 안전 검증, 실험 결과,
+사이드바에서 대시보드, 장애 실험, 4-Agent 판단, 상호감시 실험, 안전 검증, 실험 결과,
 연구 문서를 독립 화면으로 전환할 수 있습니다.
 
 ```bash
@@ -120,6 +120,38 @@ aiops-k8s-agents autonomous-run \
   --allowed-namespace online-boutique \
   --allowed-deployment paymentservice
 ```
+
+4-Agent 상호감시 mock 실험:
+
+```bash
+aiops-k8s-agents mutual-supervision-run \
+  --mode mock \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --metric cpu \
+  --threshold 80 \
+  --evidence-value 95 \
+  --allowed-namespace online-boutique \
+  --allowed-deployment paymentservice
+```
+
+이 명령은 역할별 초기 판단, 동료 Agent의 `approve/revise/veto`,
+제한된 재합의 라운드, 안전 검증, 실행 후 4-Agent 재평가를 수행합니다.
+실험 기록은 기본적으로 `runs/mutual-supervision/` 아래 JSONL, JSON,
+CSV, Markdown으로 저장됩니다. 현재 상호감시 엔진은 재현 가능한
+deterministic 정책 경로이며, AutoGen 기반 자유형 다중 라운드 상호감시는
+후속 비교 실험으로 분리합니다.
+
+현재 deterministic v1에서는 응용관리 Agent가 제안한 실행 Action을
+HA·인프라·비용 Agent가 독립적으로 교차 검토하고, 실행 후에는 4개 Agent가
+각 역할 기준으로 결과를 다시 평가합니다. 모든 Agent 판단을 다시 완전 연결형으로
+검토하는 일반화된 메시지 그래프는 후속 연구 범위입니다.
+
+`real` 모드는 fake evidence를 허용하지 않습니다. 반드시
+`--evidence-source kubernetes`를 사용하며, deployment readiness와 Pod identity
+변화를 보수적으로 확인한 경우에만 복구 성공으로 판정합니다. 동일
+namespace/deployment에 대한 동시 real 제어는 target lock으로 차단합니다.
+Prometheus·로그까지 결합한 full evidence fusion은 후속 확장 범위입니다.
 
 Recovery action 비교 실험:
 

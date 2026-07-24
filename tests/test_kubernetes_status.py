@@ -1,5 +1,7 @@
 import json
 
+import aiops_k8s_agents.evidence as evidence_module
+from aiops_k8s_agents.evidence import KubernetesEvidenceProvider
 from aiops_k8s_agents.kubernetes_status import collect_kubernetes_snapshot
 
 
@@ -82,3 +84,43 @@ def test_collect_kubernetes_snapshot_keeps_kubectl_errors_in_report():
     assert snapshot["deployment_status"]["ok"] is False
     assert snapshot["deployment_status"]["stderr"] == "forbidden"
     assert snapshot["pods"]["ok"] is False
+
+
+def test_kubernetes_evidence_provider_preserves_pod_state_and_identity(monkeypatch):
+    monkeypatch.setattr(
+        evidence_module,
+        "collect_kubernetes_snapshot",
+        lambda **_kwargs: {
+            "deployment_status": {
+                "desired_replicas": 2,
+                "available_replicas": 2,
+            },
+            "pods": {
+                "items": [
+                    {
+                        "name": "paymentservice-a",
+                        "uid": "uid-a",
+                        "phase": "Running",
+                        "restarts": 1,
+                    },
+                    {
+                        "name": "paymentservice-b",
+                        "uid": "uid-b",
+                        "phase": "Running",
+                        "restarts": 0,
+                    },
+                ]
+            },
+        },
+    )
+
+    evidence = KubernetesEvidenceProvider().collect(
+        "online-boutique",
+        "paymentservice",
+    )
+
+    assert evidence.desired_replicas == 2
+    assert evidence.available_replicas == 2
+    assert evidence.restart_count == 1
+    assert evidence.pod_statuses == ("Running", "Running")
+    assert evidence.pod_identities == ("uid-a", "uid-b")

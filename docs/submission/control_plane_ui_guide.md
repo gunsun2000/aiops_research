@@ -70,6 +70,7 @@ aiops-control-plane
 | 대시보드 | `#/dashboard` | 연구 상태, 4-Agent, 6단계 운영 흐름, 최근 실험 |
 | 장애 실험 | `#/experiments` | 장애 4종, action 3종, 36회 실험 매트릭스 |
 | 4-Agent 판단 | `#/decision` | mock 장애 입력, Agent별 판단, 합의와 검증 명령 |
+| 상호감시 실험 | `#/supervision` | 초기 판단, 동료 검토, 협상 라운드, 안전 실행, 실행 후 4-Agent 재평가 |
 | 안전 검증 | `#/safety` | Registry, consensus, Validator, Guard, dry-run 경계 |
 | 실험 결과 | `#/evidence` | JSONL, reward ranking, CSV·PNG·SVG artifact |
 | 연구 문서 | `#/documents` | 공식 DOCX 3종, 기술 원본 MD, 전체 구성도 |
@@ -85,6 +86,9 @@ workspace 전체가 해당 기능 화면으로 교체됩니다.
 - 실제 Kubernetes 제어는 `docs/submission/execution_code_guide.md`의 CLI 절차로 실행합니다.
 - UI는 `runs/` 결과와 `docs/` 문서를 읽어 보여주는 관측 화면 역할을 우선합니다.
 - `POST /api/mock-alert`는 기존 Coordinator, Agent, Validator 경로를 사용하지만 실행 모드는 `mock`으로 고정됩니다.
+- `POST /api/mutual-supervision/mock`은 deterministic 상호감시 엔진을 호출하며 실제 Kubernetes 상태를 변경하지 않습니다.
+- 상호감시 deterministic v1은 응용관리 Action을 HA·인프라·비용 Agent가 교차 검토하고, 실행 후에는 4-Agent 역할별 재평가를 수행합니다.
+- 실제 제어는 UI에서 직접 제공하지 않습니다. CLI `real` 모드는 Kubernetes evidence, target lock, Validator를 모두 통과해야 합니다.
 
 ## 공식 연구 문서
 
@@ -112,6 +116,7 @@ python scripts/build_research_documents.py
 | `GET /api/agents` | Agent Registry 조회 |
 | `GET /api/runs/latest` | 최신 recovery-action-pilot run 조회 |
 | `POST /api/mock-alert` | mock 4-Agent 판단 실행 |
+| `POST /api/mutual-supervision/mock` | mock 상호검토·재합의·사후평가 실행 |
 | `GET /api/artifacts/{path}` | 허용된 `runs/`, `docs/` 파일 조회 |
 
 FastAPI 문서:

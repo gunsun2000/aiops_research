@@ -9,6 +9,7 @@ from aiops_k8s_agents.control_plane_data import (
     latest_recovery_run,
     parse_agent_reviews,
     run_mock_alert,
+    run_mutual_supervision_mock,
 )
 
 
@@ -110,6 +111,23 @@ def test_mock_alert_uses_existing_four_agent_pipeline():
         "AISemiconductorInfraOpsAgent",
         "CostOptimizationAgent",
     ]
+
+
+def test_mutual_supervision_mock_exposes_negotiation_and_post_reviews():
+    report = run_mutual_supervision_mock(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        value=95.0,
+        threshold=80.0,
+    )
+
+    assert report["valid"] is True
+    assert report["final_status"] == "recovered"
+    assert report["negotiation"]["consensus"] == "approved"
+    assert len(report["peer_reviews"]) >= 3
+    assert len(report["post_execution_reviews"]) == 4
+    assert report["execution_result"]["mode"] == "mock"
 
 
 def test_artifact_path_rejects_files_outside_allowed_roots(tmp_path: Path):

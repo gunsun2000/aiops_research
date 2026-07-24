@@ -55,6 +55,10 @@ from aiops_k8s_agents.models import (
     RecoveryAction,
     RecoveryActionKind,
 )
+from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
+from aiops_k8s_agents.mutual_supervision_policy import (
+    load_mutual_supervision_policy,
+)
 from aiops_k8s_agents.recovery_experiments import (
     analyze_recovery_outcomes,
     load_recovery_outcomes,
@@ -68,7 +72,11 @@ from aiops_k8s_agents.recovery_runner import (
     load_recovery_experiment_config,
     run_recovery_matrix,
 )
-from aiops_k8s_agents.recovery_monitor import FakeRecoveryMonitor
+from aiops_k8s_agents.recovery_monitor import (
+    FakeRecoveryMonitor,
+    KubernetesSnapshotRecoveryMonitor,
+)
+from aiops_k8s_agents.research_event_store import JsonlResearchEventStore
 from aiops_k8s_agents.prometheus import (
     PrometheusAdapter,
     PrometheusAdapterError,
@@ -289,6 +297,61 @@ def build_parser() -> argparse.ArgumentParser:
     autonomous_parser.add_argument("--max-replicas", type=int, default=5)
     _add_result_logging_argument(autonomous_parser)
 
+    mutual_parser = subparsers.add_parser(
+        "mutual-supervision-run",
+        help=(
+            "Run the safety-bounded 4-Agent mutual-review protocol with "
+            "revision, veto, consensus, recovery monitoring, and research logs."
+        ),
+    )
+    mutual_parser.add_argument(
+        "--mode", choices=[mode.value for mode in ExecutionMode], default="mock"
+    )
+    _add_guard_backend_argument(mutual_parser)
+    mutual_parser.add_argument(
+        "--evidence-source",
+        choices=["fake", "kubernetes"],
+        default="fake",
+    )
+    mutual_parser.add_argument("--namespace", required=True)
+    mutual_parser.add_argument("--deployment", required=True)
+    mutual_parser.add_argument("--metric", required=True)
+    mutual_parser.add_argument("--threshold", type=float, required=True)
+    mutual_parser.add_argument("--evidence-value", type=float)
+    mutual_parser.add_argument("--desired-replicas", type=int, default=1)
+    mutual_parser.add_argument("--available-replicas", type=int, default=1)
+    mutual_parser.add_argument("--restart-count", type=int, default=0)
+    mutual_parser.add_argument("--latency-ms", type=float)
+    mutual_parser.add_argument("--error-rate", type=float)
+    mutual_parser.add_argument(
+        "--force-recovery-failure",
+        action="store_true",
+        help="Mock/test option: make the fake recovery monitor fail all actions.",
+    )
+    mutual_parser.add_argument(
+        "--allowed-namespace", action="append", required=True
+    )
+    mutual_parser.add_argument(
+        "--allowed-deployment", action="append", required=True
+    )
+    mutual_parser.add_argument("--min-replicas", type=int, default=1)
+    mutual_parser.add_argument("--max-replicas", type=int, default=5)
+    mutual_parser.add_argument(
+        "--policy",
+        default="config/mutual_supervision_policy.json",
+        help="Versioned mutual-review policy JSON path.",
+    )
+    mutual_parser.add_argument(
+        "--output-dir",
+        default="runs/mutual-supervision",
+        help="Root directory for JSONL, CSV, JSON, and Markdown artifacts.",
+    )
+    mutual_parser.add_argument(
+        "--no-save",
+        action="store_true",
+        help="Run without writing research artifacts.",
+    )
+
     list_agents_parser = subparsers.add_parser(
         "list-agents",
         help="List registered 4-Agent research roles and bounded actions.",
@@ -473,6 +536,11 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.command == "autonomous-run":
         report = run_autonomous_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report["valid"] else 2
+
+    if args.command == "mutual-supervision-run":
+        report = run_mutual_supervision_cli(args)
         _emit_json_report(args, report)
         return 0 if report["valid"] else 2
 
@@ -696,6 +764,65 @@ def run_autonomous_cli(args: argparse.Namespace) -> dict[str, Any]:
         mode=ExecutionMode(args.mode),
         backend=ExecutionBackend(args.guard_backend),
         max_replan_attempts=args.max_replan_attempts,
+    )
+    return coordinator.run(
+        namespace=args.namespace,
+        deployment=args.deployment,
+        metric=args.metric,
+        threshold=args.threshold,
+    )
+
+
+def run_mutual_supervision_cli(args: argparse.Namespace) -> dict[str, Any]:
+    if args.mode == ExecutionMode.REAL.value and args.evidence_source != "kubernetes":
+        return {
+            "command": "mutual-supervision-run",
+            "valid": False,
+            "mode": args.mode,
+            "final_status": "configuration_rejected",
+            "stderr": (
+                "real mutual supervision requires kubernetes evidence via "
+                "--evidence-source kubernetes; "
+                "fake evidence cannot verify a real recovery"
+            ),
+            "human_review_required": True,
+        }
+
+    policy = load_mutual_supervision_policy(args.policy)
+    evidence_provider = _evidence_provider_from_args(args)
+    event_store = None
+    if not args.no_save:
+        experiment_id = datetime.now().strftime("%Y%m%d-%H%M%S-%f")
+        event_store = JsonlResearchEventStore(
+            root_dir=args.output_dir,
+            experiment_id=experiment_id,
+            experiment_config={
+                "policy_version": policy.version,
+                "mode": args.mode,
+                "guard_backend": args.guard_backend,
+                "evidence_source": args.evidence_source,
+                "namespace": args.namespace,
+                "deployment": args.deployment,
+                "metric": args.metric,
+                "threshold": args.threshold,
+            },
+        )
+    coordinator = MutualSupervisionCoordinator(
+        validator=_validator_from_args(args),
+        evidence_provider=evidence_provider,
+        recovery_monitor=(
+            KubernetesSnapshotRecoveryMonitor(
+                evidence_provider=evidence_provider,
+            )
+            if args.mode == ExecutionMode.REAL.value
+            else FakeRecoveryMonitor(
+                default_success=not args.force_recovery_failure
+            )
+        ),
+        policy=policy,
+        mode=ExecutionMode(args.mode),
+        backend=ExecutionBackend(args.guard_backend),
+        event_store=event_store,
     )
     return coordinator.run(
         namespace=args.namespace,

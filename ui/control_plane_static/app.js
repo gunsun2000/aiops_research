@@ -5,6 +5,7 @@
     { key: "dashboard", hash: "#/dashboard", label: "대시보드", eyebrow: "Research overview" },
     { key: "experiments", hash: "#/experiments", label: "장애 실험", eyebrow: "Fault laboratory" },
     { key: "decision", hash: "#/decision", label: "4-Agent 판단", eyebrow: "Decision workspace" },
+    { key: "supervision", hash: "#/supervision", label: "상호감시 실험", eyebrow: "Mutual supervision" },
     { key: "safety", hash: "#/safety", label: "안전 검증", eyebrow: "Safety boundary" },
     { key: "evidence", hash: "#/evidence", label: "실험 결과", eyebrow: "Evidence archive" },
     { key: "documents", hash: "#/documents", label: "연구 문서", eyebrow: "Research artifacts" },
@@ -69,7 +70,9 @@
     agents: [],
     latestRun: null,
     mockResult: null,
+    mutualResult: null,
     running: false,
+    mutualRunning: false,
     selectedScenario: "cpu-stress",
     form: {
       namespace: "online-boutique",
@@ -214,6 +217,7 @@
       dashboard: dashboardView,
       experiments: experimentsView,
       decision: decisionView,
+      supervision: supervisionView,
       safety: safetyView,
       evidence: evidenceView,
       documents: documentsView,
@@ -606,6 +610,243 @@
       };
     } finally {
       state.running = false;
+      render();
+    }
+  }
+
+  function supervisionView() {
+    return h("div", { className: "view-stack" }, [
+      h("section", { className: "surface supervision-protocol" }, [
+        sectionTitle("상호감시 프로토콜", "역할별 제안 · 검토 · 수정 · 거부 · 재합의"),
+        h("div", { className: "protocol-strip" }, [
+          protocolStep("01", "초기 판단", "HA · Application"),
+          protocolStep("02", "동료 검토", "HA · Infra · Cost"),
+          protocolStep("03", "협상", "Revise / Veto"),
+          protocolStep("04", "안전 실행", "Validator / Guard"),
+          protocolStep("05", "사후 감시", "4-Agent review"),
+        ]),
+      ]),
+      h("div", { className: "supervision-layout" }, [
+        h("section", { className: "surface supervision-input" }, [
+          sectionTitle("실험 조건", "deterministic mock"),
+          h("form", { className: "decision-form", onSubmit: runMutualSupervision }, [
+            field("Namespace", "namespace"),
+            field("Deployment", "deployment"),
+            metricField(),
+            field("Value", "value", "number"),
+            field("Threshold", "threshold", "number"),
+            guardField(),
+            h("button", {
+              className: "primary-button",
+              type: "submit",
+              disabled: state.mutualRunning,
+              text: state.mutualRunning ? "상호검토 진행 중..." : "상호감시 실험 실행",
+            }),
+          ]),
+          h("div", { className: "mode-notice" }, [
+            h("strong", { text: "Mock boundary" }),
+            h("span", { text: "실제 Kubernetes 상태는 변경하지 않습니다." }),
+          ]),
+        ]),
+        h("section", { className: "surface supervision-summary" }, [
+          sectionTitle(
+            "합의 상태",
+            state.mutualResult ? state.mutualResult.run_id : "waiting",
+          ),
+          state.mutualResult ? supervisionSummary() : supervisionEmpty(),
+        ]),
+      ]),
+      state.mutualResult ? supervisionTrace() : null,
+    ]);
+  }
+
+  function protocolStep(number, title, detail) {
+    return h("article", { className: "protocol-step" }, [
+      h("span", { text: number }),
+      h("strong", { text: title }),
+      h("small", { text: detail }),
+    ]);
+  }
+
+  function supervisionEmpty() {
+    return h("div", { className: "empty-state" }, [
+      h("span", { className: "empty-index", text: "4×" }),
+      h("strong", { text: "상호검토 기록이 여기에 표시됩니다." }),
+      h("p", { text: "안전한 mock 조건에서 정책 라운드를 실행합니다." }),
+    ]);
+  }
+
+  function supervisionSummary() {
+    const report = state.mutualResult || {};
+    const negotiation = report.negotiation || {};
+    const action = report.selected_action || {};
+    const validation = report.safety_validation || {};
+    return h("div", { className: "supervision-summary-grid" }, [
+      summaryCell("Consensus", negotiation.consensus || "-"),
+      summaryCell("Rounds", String(negotiation.round_count || 0)),
+      summaryCell("Action", action.kind || "none"),
+      summaryCell("Validation", validation.valid ? "passed" : "stopped"),
+      summaryCell("Final state", report.final_status || "-"),
+      summaryCell("Human review", report.human_review_required ? "required" : "not required"),
+    ]);
+  }
+
+  function summaryCell(label, value) {
+    return h("div", { className: "summary-cell" }, [
+      h("span", { text: label }),
+      h("strong", { text: value }),
+    ]);
+  }
+
+  function supervisionTrace() {
+    const report = state.mutualResult || {};
+    return h("div", { className: "supervision-trace" }, [
+      h("section", { className: "surface" }, [
+        sectionTitle("Agent 초기 판단", `${(report.initial_decisions || []).length} decisions`),
+        decisionTimeline(report.initial_decisions || []),
+      ]),
+      h("section", { className: "surface" }, [
+        sectionTitle("동료 검토", `${(report.peer_reviews || []).length} reviews`),
+        peerReviewTimeline(report.peer_reviews || []),
+      ]),
+      h("section", { className: "surface" }, [
+        sectionTitle("협상 라운드", (report.negotiation || {}).consensus || "-"),
+        negotiationRounds((report.negotiation || {}).rounds || []),
+      ]),
+      h("section", { className: "surface" }, [
+        sectionTitle("안전 검증 및 실행", report.final_status || "-"),
+        safetyExecutionPanel(report),
+      ]),
+      h("section", { className: "surface post-execution-review" }, [
+        sectionTitle("실행 후 역할별 재평가", `${(report.post_execution_reviews || []).length} reviews`),
+        postExecutionReviews(report.post_execution_reviews || []),
+      ]),
+    ]);
+  }
+
+  function decisionTimeline(decisions) {
+    return h("div", { className: "trace-list" },
+      decisions.map((decision) =>
+        h("article", { className: "trace-row" }, [
+          h("span", { className: "trace-agent", text: shortName(decision.agent) }),
+          h("div", {}, [
+            h("strong", { text: decision.decision_type }),
+            h("small", { text: decision.reason }),
+          ]),
+          h("span", {
+            className: `verdict verdict-${decision.approved ? "approve" : "abstain"}`,
+            text: decision.approved ? "proposed" : "stopped",
+          }),
+        ])
+      )
+    );
+  }
+
+  function peerReviewTimeline(reviews) {
+    return h("div", { className: "peer-review-timeline trace-list" },
+      reviews.map((review) =>
+        h("article", { className: "trace-row" }, [
+          h("span", { className: "trace-agent", text: shortName(review.reviewer) }),
+          h("div", {}, [
+            h("strong", { text: `${shortName(review.target_agent)} decision review` }),
+            h("small", { text: review.reason }),
+          ]),
+          h("span", {
+            className: `verdict verdict-${review.verdict}`,
+            text: review.verdict,
+          }),
+        ])
+      )
+    );
+  }
+
+  function negotiationRounds(rounds) {
+    return h("div", { className: "negotiation-rounds trace-list" },
+      rounds.map((round) =>
+        h("article", { className: "round-row" }, [
+          h("span", { className: "round-index", text: `R${round.round_index}` }),
+          h("div", {}, [
+            h("strong", { text: round.consensus_status }),
+            h("small", {
+              text: (round.revisions || []).length
+                ? round.revisions.join(", ")
+                : `${(round.review_ids || []).length} reviews completed`,
+            }),
+          ]),
+          h("span", {
+            className: `verdict verdict-${round.consensus_status === "approved" ? "approve" : "revise"}`,
+            text: round.consensus_status,
+          }),
+        ])
+      )
+    );
+  }
+
+  function safetyExecutionPanel(report) {
+    const validation = report.safety_validation || {};
+    const execution = report.execution_result || {};
+    return h("div", { className: "safety-execution" }, [
+      h("div", { className: "safety-checks" }, [
+        summaryCell("Policy version", report.policy_version || "-"),
+        summaryCell("Guard", (report.metadata && report.metadata.guard_backend) || "-"),
+        summaryCell("Validation", validation.valid ? "passed" : "rejected"),
+        summaryCell("Execution mode", execution.mode || report.mode || "-"),
+      ]),
+      h("div", { className: "command-panel" }, [
+        h("span", { text: "Bounded command" }),
+        h("code", { text: execution.command || validation.command || execution.stderr || "No action executed" }),
+      ]),
+    ]);
+  }
+
+  function postExecutionReviews(reviews) {
+    if (!reviews.length) {
+      return h("div", { className: "empty-state compact" }, [
+        h("strong", { text: "실행된 action이 없어 사후평가가 생략되었습니다." }),
+      ]);
+    }
+    return h("div", { className: "post-review-grid" },
+      reviews.map((review) =>
+        h("article", { className: "post-review-row" }, [
+          h("span", { className: "trace-agent", text: shortName(review.agent) }),
+          h("strong", { text: review.approved ? "approved" : "rejected" }),
+          h("small", { text: review.reason }),
+        ])
+      )
+    );
+  }
+
+  async function runMutualSupervision(event) {
+    event.preventDefault();
+    state.mutualRunning = true;
+    render();
+    try {
+      const response = await fetch("/api/mutual-supervision/mock", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          namespace: state.form.namespace,
+          deployment: state.form.deployment,
+          metric: state.form.metric,
+          value: Number(state.form.value),
+          threshold: Number(state.form.threshold),
+          backend: state.form.backend,
+        }),
+      });
+      state.mutualResult = await response.json();
+    } catch (error) {
+      state.mutualResult = {
+        valid: false,
+        final_status: "request_failed",
+        safety_validation: { valid: false },
+        execution_result: { stderr: String(error.message || error) },
+        negotiation: { round_count: 0, rounds: [], consensus: "failed" },
+        peer_reviews: [],
+        initial_decisions: [],
+        post_execution_reviews: [],
+      };
+    } finally {
+      state.mutualRunning = false;
       render();
     }
   }
