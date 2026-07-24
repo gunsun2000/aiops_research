@@ -51,6 +51,10 @@ def test_negotiation_round_serializes_decision_and_review_identifiers():
         remaining_abstentions=(),
         consensus_status="approved",
         selected_action_id="action-2",
+        decision_scopes=("capacity", "budget"),
+        consensus_strategy="role_based_veto",
+        non_blocking_objections=("CostOptimizationAgent",),
+        consensus_reason="no matching role vetoes",
     )
 
     payload = to_serializable(negotiation)
@@ -58,6 +62,8 @@ def test_negotiation_round_serializes_decision_and_review_identifiers():
     assert payload["round_index"] == 2
     assert payload["review_ids"] == ["review-1", "review-2"]
     assert payload["selected_action_id"] == "action-2"
+    assert payload["decision_scopes"] == ["capacity", "budget"]
+    assert payload["consensus_strategy"] == "role_based_veto"
 
 
 def test_supervision_decision_and_trace_ids_are_json_ready_and_unique():

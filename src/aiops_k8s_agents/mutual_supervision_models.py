@@ -58,6 +58,10 @@ class NegotiationRound:
     remaining_abstentions: tuple[str, ...]
     consensus_status: str
     selected_action_id: str | None
+    decision_scopes: tuple[str, ...] = ()
+    consensus_strategy: str = ""
+    non_blocking_objections: tuple[str, ...] = ()
+    consensus_reason: str = ""
 
 
 @dataclass(frozen=True)

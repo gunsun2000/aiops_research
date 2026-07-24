@@ -146,8 +146,8 @@ def test_declared_and_unsupported_adapter_capabilities_are_explicit():
     )
 
     assert application.diagnose(evidence, threshold=80.0) is None
-    assert application.review(decision, evidence, context) is None
-    assert ha.review(decision, evidence, context) is None
+    assert application.review(decision, evidence, context) is not None
+    assert ha.review(decision, evidence, context) is not None
     assert (
         adapters["AISemiconductorInfraOpsAgent"].propose(diagnosis, evidence)
         is None
@@ -168,8 +168,18 @@ def test_declared_and_unsupported_adapter_capabilities_are_explicit():
         recovery_confidence=0.9,
         replanning_required=False,
     )
+    post_reviews = [
+        adapter.post_review(actions[0], assessment, evidence)
+        for adapter in adapters.values()
+    ]
+    assert all(review is not None for review in post_reviews)
+    assert {review.agent for review in post_reviews if review is not None} == set(
+        adapters
+    )
+    assert all(review.approved for review in post_reviews if review is not None)
     assert all(
-        adapter.post_review(actions[0], assessment, evidence) is None
+        "review" in adapter.capabilities
+        and "post_review" in adapter.capabilities
         for adapter in adapters.values()
     )
 

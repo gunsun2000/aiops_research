@@ -17,6 +17,8 @@ EVENT_STREAMS = {
     "safety_validations",
     "executed_actions",
     "post_execution_reviews",
+    "protocol_profiles",
+    "agent_contributions",
 }
 
 
@@ -117,6 +119,9 @@ def _write_json(path: Path, value: Any) -> None:
 
 def _summary_row(report: dict[str, Any]) -> dict[str, Any]:
     negotiation = report.get("negotiation") or {}
+    protocol = report.get("protocol_profile") or {}
+    active_agents = report.get("active_agents") or []
+    agent_runtimes = report.get("agent_runtimes") or {}
     reviews = report.get("peer_reviews") or []
     selected_action = report.get("selected_action") or {}
     post_reviews = report.get("post_execution_reviews") or []
@@ -133,6 +138,15 @@ def _summary_row(report: dict[str, Any]) -> dict[str, Any]:
     return {
         "run_id": report.get("run_id", ""),
         "policy_version": report.get("policy_version", ""),
+        "protocol_profile_id": protocol.get("profile_id", ""),
+        "protocol_profile_version": protocol.get("version", ""),
+        "protocol_config_hash": protocol.get("config_hash", ""),
+        "consensus_strategy": negotiation.get("strategy", ""),
+        "active_agents": ";".join(active_agents),
+        "agent_runtimes": ";".join(
+            f"{agent}={agent_runtimes.get(agent, '')}"
+            for agent in active_agents
+        ),
         "final_status": report.get("final_status", ""),
         "valid": report.get("valid", False),
         "consensus": negotiation.get("consensus", ""),
@@ -169,6 +183,12 @@ def _render_markdown_summary(report: dict[str, Any]) -> str:
             "",
             f"- run_id: `{row['run_id']}`",
             f"- policy_version: `{row['policy_version']}`",
+            f"- protocol_profile_id: `{row['protocol_profile_id']}`",
+            f"- protocol_profile_version: `{row['protocol_profile_version']}`",
+            f"- protocol_config_hash: `{row['protocol_config_hash']}`",
+            f"- consensus_strategy: `{row['consensus_strategy']}`",
+            f"- active_agents: `{row['active_agents']}`",
+            f"- agent_runtimes: `{row['agent_runtimes']}`",
             f"- final_status: `{row['final_status']}`",
             f"- valid: `{str(row['valid']).lower()}`",
             f"- consensus: `{row['consensus']}`",

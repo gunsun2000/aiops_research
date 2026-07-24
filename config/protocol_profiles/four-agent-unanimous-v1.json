@@ -9,7 +9,7 @@
       "enabled": true,
       "veto_scopes": ["availability", "recovery"],
       "consensus_weight": 1.0,
-      "capabilities": ["diagnose"]
+      "capabilities": ["diagnose", "review", "post_review"]
     },
     {
       "name": "AIApplicationManagementAgent",
@@ -18,7 +18,7 @@
       "enabled": true,
       "veto_scopes": ["action_validity", "target_alignment"],
       "consensus_weight": 1.0,
-      "capabilities": ["propose"]
+      "capabilities": ["propose", "review", "post_review"]
     },
     {
       "name": "AISemiconductorInfraOpsAgent",
@@ -27,7 +27,7 @@
       "enabled": true,
       "veto_scopes": ["capacity", "resource_safety"],
       "consensus_weight": 1.0,
-      "capabilities": ["review"]
+      "capabilities": ["review", "post_review"]
     },
     {
       "name": "CostOptimizationAgent",
@@ -36,7 +36,7 @@
       "enabled": true,
       "veto_scopes": ["budget", "cost_efficiency"],
       "consensus_weight": 1.0,
-      "capabilities": ["review"]
+      "capabilities": ["review", "post_review"]
     }
   ],
   "review_matrix": {

@@ -29,7 +29,7 @@ class ConsensusResolver:
         self,
         reviews: Iterable[PeerReview],
         profile: ResearchProtocolProfile,
-        decision_scope: str,
+        decision_scope: str | Iterable[str],
     ) -> ConsensusOutcome:
         review_tuple = tuple(reviews)
         bindings = {binding.name: binding for binding in profile.agents}
@@ -53,7 +53,7 @@ class ConsensusResolver:
                 bound_reviews,
                 revisions,
                 bindings,
-                decision_scope,
+                _normalize_decision_scopes(decision_scope),
             )
         if profile.consensus_strategy is ConsensusStrategy.UNANIMOUS_VETO:
             return self._resolve_unanimous_veto(ordered_reviews, revisions)
@@ -68,19 +68,25 @@ class ConsensusResolver:
         reviews: tuple[PeerReview, ...],
         revisions: tuple[PeerReview, ...],
         bindings: dict[str, ProtocolAgentBinding],
-        decision_scope: str,
+        decision_scopes: tuple[str, ...],
     ) -> ConsensusOutcome:
         blocking = tuple(
             review.reviewer
             for review in reviews
             if review.verdict is ReviewVerdict.VETO
-            and decision_scope in bindings[review.reviewer].veto_scopes
+            and any(
+                scope in bindings[review.reviewer].veto_scopes
+                for scope in decision_scopes
+            )
         )
         non_blocking = tuple(
             review.reviewer
             for review in reviews
             if review.verdict is ReviewVerdict.VETO
-            and decision_scope not in bindings[review.reviewer].veto_scopes
+            and not any(
+                scope in bindings[review.reviewer].veto_scopes
+                for scope in decision_scopes
+            )
         )
         approved = not blocking
         return ConsensusOutcome(
@@ -163,6 +169,14 @@ def _is_enabled_reviewer(
 ) -> bool:
     binding = bindings.get(review.reviewer)
     return binding is not None and binding.enabled
+
+
+def _normalize_decision_scopes(
+    decision_scope: str | Iterable[str],
+) -> tuple[str, ...]:
+    if isinstance(decision_scope, str):
+        return (decision_scope,)
+    return tuple(decision_scope)
 
 
 def _order_reviews(

@@ -5,7 +5,18 @@ from dataclasses import asdict, dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from aiops_k8s_agents.agent_adapters import (
+    AgentAdapter,
+    AgentAdapterRegistry,
+    DeterministicApplicationAdapter,
+    DeterministicCostAdapter,
+    DeterministicHAAdapter,
+    DeterministicInfrastructureAdapter,
+    ReviewContext,
+    build_default_agent_adapter_registry,
+)
 from aiops_k8s_agents.application_agent import AIApplicationManagementAgent
+from aiops_k8s_agents.consensus import ConsensusResolver
 from aiops_k8s_agents.cost_agent import CostOptimizationAgent
 from aiops_k8s_agents.evidence import EvidenceProvider, EvidenceSnapshot
 from aiops_k8s_agents.executor import (
@@ -38,6 +49,10 @@ from aiops_k8s_agents.operation_lock import (
 )
 from aiops_k8s_agents.recovery_monitor import RecoveryAssessment, RecoveryMonitor
 from aiops_k8s_agents.research_event_store import ResearchEventSink
+from aiops_k8s_agents.research_protocol import (
+    ResearchProtocolProfile,
+    load_research_protocol,
+)
 from aiops_k8s_agents.validator import (
     CommandValidationError,
     CommandValidator,
@@ -50,25 +65,64 @@ class MutualSupervisionCoordinator:
     validator: CommandValidator
     evidence_provider: EvidenceProvider
     recovery_monitor: RecoveryMonitor
-    policy: MutualSupervisionPolicy
+    policy: MutualSupervisionPolicy | None = None
     mode: ExecutionMode = ExecutionMode.MOCK
     backend: ExecutionBackend = ExecutionBackend.PYTHON
-    ha_agent: AIServiceHASupportAgent = field(default_factory=AIServiceHASupportAgent)
-    app_agent: AIApplicationManagementAgent = field(
-        default_factory=AIApplicationManagementAgent
-    )
-    infra_agent: AISemiconductorInfraOpsAgent = field(
-        default_factory=AISemiconductorInfraOpsAgent
-    )
-    cost_agent: CostOptimizationAgent = field(default_factory=CostOptimizationAgent)
+    ha_agent: AIServiceHASupportAgent | None = None
+    app_agent: AIApplicationManagementAgent | None = None
+    infra_agent: AISemiconductorInfraOpsAgent | None = None
+    cost_agent: CostOptimizationAgent | None = None
     event_store: ResearchEventSink | None = None
     operation_lock_dir: str | Path | None = None
+    protocol: ResearchProtocolProfile | None = None
+    adapter_registry: AgentAdapterRegistry | None = None
+    consensus_resolver: ConsensusResolver = field(default_factory=ConsensusResolver)
+    adapters: dict[str, AgentAdapter] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if isinstance(self.mode, str):
             self.mode = ExecutionMode(self.mode)
         if isinstance(self.backend, str):
             self.backend = ExecutionBackend(self.backend)
+        if self.protocol is None:
+            default_protocol = load_research_protocol(
+                Path(__file__).resolve().parents[2]
+                / "config"
+                / "protocol_profiles"
+                / "four-agent-role-veto-v1.json"
+            )
+            self.protocol = (
+                _profile_with_legacy_policy(default_protocol, self.policy)
+                if self.policy is not None
+                else default_protocol
+            )
+        if self.adapter_registry is None:
+            self.adapter_registry = build_default_agent_adapter_registry()
+        created_adapters = self.adapter_registry.create_profile(self.protocol)
+        self.adapters = {
+            adapter.name: self._with_compatibility_agent(adapter)
+            for adapter in created_adapters
+        }
+
+    def _with_compatibility_agent(self, adapter: AgentAdapter) -> AgentAdapter:
+        if isinstance(adapter, DeterministicHAAdapter) and self.ha_agent is not None:
+            return replace(adapter, agent=self.ha_agent)
+        if (
+            isinstance(adapter, DeterministicApplicationAdapter)
+            and self.app_agent is not None
+        ):
+            return replace(adapter, agent=self.app_agent)
+        if (
+            isinstance(adapter, DeterministicInfrastructureAdapter)
+            and self.infra_agent is not None
+        ):
+            return replace(adapter, agent=self.infra_agent)
+        if (
+            isinstance(adapter, DeterministicCostAdapter)
+            and self.cost_agent is not None
+        ):
+            return replace(adapter, agent=self.cost_agent)
+        return adapter
 
     def run(
         self,
@@ -78,32 +132,50 @@ class MutualSupervisionCoordinator:
         threshold: float,
     ) -> dict[str, Any]:
         run_id = new_trace_id("run")
+        self._record(
+            "protocol_profiles",
+            {
+                "run_id": run_id,
+                **self._protocol_identity(),
+                "consensus_strategy": self.protocol.consensus_strategy.value,
+            },
+        )
+        capability_errors = self._required_capability_errors()
+        if capability_errors:
+            return self._finalize_report(
+                self._configuration_failure_report(
+                    run_id=run_id,
+                    errors=capability_errors,
+                )
+            )
+
         evidence = self.evidence_provider.collect(namespace, deployment)
         self._record("evidence", evidence.to_summary())
-        diagnosis, ha_decision = self.ha_agent.diagnose_evidence(
-            evidence=evidence,
-            metric=metric,
-            threshold=threshold,
-        )
+        diagnosis_adapter = self._single_adapter_for("diagnose")
+        diagnosis_result = diagnosis_adapter.diagnose(evidence, threshold)
+        if diagnosis_result is None:
+            return self._finalize_report(
+                self._configuration_failure_report(
+                    run_id=run_id,
+                    errors=(
+                        f"{diagnosis_adapter.name} did not produce a diagnosis",
+                    ),
+                )
+            )
+        diagnosis, adapter_decision = diagnosis_result
         initial_decisions = [
-            SupervisionDecision(
+            replace(
+                adapter_decision,
                 decision_id=new_trace_id("decision"),
                 run_id=run_id,
                 round_index=0,
-                agent=self.ha_agent.name,
-                decision_type="ha_diagnosis",
-                proposed_action=None,
-                approved=ha_decision.approved,
-                reason=ha_decision.reason,
-                confidence=diagnosis.confidence,
                 evidence_refs=_evidence_refs(evidence, metric),
-                reward=ha_decision.reward,
-                policy_version=self.policy.version,
+                policy_version=self.protocol.version,
             )
         ]
         self._record("initial_decisions", initial_decisions[0])
 
-        if not ha_decision.approved:
+        if not initial_decisions[0].approved:
             return self._finalize_report(
                 self._base_report(
                     run_id=run_id,
@@ -117,12 +189,21 @@ class MutualSupervisionCoordinator:
                 )
             )
 
-        candidates = self.app_agent.generate_recovery_candidates(
-            namespace=namespace,
-            deployment=deployment,
-            diagnosis=diagnosis,
-            evidence=evidence,
-        )
+        proposal_adapter = self._single_adapter_for("propose")
+        proposed_actions = proposal_adapter.propose(diagnosis, evidence) or ()
+        candidates = [
+            RecoveryActionCandidate(
+                action=action,
+                reason=action.reason,
+                expected_effect=action.reason,
+                risk_level="bounded",
+                estimated_cost=0.0,
+                confidence=diagnosis.confidence,
+                priority=max(1.0 - (index * 0.1), 0.0),
+            )
+            for index, action in enumerate(proposed_actions)
+            if action.kind in self.protocol.action_space
+        ]
         executor = KubernetesExecutor(
             validator=self.validator,
             mode=self.mode,
@@ -144,7 +225,7 @@ class MutualSupervisionCoordinator:
 
         max_attempts = min(
             len(candidates),
-            self.policy.max_replan_attempts + 1,
+            self.protocol.max_replan_attempts + 1,
         )
         for candidate_index, candidate in enumerate(candidates[:max_attempts]):
             selected_action, decisions, reviews, rounds = self._negotiate(
@@ -362,14 +443,15 @@ class MutualSupervisionCoordinator:
         decisions: list[SupervisionDecision] = []
         all_reviews: list[PeerReview] = []
         rounds: list[NegotiationRound] = []
+        proposal_agent = self._single_adapter_for("propose").name
 
-        for local_round in range(1, self.policy.max_negotiation_rounds + 1):
+        for local_round in range(1, self.protocol.max_negotiation_rounds + 1):
             round_index = round_offset + local_round
             decision = SupervisionDecision(
                 decision_id=new_trace_id("decision"),
                 run_id=run_id,
                 round_index=round_index,
-                agent=self.app_agent.name,
+                agent=proposal_agent,
                 decision_type="recovery_action_proposal",
                 proposed_action=action,
                 approved=True,
@@ -377,7 +459,7 @@ class MutualSupervisionCoordinator:
                 confidence=_candidate_confidence(candidates, action),
                 evidence_refs=_evidence_refs(evidence, diagnosis.cause),
                 reward=_candidate_reward(candidates, action),
-                policy_version=self.policy.version,
+                policy_version=self._policy_version(),
             )
             decisions.append(decision)
             self._record("initial_decisions", decision)
@@ -392,50 +474,57 @@ class MutualSupervisionCoordinator:
             for review in reviews:
                 self._record("peer_reviews", review)
 
-            vetoes = tuple(
-                review.reviewer
-                for review in reviews
-                if review.verdict == ReviewVerdict.VETO
-            )
             abstentions = tuple(
                 review.reviewer
                 for review in reviews
                 if review.verdict == ReviewVerdict.ABSTAIN
             )
-            revisions = [
-                review
-                for review in reviews
-                if review.verdict == ReviewVerdict.REVISE
-            ]
-            if vetoes or abstentions:
+            decision_scopes = _decision_scopes(action)
+            outcome = self.consensus_resolver.resolve(
+                reviews=reviews,
+                profile=self.protocol,
+                decision_scope=decision_scopes,
+            )
+            if not outcome.approved:
                 round_result = NegotiationRound(
-                        run_id=run_id,
-                        round_index=round_index,
-                        input_decision_ids=(decision.decision_id,),
-                        review_ids=tuple(review.review_id for review in reviews),
-                        revisions=(),
-                        remaining_vetoes=vetoes,
-                        remaining_abstentions=abstentions,
-                        consensus_status="rejected",
-                        selected_action_id=None,
-                    )
+                    run_id=run_id,
+                    round_index=round_index,
+                    input_decision_ids=(decision.decision_id,),
+                    review_ids=tuple(review.review_id for review in reviews),
+                    revisions=(),
+                    remaining_vetoes=outcome.blocking_vetoes,
+                    remaining_abstentions=abstentions,
+                    consensus_status="rejected",
+                    selected_action_id=None,
+                    decision_scopes=decision_scopes,
+                    consensus_strategy=outcome.strategy,
+                    non_blocking_objections=outcome.non_blocking_objections,
+                    consensus_reason=outcome.reason,
+                )
                 rounds.append(round_result)
                 self._record("negotiation_rounds", round_result)
                 return None, decisions, all_reviews, rounds
 
-            if revisions:
-                revised_action, revision_notes = _apply_revisions(action, revisions)
+            if outcome.revisions:
+                revised_action, revision_notes = _apply_revisions(
+                    action,
+                    list(outcome.revisions),
+                )
                 round_result = NegotiationRound(
-                        run_id=run_id,
-                        round_index=round_index,
-                        input_decision_ids=(decision.decision_id,),
-                        review_ids=tuple(review.review_id for review in reviews),
-                        revisions=tuple(revision_notes),
-                        remaining_vetoes=(),
-                        remaining_abstentions=(),
-                        consensus_status="revision_required",
-                        selected_action_id=None,
-                    )
+                    run_id=run_id,
+                    round_index=round_index,
+                    input_decision_ids=(decision.decision_id,),
+                    review_ids=tuple(review.review_id for review in reviews),
+                    revisions=tuple(revision_notes),
+                    remaining_vetoes=outcome.blocking_vetoes,
+                    remaining_abstentions=abstentions,
+                    consensus_status="revision_required",
+                    selected_action_id=None,
+                    decision_scopes=decision_scopes,
+                    consensus_strategy=outcome.strategy,
+                    non_blocking_objections=outcome.non_blocking_objections,
+                    consensus_reason=outcome.reason,
+                )
                 rounds.append(round_result)
                 self._record("negotiation_rounds", round_result)
                 action = revised_action
@@ -443,16 +532,20 @@ class MutualSupervisionCoordinator:
 
             action_id = new_trace_id("action")
             round_result = NegotiationRound(
-                    run_id=run_id,
-                    round_index=round_index,
-                    input_decision_ids=(decision.decision_id,),
-                    review_ids=tuple(review.review_id for review in reviews),
-                    revisions=(),
-                    remaining_vetoes=(),
-                    remaining_abstentions=(),
-                    consensus_status="approved",
-                    selected_action_id=action_id,
-                )
+                run_id=run_id,
+                round_index=round_index,
+                input_decision_ids=(decision.decision_id,),
+                review_ids=tuple(review.review_id for review in reviews),
+                revisions=(),
+                remaining_vetoes=outcome.blocking_vetoes,
+                remaining_abstentions=abstentions,
+                consensus_status="approved",
+                selected_action_id=action_id,
+                decision_scopes=decision_scopes,
+                consensus_strategy=outcome.strategy,
+                non_blocking_objections=outcome.non_blocking_objections,
+                consensus_reason=outcome.reason,
+            )
             rounds.append(round_result)
             self._record("negotiation_rounds", round_result)
             return action, decisions, all_reviews, rounds
@@ -468,80 +561,24 @@ class MutualSupervisionCoordinator:
         execution: CommandResult,
         assessment: RecoveryAssessment,
     ) -> list[PostExecutionReview]:
-        infra_safe = (
-            after_evidence.desired_replicas
-            <= self.infra_agent.max_recommended_replicas
-        )
-        cost_safe = (
-            action.kind != RecoveryActionKind.SCALE_OUT
-            or (action.replicas or 0) <= self.cost_agent.max_cost_safe_replicas
-        )
-        reviews = [
-            (
-                self.ha_agent.name,
-                assessment.recovery_success,
-                (
-                    "Recovery monitor confirms service recovery."
-                    if assessment.recovery_success
-                    else assessment.remaining_problem
-                ),
-                0.92 if assessment.recovery_success else 0.40,
-                ("recovery_monitor", "availability"),
-            ),
-            (
-                self.app_agent.name,
-                execution.valid,
-                (
-                    "Kubernetes application action completed successfully."
-                    if execution.valid
-                    else execution.stderr or "Kubernetes action failed."
-                ),
-                0.95 if execution.valid else 0.30,
-                ("execution_result", "deployment_status"),
-            ),
-            (
-                self.infra_agent.name,
-                infra_safe,
-                (
-                    "Post-execution replica state remains within infrastructure policy."
-                    if infra_safe
-                    else "Post-execution replica state exceeds infrastructure policy."
-                ),
-                0.90,
-                (
-                    f"desired_replicas:{after_evidence.desired_replicas}",
-                    f"infra_max_replicas:{self.infra_agent.max_recommended_replicas}",
-                ),
-            ),
-            (
-                self.cost_agent.name,
-                cost_safe,
-                (
-                    "Post-execution action remains within cost policy."
-                    if cost_safe
-                    else "Post-execution action exceeds cost policy."
-                ),
-                0.88,
-                (
-                    f"action_replicas:{action.replicas}",
-                    f"cost_max_replicas:{self.cost_agent.max_cost_safe_replicas}",
-                ),
-            ),
-        ]
-        return [
-            PostExecutionReview(
-                review_id=new_trace_id("post-review"),
-                run_id=run_id,
-                agent=agent,
-                action_id=action_id,
-                approved=approved,
-                reason=reason,
-                confidence=confidence,
-                evidence_refs=tuple(evidence_refs),
-                policy_version=self.policy.version,
+        del execution
+        reviews: list[PostExecutionReview] = []
+        for adapter in self.adapters.values():
+            if "post_review" not in adapter.capabilities:
+                continue
+            review = adapter.post_review(action, assessment, after_evidence)
+            if review is None:
+                continue
+            reviews.append(
+                replace(
+                    review,
+                    review_id=new_trace_id("post-review"),
+                    run_id=run_id,
+                    action_id=action_id,
+                    policy_version=self._policy_version(),
+                )
             )
-            for agent, approved, reason, confidence, evidence_refs in reviews
-        ]
+        return reviews
 
     def _review_application_action(
         self,
@@ -555,139 +592,24 @@ class MutualSupervisionCoordinator:
         if action is None:
             return []
         reviews: list[PeerReview] = []
-        for reviewer in self.policy.reviewers_for(self.app_agent.name):
-            if reviewer == self.ha_agent.name:
-                reviews.append(
-                    self._ha_review(
-                        run_id,
-                        round_index,
-                        decision,
-                        diagnosis,
-                        evidence,
-                    )
-                )
-            elif reviewer == self.infra_agent.name:
-                reviews.append(
-                    self._infra_review(run_id, round_index, decision, evidence)
-                )
-            elif reviewer == self.cost_agent.name:
-                reviews.append(
-                    self._cost_review(run_id, round_index, decision, evidence)
-                )
+        assert self.protocol is not None
+        for reviewer in self.protocol.review_matrix.get(decision.agent, ()):
+            adapter = self.adapters.get(reviewer)
+            if adapter is None or "review" not in adapter.capabilities:
+                continue
+            review = adapter.review(
+                decision,
+                evidence,
+                ReviewContext(
+                    run_id=run_id,
+                    round_index=round_index,
+                    policy_version=self.protocol.version,
+                    diagnosis=diagnosis,
+                ),
+            )
+            if review is not None:
+                reviews.append(review)
         return reviews
-
-    def _ha_review(
-        self,
-        run_id: str,
-        round_index: int,
-        decision: SupervisionDecision,
-        diagnosis: Diagnosis,
-        evidence: EvidenceSnapshot,
-    ) -> PeerReview:
-        action = decision.proposed_action
-        assert action is not None
-        approved = diagnosis.cause not in {"no_action_required", "unknown_metric"}
-        return PeerReview(
-            review_id=new_trace_id("review"),
-            run_id=run_id,
-            round_index=round_index,
-            reviewer=self.ha_agent.name,
-            target_agent=decision.agent,
-            target_decision_id=decision.decision_id,
-            verdict=ReviewVerdict.APPROVE if approved else ReviewVerdict.ABSTAIN,
-            reason=(
-                f"{action.kind.value} addresses diagnosed cause={diagnosis.cause}."
-                if approved
-                else "HA evidence does not justify a recovery action."
-            ),
-            suggested_action=None,
-            confidence=diagnosis.confidence,
-            evidence_refs=_evidence_refs(evidence, diagnosis.cause),
-            policy_version=self.policy.version,
-        )
-
-    def _infra_review(
-        self,
-        run_id: str,
-        round_index: int,
-        decision: SupervisionDecision,
-        evidence: EvidenceSnapshot,
-    ) -> PeerReview:
-        action = decision.proposed_action
-        assert action is not None
-        result = self.infra_agent.review(action)
-        return PeerReview(
-            review_id=new_trace_id("review"),
-            run_id=run_id,
-            round_index=round_index,
-            reviewer=self.infra_agent.name,
-            target_agent=decision.agent,
-            target_decision_id=decision.decision_id,
-            verdict=(
-                ReviewVerdict.APPROVE
-                if result.approved
-                else ReviewVerdict.VETO
-            ),
-            reason=result.reason,
-            suggested_action=None,
-            confidence=0.92 if result.approved else 0.98,
-            evidence_refs=(
-                f"desired_replicas:{evidence.desired_replicas}",
-                f"infra_max_replicas:{self.infra_agent.max_recommended_replicas}",
-            ),
-            policy_version=self.policy.version,
-        )
-
-    def _cost_review(
-        self,
-        run_id: str,
-        round_index: int,
-        decision: SupervisionDecision,
-        evidence: EvidenceSnapshot,
-    ) -> PeerReview:
-        action = decision.proposed_action
-        assert action is not None
-        result = self.cost_agent.review(action)
-        verdict = ReviewVerdict.APPROVE
-        suggested_action = None
-        if not result.approved:
-            if (
-                action.kind == RecoveryActionKind.SCALE_OUT
-                and action.replicas is not None
-                and self.cost_agent.max_cost_safe_replicas >= 1
-                and (
-                    self.cost_agent.max_cost_safe_replicas
-                    > evidence.desired_replicas
-                )
-                and action.replicas > self.cost_agent.max_cost_safe_replicas
-            ):
-                verdict = ReviewVerdict.REVISE
-                suggested_action = replace(
-                    action,
-                    replicas=self.cost_agent.max_cost_safe_replicas,
-                    reason=(
-                        f"{action.reason}; revised to satisfy cost replica policy"
-                    ),
-                )
-            else:
-                verdict = ReviewVerdict.VETO
-        return PeerReview(
-            review_id=new_trace_id("review"),
-            run_id=run_id,
-            round_index=round_index,
-            reviewer=self.cost_agent.name,
-            target_agent=decision.agent,
-            target_decision_id=decision.decision_id,
-            verdict=verdict,
-            reason=result.reason,
-            suggested_action=suggested_action,
-            confidence=0.91,
-            evidence_refs=(
-                f"desired_replicas:{evidence.desired_replicas}",
-                f"cost_max_replicas:{self.cost_agent.max_cost_safe_replicas}",
-            ),
-            policy_version=self.policy.version,
-        )
 
     def _validate_action(self, action: RecoveryAction) -> dict[str, Any]:
         try:
@@ -722,7 +644,25 @@ class MutualSupervisionCoordinator:
             "mode": self.mode.value,
             "final_status": final_status,
             "run_id": run_id,
-            "policy_version": self.policy.version,
+            "policy_version": self._policy_version(),
+            "protocol_profile": self._protocol_identity(),
+            "active_agents": list(self.adapters),
+            "agent_runtimes": {
+                name: adapter.runtime for name, adapter in self.adapters.items()
+            },
+            "agent_contributions": {
+                name: {
+                    "decisions": 0,
+                    "approvals": 0,
+                    "revisions": 0,
+                    "vetoes": 0,
+                    "post_reviews": 0,
+                    "reward": 0.0,
+                }
+                for name in self.adapters
+            },
+            "fallback_action": self.protocol.fallback_action.value,
+            "configuration_errors": [],
             "evidence": evidence.to_summary(),
             "diagnosis": asdict(diagnosis),
             "initial_decisions": [
@@ -735,6 +675,7 @@ class MutualSupervisionCoordinator:
                 "round_count": len(rounds),
                 "rounds": [to_serializable(item) for item in rounds],
                 "consensus": consensus,
+                "strategy": self.protocol.consensus_strategy.value,
             },
             "selected_action": {},
             "safety_validation": {
@@ -758,10 +699,126 @@ class MutualSupervisionCoordinator:
             },
         }
 
+    def _protocol_identity(self) -> dict[str, str]:
+        assert self.protocol is not None
+        return {
+            "profile_id": self.protocol.profile_id,
+            "version": self.protocol.version,
+            "config_hash": self.protocol.config_hash,
+        }
+
+    def _policy_version(self) -> str:
+        return (
+            self.policy.version
+            if self.policy is not None
+            else self.protocol.version
+        )
+
+    def _required_capability_errors(self) -> tuple[str, ...]:
+        errors = []
+        for capability in ("diagnose", "propose"):
+            matching = [
+                adapter.name
+                for adapter in self.adapters.values()
+                if capability in adapter.capabilities
+            ]
+            if len(matching) != 1:
+                errors.append(
+                    f"expected exactly one active {capability} adapter; "
+                    f"found {len(matching)}"
+                )
+        return tuple(errors)
+
+    def _single_adapter_for(self, capability: str) -> AgentAdapter:
+        return next(
+            adapter
+            for adapter in self.adapters.values()
+            if capability in adapter.capabilities
+        )
+
+    def _configuration_failure_report(
+        self,
+        *,
+        run_id: str,
+        errors: tuple[str, ...],
+    ) -> dict[str, Any]:
+        return {
+            "command": "mutual-supervision-run",
+            "valid": False,
+            "mode": self.mode.value,
+            "final_status": "safe_stopped",
+            "run_id": run_id,
+            "policy_version": self._policy_version(),
+            "protocol_profile": self._protocol_identity(),
+            "active_agents": list(self.adapters),
+            "agent_runtimes": {
+                name: adapter.runtime for name, adapter in self.adapters.items()
+            },
+            "agent_contributions": {
+                name: {
+                    "decisions": 0,
+                    "approvals": 0,
+                    "revisions": 0,
+                    "vetoes": 0,
+                    "post_reviews": 0,
+                    "reward": 0.0,
+                }
+                for name in self.adapters
+            },
+            "fallback_action": self.protocol.fallback_action.value,
+            "configuration_errors": list(errors),
+            "evidence": {},
+            "diagnosis": {},
+            "initial_decisions": [],
+            "peer_reviews": [],
+            "negotiation": {
+                "round_count": 0,
+                "rounds": [],
+                "consensus": "configuration_rejected",
+                "strategy": self.protocol.consensus_strategy.value,
+            },
+            "selected_action": {},
+            "safety_validation": {
+                "valid": False,
+                "command": "",
+                "stderr": "required coordinator capability is unavailable",
+            },
+            "execution_result": asdict(
+                _empty_result(
+                    self.mode.value,
+                    "required coordinator capability is unavailable",
+                )
+            ),
+            "recovery_monitoring": {},
+            "executed_actions": [],
+            "post_execution_reviews": [],
+            "replanning_attempts": [],
+            "human_review_required": self.protocol.human_review_on_failure,
+            "metadata": {
+                "coordinator": "AI-MCMP",
+                "controller": "mutual_supervision_profile_driven",
+                "safety": "bounded_structured_action",
+                "guard_backend": self.backend.value,
+            },
+        }
+
     def _finalize_report(self, report: dict[str, Any]) -> dict[str, Any]:
+        report["agent_contributions"] = _agent_contributions(
+            report,
+            tuple(self.adapters),
+        )
         if self.event_store is None:
             return report
 
+        for agent, contribution in report["agent_contributions"].items():
+            self._record(
+                "agent_contributions",
+                {
+                    "run_id": report["run_id"],
+                    "agent": agent,
+                    **contribution,
+                },
+            )
         artifacts = self.event_store.finalize(report)
         if artifacts:
             report["artifacts"] = artifacts
@@ -769,7 +826,18 @@ class MutualSupervisionCoordinator:
 
     def _record(self, stream: str, value: Any) -> None:
         if self.event_store is not None:
-            self.event_store.append(stream, value)
+            event = to_serializable(value)
+            if isinstance(event, dict):
+                event = {
+                    **event,
+                    "protocol_profile": self._protocol_identity(),
+                    "active_agents": list(self.adapters),
+                    "agent_runtimes": {
+                        name: adapter.runtime
+                        for name, adapter in self.adapters.items()
+                    },
+                }
+            self.event_store.append(stream, event)
 
     def _operation_context(
         self,
@@ -783,6 +851,42 @@ class MutualSupervisionCoordinator:
             deployment=deployment,
             lock_dir=self.operation_lock_dir,
         )
+
+
+def _profile_with_legacy_policy(
+    profile: ResearchProtocolProfile,
+    policy: MutualSupervisionPolicy,
+) -> ResearchProtocolProfile:
+    return ResearchProtocolProfile.from_dict(
+        {
+            "profile_id": profile.profile_id,
+            "version": profile.version,
+            "agents": [
+                {
+                    "name": binding.name,
+                    "implementation_id": binding.implementation_id,
+                    "runtime": binding.runtime,
+                    "enabled": binding.enabled,
+                    "veto_scopes": list(binding.veto_scopes),
+                    "consensus_weight": binding.consensus_weight,
+                    "capabilities": list(binding.capabilities),
+                }
+                for binding in profile.agents
+            ],
+            "review_matrix": {
+                target: list(reviewers)
+                for target, reviewers in policy.review_matrix.items()
+            },
+            "consensus_strategy": profile.consensus_strategy.value,
+            "max_negotiation_rounds": policy.max_negotiation_rounds,
+            "max_replan_attempts": policy.max_replan_attempts,
+            "fallback_action": policy.fallback_action.value,
+            "human_review_on_failure": profile.human_review_on_failure,
+            "action_space": [action.value for action in profile.action_space],
+            "reward_weights": dict(profile.reward_weights),
+            "experiment_tags": list(profile.experiment_tags),
+        }
+    )
 
 
 def _apply_revisions(
@@ -811,6 +915,22 @@ def _apply_revisions(
     return suggestions[0], [f"action:{action.kind.value}->{suggestions[0].kind.value}"]
 
 
+def _decision_scopes(action: RecoveryAction) -> tuple[str, ...]:
+    return {
+        RecoveryActionKind.OBSERVE_ONLY: ("availability",),
+        RecoveryActionKind.ROLLOUT_RESTART: (
+            "recovery",
+            "action_validity",
+        ),
+        RecoveryActionKind.SCALE_OUT: (
+            "capacity",
+            "resource_safety",
+            "budget",
+            "cost_efficiency",
+        ),
+    }[action.kind]
+
+
 def _candidate_confidence(
     candidates: list[RecoveryActionCandidate],
     action: RecoveryAction,
@@ -829,6 +949,62 @@ def _candidate_reward(
         if candidate.action.kind == action.kind:
             return candidate.priority
     return 0.0
+
+
+def _agent_contributions(
+    report: dict[str, Any],
+    active_agents: tuple[str, ...],
+) -> dict[str, dict[str, int | float]]:
+    contributions: dict[str, dict[str, int | float]] = {
+        name: {
+            "decisions": 0,
+            "approvals": 0,
+            "revisions": 0,
+            "vetoes": 0,
+            "post_reviews": 0,
+            "reward": 0.0,
+        }
+        for name in active_agents
+    }
+    reward_samples: dict[str, list[float]] = {
+        name: [] for name in active_agents
+    }
+
+    for decision in report.get("initial_decisions") or ():
+        agent = decision.get("agent")
+        if agent not in contributions:
+            continue
+        contributions[agent]["decisions"] += 1
+        reward_samples[agent].append(float(decision.get("reward", 0.0)))
+
+    verdict_fields = {
+        "approve": "approvals",
+        "revise": "revisions",
+        "veto": "vetoes",
+    }
+    for review in report.get("peer_reviews") or ():
+        agent = review.get("reviewer")
+        if agent not in contributions:
+            continue
+        field_name = verdict_fields.get(review.get("verdict"))
+        if field_name is not None:
+            contributions[agent][field_name] += 1
+        reward_samples[agent].append(float(review.get("confidence", 0.0)))
+
+    for review in report.get("post_execution_reviews") or ():
+        agent = review.get("agent")
+        if agent not in contributions:
+            continue
+        contributions[agent]["post_reviews"] += 1
+        reward_samples[agent].append(float(review.get("confidence", 0.0)))
+
+    for agent, samples in reward_samples.items():
+        if samples:
+            contributions[agent]["reward"] = round(
+                sum(samples) / len(samples),
+                6,
+            )
+    return contributions
 
 
 def _evidence_refs(

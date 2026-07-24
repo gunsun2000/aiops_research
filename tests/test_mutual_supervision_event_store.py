@@ -27,11 +27,34 @@ def test_jsonl_event_store_writes_traceable_research_artifacts(tmp_path):
         {
             "run_id": "run-1",
             "policy_version": "mutual-v1",
+            "protocol_profile": {
+                "profile_id": "four-agent-role-veto-v1",
+                "version": "1.0.0",
+                "config_hash": "abc123",
+            },
+            "active_agents": ["AIServiceHASupportAgent"],
+            "agent_runtimes": {
+                "AIServiceHASupportAgent": "deterministic",
+            },
+            "agent_contributions": {
+                "AIServiceHASupportAgent": {
+                    "decisions": 1,
+                    "approvals": 1,
+                    "revisions": 0,
+                    "vetoes": 0,
+                    "post_reviews": 1,
+                    "reward": 0.9,
+                }
+            },
             "valid": True,
             "final_status": "recovered",
             "selected_action": {"kind": "scale_out", "replicas": 2},
             "peer_reviews": [{"verdict": "approve"}],
-            "negotiation": {"round_count": 1, "consensus": "approved"},
+            "negotiation": {
+                "round_count": 1,
+                "consensus": "approved",
+                "strategy": "role_based_veto",
+            },
             "post_execution_reviews": [{"approved": True}],
             "human_review_required": False,
         }
@@ -53,7 +76,22 @@ def test_jsonl_event_store_writes_traceable_research_artifacts(tmp_path):
     ) as stream:
         row = next(csv.DictReader(stream))
     assert row["consensus"] == "approved"
+    assert row["consensus_strategy"] == "role_based_veto"
+    assert row["protocol_profile_id"] == "four-agent-role-veto-v1"
+    assert row["protocol_profile_version"] == "1.0.0"
+    assert row["protocol_config_hash"] == "abc123"
+    assert row["active_agents"] == "AIServiceHASupportAgent"
+    assert row["agent_runtimes"] == "AIServiceHASupportAgent=deterministic"
     assert row["selected_action"] == "scale_out"
+    markdown = Path(paths["final_report_md"]).read_text(encoding="utf-8")
+    assert "four-agent-role-veto-v1" in markdown
+    assert "AIServiceHASupportAgent=deterministic" in markdown
+    assert "role_based_veto" in markdown
+
+
+def test_profile_and_contribution_streams_are_available():
+    assert "protocol_profiles" in EVENT_STREAMS
+    assert "agent_contributions" in EVENT_STREAMS
 
 
 def test_in_memory_event_store_retains_stream_order_and_final_report():

@@ -76,6 +76,26 @@ def test_role_veto_blocks_matching_reviewer_scope(resolver, role_profile):
     assert outcome.blocking_vetoes == ("AISemiconductorInfraOpsAgent",)
 
 
+def test_role_veto_blocks_reviewers_matching_any_decision_scope(
+    resolver, role_profile
+):
+    outcome = resolver.resolve(
+        reviews=(
+            review("AISemiconductorInfraOpsAgent", ReviewVerdict.VETO),
+            review("CostOptimizationAgent", ReviewVerdict.VETO),
+        ),
+        profile=role_profile,
+        decision_scope=("capacity", "budget"),
+    )
+
+    assert not outcome.approved
+    assert outcome.blocking_vetoes == (
+        "AISemiconductorInfraOpsAgent",
+        "CostOptimizationAgent",
+    )
+    assert outcome.non_blocking_objections == ()
+
+
 def test_unanimous_veto_blocks_on_any_veto(resolver, unanimous_profile):
     outcome = resolver.resolve(
         reviews=(review("CostOptimizationAgent", ReviewVerdict.VETO),),
