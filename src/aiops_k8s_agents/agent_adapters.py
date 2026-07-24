@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Callable, Protocol
 
 from aiops_k8s_agents.agent_registry import AgentRegistryError
@@ -17,7 +18,11 @@ from aiops_k8s_agents.mutual_supervision_models import (
     SupervisionDecision,
 )
 from aiops_k8s_agents.recovery_monitor import RecoveryAssessment
-from aiops_k8s_agents.research_protocol import ProtocolAgentBinding
+from aiops_k8s_agents.research_protocol import (
+    ProtocolAgentBinding,
+    ResearchProtocolProfile,
+    load_research_protocol,
+)
 
 
 @dataclass(frozen=True)
@@ -30,6 +35,7 @@ class ReviewContext:
 class AgentAdapter(Protocol):
     name: str
     runtime: str
+    capabilities: tuple[str, ...]
 
     def diagnose(
         self, evidence: EvidenceSnapshot, threshold: float
@@ -37,7 +43,7 @@ class AgentAdapter(Protocol):
 
     def propose(
         self, diagnosis: Diagnosis, evidence: EvidenceSnapshot
-    ) -> tuple[RecoveryAction, ...]: ...
+    ) -> tuple[RecoveryAction, ...] | None: ...
 
     def review(
         self,
@@ -66,6 +72,10 @@ class DeterministicHAAdapter:
     @property
     def runtime(self) -> str:
         return self.binding.runtime
+
+    @property
+    def capabilities(self) -> tuple[str, ...]:
+        return ("diagnose",)
 
     def diagnose(
         self, evidence: EvidenceSnapshot, threshold: float
@@ -99,9 +109,9 @@ class DeterministicHAAdapter:
 
     def propose(
         self, diagnosis: Diagnosis, evidence: EvidenceSnapshot
-    ) -> tuple[RecoveryAction, ...]:
+    ) -> tuple[RecoveryAction, ...] | None:
         del diagnosis, evidence
-        return ()
+        return None
 
     def review(
         self,
@@ -136,6 +146,10 @@ class DeterministicApplicationAdapter:
     @property
     def runtime(self) -> str:
         return self.binding.runtime
+
+    @property
+    def capabilities(self) -> tuple[str, ...]:
+        return ("propose",)
 
     def diagnose(
         self, evidence: EvidenceSnapshot, threshold: float
@@ -188,6 +202,10 @@ class DeterministicInfrastructureAdapter:
     def runtime(self) -> str:
         return self.binding.runtime
 
+    @property
+    def capabilities(self) -> tuple[str, ...]:
+        return ("review",)
+
     def diagnose(
         self, evidence: EvidenceSnapshot, threshold: float
     ) -> tuple[Diagnosis, SupervisionDecision] | None:
@@ -196,9 +214,9 @@ class DeterministicInfrastructureAdapter:
 
     def propose(
         self, diagnosis: Diagnosis, evidence: EvidenceSnapshot
-    ) -> tuple[RecoveryAction, ...]:
+    ) -> tuple[RecoveryAction, ...] | None:
         del diagnosis, evidence
-        return ()
+        return None
 
     def review(
         self,
@@ -250,6 +268,10 @@ class DeterministicCostAdapter:
     def runtime(self) -> str:
         return self.binding.runtime
 
+    @property
+    def capabilities(self) -> tuple[str, ...]:
+        return ("review",)
+
     def diagnose(
         self, evidence: EvidenceSnapshot, threshold: float
     ) -> tuple[Diagnosis, SupervisionDecision] | None:
@@ -258,9 +280,9 @@ class DeterministicCostAdapter:
 
     def propose(
         self, diagnosis: Diagnosis, evidence: EvidenceSnapshot
-    ) -> tuple[RecoveryAction, ...]:
+    ) -> tuple[RecoveryAction, ...] | None:
         del diagnosis, evidence
-        return ()
+        return None
 
     def review(
         self,
@@ -302,16 +324,75 @@ class DeterministicCostAdapter:
 AgentAdapterFactory = Callable[[ProtocolAgentBinding], AgentAdapter]
 
 
+@dataclass(frozen=True)
+class AgentAdapterMetadata:
+    supported_runtimes: tuple[str, ...]
+    capabilities: tuple[str, ...]
+
+
 @dataclass
 class AgentAdapterRegistry:
     factories: dict[str, AgentAdapterFactory]
+    metadata: dict[str, AgentAdapterMetadata] = field(default_factory=dict)
+    _validated_bindings: set[ProtocolAgentBinding] = field(
+        default_factory=set,
+        init=False,
+        repr=False,
+    )
 
-    def register(self, implementation_id: str, factory: AgentAdapterFactory) -> None:
+    def register(
+        self,
+        implementation_id: str,
+        factory: AgentAdapterFactory,
+        *,
+        supported_runtimes: tuple[str, ...] = (),
+        capabilities: tuple[str, ...] = (),
+    ) -> None:
         if implementation_id in self.factories:
             raise AgentRegistryError(f"duplicate implementation: {implementation_id}")
         self.factories[implementation_id] = factory
+        self.metadata[implementation_id] = AgentAdapterMetadata(
+            supported_runtimes=supported_runtimes,
+            capabilities=capabilities,
+        )
+
+    def validate_profile(self, profile: ResearchProtocolProfile) -> None:
+        for binding in profile.agents:
+            try:
+                metadata = self.metadata[binding.implementation_id]
+            except KeyError as exc:
+                raise AgentRegistryError(
+                    f"unregistered implementation: {binding.implementation_id}"
+                ) from exc
+            if binding.runtime not in metadata.supported_runtimes:
+                raise AgentRegistryError(
+                    f"unsupported runtime: {binding.runtime} for "
+                    f"{binding.implementation_id}"
+                )
+            if binding.enabled and binding.capabilities != metadata.capabilities:
+                raise AgentRegistryError(
+                    "capabilities do not match implementation metadata: "
+                    + binding.implementation_id
+                )
+        self._validated_bindings.update(profile.agents)
+
+    def load_validated_profile(self, path: str | Path) -> ResearchProtocolProfile:
+        profile = load_research_protocol(path)
+        self.validate_profile(profile)
+        return profile
+
+    def create_profile(
+        self,
+        profile: ResearchProtocolProfile,
+    ) -> tuple[AgentAdapter, ...]:
+        self.validate_profile(profile)
+        return tuple(self.create(binding) for binding in profile.enabled_agents)
 
     def create(self, binding: ProtocolAgentBinding) -> AgentAdapter:
+        if binding not in self._validated_bindings:
+            raise AgentRegistryError(
+                "binding must be validated as part of a profile before creation"
+            )
         try:
             factory = self.factories[binding.implementation_id]
         except KeyError as exc:
@@ -323,10 +404,30 @@ class AgentAdapterRegistry:
 
 def build_default_agent_adapter_registry() -> AgentAdapterRegistry:
     registry = AgentAdapterRegistry(factories={})
-    registry.register("deterministic-ha", _build_ha_adapter)
-    registry.register("deterministic-application", _build_application_adapter)
-    registry.register("deterministic-infrastructure", _build_infrastructure_adapter)
-    registry.register("deterministic-cost", _build_cost_adapter)
+    registry.register(
+        "deterministic-ha",
+        _build_ha_adapter,
+        supported_runtimes=("deterministic",),
+        capabilities=("diagnose",),
+    )
+    registry.register(
+        "deterministic-application",
+        _build_application_adapter,
+        supported_runtimes=("deterministic",),
+        capabilities=("propose",),
+    )
+    registry.register(
+        "deterministic-infrastructure",
+        _build_infrastructure_adapter,
+        supported_runtimes=("deterministic",),
+        capabilities=("review",),
+    )
+    registry.register(
+        "deterministic-cost",
+        _build_cost_adapter,
+        supported_runtimes=("deterministic",),
+        capabilities=("review",),
+    )
     return registry
 
 

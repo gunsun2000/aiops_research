@@ -29,6 +29,7 @@ _BINDING_KEYS = frozenset(
         "enabled",
         "veto_scopes",
         "consensus_weight",
+        "capabilities",
     }
 )
 _PROFILE_KEYS = frozenset(
@@ -92,6 +93,7 @@ class ProtocolAgentBinding:
     enabled: bool
     veto_scopes: tuple[str, ...]
     consensus_weight: float
+    capabilities: tuple[str, ...] = ()
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ProtocolAgentBinding:
@@ -107,6 +109,15 @@ class ProtocolAgentBinding:
         scopes = tuple(_required_text({"value": item}, "value", "veto scope") for item in raw_scopes)
         if len(set(scopes)) != len(scopes):
             raise ValueError("veto_scopes must not contain duplicates")
+        raw_capabilities = _required_list(
+            source.get("capabilities"), "capabilities"
+        )
+        capabilities = tuple(
+            _required_text({"value": item}, "value", "capability")
+            for item in raw_capabilities
+        )
+        if len(set(capabilities)) != len(capabilities):
+            raise ValueError("capabilities must not contain duplicates")
         enabled = source.get("enabled")
         if not isinstance(enabled, bool):
             raise ValueError("enabled must be a boolean")
@@ -122,6 +133,7 @@ class ProtocolAgentBinding:
             consensus_weight=_weight(
                 source.get("consensus_weight"), "consensus_weight"
             ),
+            capabilities=capabilities,
         )
 
 

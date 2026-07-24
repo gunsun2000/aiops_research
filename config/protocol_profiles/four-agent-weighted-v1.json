@@ -8,7 +8,8 @@
       "runtime": "deterministic",
       "enabled": true,
       "veto_scopes": ["availability", "recovery"],
-      "consensus_weight": 0.4
+      "consensus_weight": 0.4,
+      "capabilities": ["diagnose"]
     },
     {
       "name": "AIApplicationManagementAgent",
@@ -16,7 +17,8 @@
       "runtime": "deterministic",
       "enabled": true,
       "veto_scopes": ["action_validity", "target_alignment"],
-      "consensus_weight": 0.3
+      "consensus_weight": 0.3,
+      "capabilities": ["propose"]
     },
     {
       "name": "AISemiconductorInfraOpsAgent",
@@ -24,7 +26,8 @@
       "runtime": "deterministic",
       "enabled": true,
       "veto_scopes": ["capacity", "resource_safety"],
-      "consensus_weight": 0.2
+      "consensus_weight": 0.2,
+      "capabilities": ["review"]
     },
     {
       "name": "CostOptimizationAgent",
@@ -32,7 +35,8 @@
       "runtime": "deterministic",
       "enabled": true,
       "veto_scopes": ["budget", "cost_efficiency"],
-      "consensus_weight": 0.1
+      "consensus_weight": 0.1,
+      "capabilities": ["review"]
     }
   ],
   "review_matrix": {
