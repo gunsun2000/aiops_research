@@ -4,13 +4,14 @@
 
 ## 목적
 
-Control Plane UI는 기존 연구 코어를 바꾸지 않고 다음 내용을 하나의 화면에서 보여줍니다.
+Control Plane UI는 기존 연구 코어를 바꾸지 않고 목적별 독립 화면을 제공합니다.
 
-- 4-Agent 역할 구조와 허용 action
-- 장애 주입, 관측, Agent 판단, 안전 검증, 피드백으로 이어지는 전체 흐름
-- mock 기반 4-Agent 판단 결과
-- Python Validator와 선택적 Go Guard 경계
-- 최근 recovery 실험 결과, reward ranking, 정량 그래프
+- 대시보드: 연구 상태와 전체 운영 흐름
+- 장애 실험: Chaos Mesh 장애 4종과 action 비교 매트릭스
+- 4-Agent 판단: mock 기반 역할별 decision, action, reward
+- 안전 검증: Python Validator와 선택적 Go Guard 경계
+- 실험 결과: 최근 recovery 결과, reward ranking, 정량 artifact
+- 연구 문서: 실행, 시험, 정책, 분석 가이드
 
 UI는 연구 설명과 안전한 mock 판단 확인을 위한 시연 화면입니다. 실제 Kubernetes `real` 제어는 기존 CLI와 명시적 확인 절차로 수행합니다.
 
@@ -64,17 +65,17 @@ aiops-control-plane
 
 ## 화면 구성
 
-| 화면 | 의미 |
-| --- | --- |
-| Left Side Panel | 연구 메뉴, 현재 상태, 주요 문서 링크 |
-| Hero | 연구 제목, 핵심 문제, 시연용 진입 버튼 |
-| 연구의 핵심 | 역할 분리, 안전 경계, 실험 근거를 3개 카드로 요약 |
-| 시스템 구조 | 장애 주입부터 피드백 분석까지의 end-to-end 흐름 |
-| 4-Agent 판단 구조 | HA, 응용관리, 인프라, 비용 Agent의 역할과 허용 action |
-| 실험 근거 | 최근 recovery-action-pilot 결과와 reward policy ranking |
-| Research Artifacts | 실행 가이드, 시험 가이드, 정책 문서, 정량 분석 문서 링크 |
-| 안전한 판단 데모 | 실제 클러스터를 건드리지 않는 mock 4-Agent 판단 실행 |
-| Agent Consensus | Agent별 decision, action, reward 표 |
+| 화면 | Hash route | 내용 |
+| --- | --- | --- |
+| 대시보드 | `#/dashboard` | 연구 상태, 4-Agent, 6단계 운영 흐름, 최근 실험 |
+| 장애 실험 | `#/experiments` | 장애 4종, action 3종, 36회 실험 매트릭스 |
+| 4-Agent 판단 | `#/decision` | mock 장애 입력, Agent별 판단, 합의와 검증 명령 |
+| 안전 검증 | `#/safety` | Registry, consensus, Validator, Guard, dry-run 경계 |
+| 실험 결과 | `#/evidence` | JSONL, reward ranking, CSV·PNG·SVG artifact |
+| 연구 문서 | `#/documents` | 실행·시험·정책·정량 분석 가이드와 전체 구성도 |
+
+사이드바는 같은 문서 안의 위치로 스크롤하지 않습니다. 메뉴를 선택하면 중앙
+workspace 전체가 해당 기능 화면으로 교체됩니다.
 
 ## 안전 정책
 

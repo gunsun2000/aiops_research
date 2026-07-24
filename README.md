@@ -72,7 +72,8 @@ go test ./...
 ## Control Plane UI
 
 교수님 시연과 연구실 점검을 위해 FastAPI 기반 웹 Control Plane을 제공합니다.
-이 화면은 외부 frontend build 없이 동작하며, 연구 구조와 최신 실험 근거를 한 곳에서 보여줍니다.
+사이드바에서 대시보드, 장애 실험, 4-Agent 판단, 안전 검증, 실험 결과,
+연구 문서를 독립 화면으로 전환할 수 있습니다.
 
 ```bash
 python -m pip install -e ".[ui,dev,autogen]"
