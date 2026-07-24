@@ -98,11 +98,20 @@ class MutualSupervisionCoordinator:
             )
         if self.adapter_registry is None:
             self.adapter_registry = build_default_agent_adapter_registry()
+        self.protocol.validate_integrity()
         created_adapters = self.adapter_registry.create_profile(self.protocol)
-        self.adapters = {
-            adapter.name: self._with_compatibility_agent(adapter)
-            for adapter in created_adapters
-        }
+        self.adapters = {}
+        for binding, adapter in zip(
+            self.protocol.enabled_agents,
+            created_adapters,
+            strict=True,
+        ):
+            compatible_adapter = self._with_compatibility_agent(adapter)
+            self.adapter_registry.validate_adapter(
+                binding,
+                compatible_adapter,
+            )
+            self.adapters[binding.name] = compatible_adapter
 
     def _with_compatibility_agent(self, adapter: AgentAdapter) -> AgentAdapter:
         if isinstance(adapter, DeterministicHAAdapter) and self.ha_agent is not None:
@@ -139,6 +148,7 @@ class MutualSupervisionCoordinator:
                 **self._protocol_identity(),
                 "consensus_strategy": self.protocol.consensus_strategy.value,
             },
+            run_id,
         )
         capability_errors = self._required_capability_errors()
         if capability_errors:
@@ -150,9 +160,13 @@ class MutualSupervisionCoordinator:
             )
 
         evidence = self.evidence_provider.collect(namespace, deployment)
-        self._record("evidence", evidence.to_summary())
+        self._record("evidence", evidence.to_summary(), run_id)
         diagnosis_adapter = self._single_adapter_for("diagnose")
-        diagnosis_result = diagnosis_adapter.diagnose(evidence, threshold)
+        diagnosis_result = diagnosis_adapter.diagnose(
+            evidence,
+            metric,
+            threshold,
+        )
         if diagnosis_result is None:
             return self._finalize_report(
                 self._configuration_failure_report(
@@ -173,9 +187,13 @@ class MutualSupervisionCoordinator:
                 policy_version=self.protocol.version,
             )
         ]
-        self._record("initial_decisions", initial_decisions[0])
+        self._record("initial_decisions", initial_decisions[0], run_id)
 
         if not initial_decisions[0].approved:
+            missing_requested_metric = (
+                diagnosis.cause == "unknown_metric"
+                and bool(diagnosis.evidence.get("missing_evidence"))
+            )
             return self._finalize_report(
                 self._base_report(
                     run_id=run_id,
@@ -184,8 +202,16 @@ class MutualSupervisionCoordinator:
                     initial_decisions=initial_decisions,
                     peer_reviews=[],
                     rounds=[],
-                    final_status="no_action_required",
-                    human_review_required=False,
+                    final_status=(
+                        "safe_stopped"
+                        if missing_requested_metric
+                        else "no_action_required"
+                    ),
+                    human_review_required=(
+                        self.protocol.human_review_on_failure
+                        if missing_requested_metric
+                        else False
+                    ),
                 )
             )
 
@@ -255,7 +281,7 @@ class MutualSupervisionCoordinator:
             last_action = selected_action
             validation = self._validate_action(selected_action)
             last_validation = validation
-            self._record("safety_validations", validation)
+            self._record("safety_validations", validation, run_id)
             if not validation["valid"]:
                 report = self._base_report(
                     run_id=run_id,
@@ -285,6 +311,7 @@ class MutualSupervisionCoordinator:
                             **execution_event,
                             "event_type": "execution_dispatched",
                         },
+                        run_id,
                     )
                     execution = executor.execute_recovery(selected_action)
                     last_execution = execution
@@ -295,6 +322,7 @@ class MutualSupervisionCoordinator:
                             "event_type": "execution_completed",
                             "execution_result": asdict(execution),
                         },
+                        run_id,
                     )
                     if execution.valid:
                         executed_actions.append(selected_action)
@@ -337,7 +365,7 @@ class MutualSupervisionCoordinator:
 
             all_post_reviews.extend(post_reviews)
             for post_review in post_reviews:
-                self._record("post_execution_reviews", post_review)
+                self._record("post_execution_reviews", post_review, run_id)
             recovered = (
                 execution.valid
                 and assessment.recovery_success
@@ -462,7 +490,7 @@ class MutualSupervisionCoordinator:
                 policy_version=self._policy_version(),
             )
             decisions.append(decision)
-            self._record("initial_decisions", decision)
+            self._record("initial_decisions", decision, run_id)
             reviews = self._review_application_action(
                 run_id=run_id,
                 round_index=round_index,
@@ -472,7 +500,7 @@ class MutualSupervisionCoordinator:
             )
             all_reviews.extend(reviews)
             for review in reviews:
-                self._record("peer_reviews", review)
+                self._record("peer_reviews", review, run_id)
 
             abstentions = tuple(
                 review.reviewer
@@ -502,7 +530,7 @@ class MutualSupervisionCoordinator:
                     consensus_reason=outcome.reason,
                 )
                 rounds.append(round_result)
-                self._record("negotiation_rounds", round_result)
+                self._record("negotiation_rounds", round_result, run_id)
                 return None, decisions, all_reviews, rounds
 
             if outcome.revisions:
@@ -526,7 +554,7 @@ class MutualSupervisionCoordinator:
                     consensus_reason=outcome.reason,
                 )
                 rounds.append(round_result)
-                self._record("negotiation_rounds", round_result)
+                self._record("negotiation_rounds", round_result, run_id)
                 action = revised_action
                 continue
 
@@ -547,7 +575,7 @@ class MutualSupervisionCoordinator:
                 consensus_reason=outcome.reason,
             )
             rounds.append(round_result)
-            self._record("negotiation_rounds", round_result)
+            self._record("negotiation_rounds", round_result, run_id)
             return action, decisions, all_reviews, rounds
 
         return None, decisions, all_reviews, rounds
@@ -608,7 +636,17 @@ class MutualSupervisionCoordinator:
                 ),
             )
             if review is not None:
-                reviews.append(review)
+                reviews.append(
+                    replace(
+                        review,
+                        run_id=run_id,
+                        round_index=round_index,
+                        reviewer=adapter.name,
+                        target_agent=decision.agent,
+                        target_decision_id=decision.decision_id,
+                        policy_version=self.protocol.version,
+                    )
+                )
         return reviews
 
     def _validate_action(self, action: RecoveryAction) -> dict[str, Any]:
@@ -696,23 +734,17 @@ class MutualSupervisionCoordinator:
                 "controller": "mutual_supervision_deterministic",
                 "safety": "bounded_structured_action",
                 "guard_backend": self.backend.value,
+                "protocol_profile": self._protocol_identity(),
             },
         }
 
-    def _protocol_identity(self) -> dict[str, str]:
+    def _protocol_identity(self) -> dict[str, Any]:
         assert self.protocol is not None
-        return {
-            "profile_id": self.protocol.profile_id,
-            "version": self.protocol.version,
-            "config_hash": self.protocol.config_hash,
-        }
+        self.protocol.validate_integrity()
+        return self.protocol.to_canonical_dict()
 
     def _policy_version(self) -> str:
-        return (
-            self.policy.version
-            if self.policy is not None
-            else self.protocol.version
-        )
+        return self.protocol.version
 
     def _required_capability_errors(self) -> tuple[str, ...]:
         errors = []
@@ -799,6 +831,7 @@ class MutualSupervisionCoordinator:
                 "controller": "mutual_supervision_profile_driven",
                 "safety": "bounded_structured_action",
                 "guard_backend": self.backend.value,
+                "protocol_profile": self._protocol_identity(),
             },
         }
 
@@ -818,18 +851,21 @@ class MutualSupervisionCoordinator:
                     "agent": agent,
                     **contribution,
                 },
+                report["run_id"],
             )
         artifacts = self.event_store.finalize(report)
         if artifacts:
             report["artifacts"] = artifacts
         return report
 
-    def _record(self, stream: str, value: Any) -> None:
+    def _record(self, stream: str, value: Any, run_id: str) -> None:
         if self.event_store is not None:
             event = to_serializable(value)
             if isinstance(event, dict):
                 event = {
                     **event,
+                    "run_id": run_id,
+                    "policy_version": self.protocol.version,
                     "protocol_profile": self._protocol_identity(),
                     "active_agents": list(self.adapters),
                     "agent_runtimes": {
@@ -857,36 +893,20 @@ def _profile_with_legacy_policy(
     profile: ResearchProtocolProfile,
     policy: MutualSupervisionPolicy,
 ) -> ResearchProtocolProfile:
-    return ResearchProtocolProfile.from_dict(
+    source = profile.to_canonical_dict()
+    source.pop("config_hash")
+    source.update(
         {
-            "profile_id": profile.profile_id,
-            "version": profile.version,
-            "agents": [
-                {
-                    "name": binding.name,
-                    "implementation_id": binding.implementation_id,
-                    "runtime": binding.runtime,
-                    "enabled": binding.enabled,
-                    "veto_scopes": list(binding.veto_scopes),
-                    "consensus_weight": binding.consensus_weight,
-                    "capabilities": list(binding.capabilities),
-                }
-                for binding in profile.agents
-            ],
             "review_matrix": {
                 target: list(reviewers)
                 for target, reviewers in policy.review_matrix.items()
             },
-            "consensus_strategy": profile.consensus_strategy.value,
             "max_negotiation_rounds": policy.max_negotiation_rounds,
             "max_replan_attempts": policy.max_replan_attempts,
             "fallback_action": policy.fallback_action.value,
-            "human_review_on_failure": profile.human_review_on_failure,
-            "action_space": [action.value for action in profile.action_space],
-            "reward_weights": dict(profile.reward_weights),
-            "experiment_tags": list(profile.experiment_tags),
         }
     )
+    return ResearchProtocolProfile.from_dict(source)
 
 
 def _apply_revisions(
@@ -917,12 +937,21 @@ def _apply_revisions(
 
 def _decision_scopes(action: RecoveryAction) -> tuple[str, ...]:
     return {
-        RecoveryActionKind.OBSERVE_ONLY: ("availability",),
-        RecoveryActionKind.ROLLOUT_RESTART: (
-            "recovery",
+        RecoveryActionKind.OBSERVE_ONLY: (
             "action_validity",
+            "target_alignment",
+            "availability",
+        ),
+        RecoveryActionKind.ROLLOUT_RESTART: (
+            "action_validity",
+            "target_alignment",
+            "availability",
+            "recovery",
+            "executability",
         ),
         RecoveryActionKind.SCALE_OUT: (
+            "action_validity",
+            "target_alignment",
             "capacity",
             "resource_safety",
             "budget",

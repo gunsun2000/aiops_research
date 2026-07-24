@@ -51,15 +51,15 @@ class JsonlResearchEventStore:
     ) -> None:
         self.run_dir = Path(root_dir) / experiment_id
         self.run_dir.mkdir(parents=True, exist_ok=True)
+        self.experiment_config = dict(experiment_config or {})
         self.paths: dict[str, str] = {}
         for stream in sorted(EVENT_STREAMS):
             path = self.run_dir / f"{stream}.jsonl"
             path.touch(exist_ok=True)
             self.paths[stream] = str(path)
-        _write_json(
-            self.run_dir / "experiment_config.json",
-            experiment_config or {},
-        )
+        experiment_config_path = self.run_dir / "experiment_config.json"
+        _write_json(experiment_config_path, self.experiment_config)
+        self.paths["experiment_config"] = str(experiment_config_path)
 
     def append(self, stream: str, event: Any) -> None:
         _validate_stream(stream)
@@ -80,7 +80,33 @@ class JsonlResearchEventStore:
         json_path = self.run_dir / "final_report.json"
         markdown_path = self.run_dir / "final_report.md"
         statistics_path = self.run_dir / "statistics.csv"
+        experiment_config_path = self.run_dir / "experiment_config.json"
 
+        self.experiment_config.update(
+            {
+                "policy_version": serializable_report.get(
+                    "policy_version",
+                    "",
+                ),
+                "protocol_profile": serializable_report.get(
+                    "protocol_profile",
+                    {},
+                ),
+                "active_agents": serializable_report.get(
+                    "active_agents",
+                    [],
+                ),
+                "agent_runtimes": serializable_report.get(
+                    "agent_runtimes",
+                    {},
+                ),
+                "consensus_strategy": (
+                    serializable_report.get("negotiation") or {}
+                ).get("strategy", ""),
+                "metadata": serializable_report.get("metadata", {}),
+            }
+        )
+        _write_json(experiment_config_path, self.experiment_config)
         _write_json(json_path, serializable_report)
         markdown_path.write_text(
             _render_markdown_summary(serializable_report),
@@ -93,6 +119,7 @@ class JsonlResearchEventStore:
                 "final_report_json": str(json_path),
                 "final_report_md": str(markdown_path),
                 "statistics_csv": str(statistics_path),
+                "experiment_config": str(experiment_config_path),
             }
         )
         return dict(self.paths)

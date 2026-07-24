@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from pathlib import Path
 from types import MappingProxyType
@@ -157,6 +157,22 @@ class ResearchProtocolProfile:
     def enabled_agents(self) -> tuple[ProtocolAgentBinding, ...]:
         return tuple(binding for binding in self.agents if binding.enabled)
 
+    def to_canonical_dict(self) -> dict[str, Any]:
+        return {
+            **_canonical_profile_payload(self),
+            "config_hash": self.config_hash,
+        }
+
+    def recomputed_config_hash(self) -> str:
+        return _config_hash(_canonical_profile_payload(self))
+
+    def validate_integrity(self) -> None:
+        expected = self.recomputed_config_hash()
+        if self.config_hash != expected:
+            raise ValueError(
+                "config_hash does not match current profile contents"
+            )
+
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> ResearchProtocolProfile:
         source = _require_mapping(data, "protocol profile")
@@ -261,13 +277,7 @@ class ResearchProtocolProfile:
         if len(set(experiment_tags)) != len(experiment_tags):
             raise ValueError("experiment_tags must not contain duplicates")
 
-        config_hash = _config_hash(source)
-        supplied_hash = source.get("config_hash")
-        if supplied_hash is not None:
-            if not isinstance(supplied_hash, str) or supplied_hash != config_hash:
-                raise ValueError("config_hash does not match profile contents")
-
-        return cls(
+        profile = cls(
             profile_id=_required_text(source, "profile_id", "profile_id"),
             version=_required_text(source, "version", "version"),
             agents=agents,
@@ -284,8 +294,47 @@ class ResearchProtocolProfile:
             action_space=action_space,
             reward_weights=MappingProxyType(reward_weights),
             experiment_tags=experiment_tags,
-            config_hash=config_hash,
+            config_hash="",
         )
+        config_hash = profile.recomputed_config_hash()
+        supplied_hash = source.get("config_hash")
+        if supplied_hash is not None:
+            if not isinstance(supplied_hash, str) or supplied_hash != config_hash:
+                raise ValueError("config_hash does not match profile contents")
+        return replace(profile, config_hash=config_hash)
+
+
+def _canonical_profile_payload(
+    profile: ResearchProtocolProfile,
+) -> dict[str, Any]:
+    return {
+        "profile_id": profile.profile_id,
+        "version": profile.version,
+        "agents": [
+            {
+                "name": binding.name,
+                "implementation_id": binding.implementation_id,
+                "runtime": binding.runtime,
+                "enabled": binding.enabled,
+                "veto_scopes": list(binding.veto_scopes),
+                "consensus_weight": binding.consensus_weight,
+                "capabilities": list(binding.capabilities),
+            }
+            for binding in profile.agents
+        ],
+        "review_matrix": {
+            target: list(reviewers)
+            for target, reviewers in profile.review_matrix.items()
+        },
+        "consensus_strategy": profile.consensus_strategy.value,
+        "max_negotiation_rounds": profile.max_negotiation_rounds,
+        "max_replan_attempts": profile.max_replan_attempts,
+        "fallback_action": profile.fallback_action.value,
+        "human_review_on_failure": profile.human_review_on_failure,
+        "action_space": [action.value for action in profile.action_space],
+        "reward_weights": dict(profile.reward_weights),
+        "experiment_tags": list(profile.experiment_tags),
+    }
 
 
 def _config_hash(source: Mapping[str, Any]) -> str:
@@ -361,4 +410,5 @@ def select_default_protocol_profile(
             "default protocol profile max_replan_attempts must be 1; got "
             + str(profile.max_replan_attempts)
         )
+    profile.validate_integrity()
     return profile

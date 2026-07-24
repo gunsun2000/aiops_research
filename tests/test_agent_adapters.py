@@ -1,4 +1,5 @@
 from dataclasses import replace
+from types import SimpleNamespace
 
 import pytest
 
@@ -13,6 +14,7 @@ from aiops_k8s_agents.models import RecoveryActionKind
 from aiops_k8s_agents.mutual_supervision_models import SupervisionDecision
 from aiops_k8s_agents.recovery_monitor import RecoveryAssessment
 from aiops_k8s_agents.research_protocol import load_research_protocol
+from aiops_k8s_agents.research_protocol import ResearchProtocolProfile
 
 
 def test_default_adapter_registry_builds_four_agents():
@@ -43,9 +45,7 @@ def test_unregistered_implementation_is_rejected():
     )
 
     with pytest.raises(AgentRegistryError, match="unregistered implementation"):
-        registry.validate_profile(
-            replace(profile, agents=(binding, *profile.agents[1:]))
-        )
+        registry.validate_profile(profile_with_binding(profile, binding))
 
 
 def test_disabled_binding_with_unsupported_runtime_is_rejected():
@@ -56,9 +56,7 @@ def test_disabled_binding_with_unsupported_runtime_is_rejected():
     binding = replace(profile.agents[0], runtime="unsupported", enabled=False)
 
     with pytest.raises(AgentRegistryError, match="unsupported runtime"):
-        registry.validate_profile(
-            replace(profile, agents=(binding, *profile.agents[1:]))
-        )
+        registry.validate_profile(profile_with_binding(profile, binding))
 
 
 def test_enabled_binding_capabilities_must_match_adapter_metadata():
@@ -69,9 +67,7 @@ def test_enabled_binding_capabilities_must_match_adapter_metadata():
     binding = replace(profile.agents[0], capabilities=("review",))
 
     with pytest.raises(AgentRegistryError, match="capabilities do not match"):
-        registry.validate_profile(
-            replace(profile, agents=(binding, *profile.agents[1:]))
-        )
+        registry.validate_profile(profile_with_binding(profile, binding))
 
 
 def test_validated_profile_allows_direct_adapter_creation():
@@ -110,7 +106,7 @@ def test_declared_and_unsupported_adapter_capabilities_are_explicit():
         metric_values={"cpu": 90.0},
     )
     ha = adapters["AIServiceHASupportAgent"]
-    diagnosis_result = ha.diagnose(evidence, threshold=80.0)
+    diagnosis_result = ha.diagnose(evidence, metric="cpu", threshold=80.0)
 
     assert diagnosis_result is not None
     diagnosis, _ = diagnosis_result
@@ -145,7 +141,7 @@ def test_declared_and_unsupported_adapter_capabilities_are_explicit():
         policy_version="test-v1",
     )
 
-    assert application.diagnose(evidence, threshold=80.0) is None
+    assert application.diagnose(evidence, metric="cpu", threshold=80.0) is None
     assert application.review(decision, evidence, context) is not None
     assert ha.review(decision, evidence, context) is not None
     assert (
@@ -192,3 +188,65 @@ def test_adapter_registry_rejects_duplicate_implementation_ids():
 
     with pytest.raises(AgentRegistryError, match="duplicate implementation"):
         registry.register("deterministic-test", factory)
+
+
+@pytest.mark.parametrize(
+    ("field", "bad_value", "message"),
+    [
+        ("name", "CostOptimizationAgent", "adapter name"),
+        ("runtime", "remote", "adapter runtime"),
+        ("capabilities", ("diagnose",), "adapter capabilities"),
+    ],
+)
+def test_registry_rejects_factory_adapter_identity_mismatch(
+    field,
+    bad_value,
+    message,
+):
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-role-veto-v1.json"
+    )
+    default_registry = build_default_agent_adapter_registry()
+    registry = AgentAdapterRegistry(factories={})
+    for implementation_id, factory in default_registry.factories.items():
+        metadata = default_registry.metadata[implementation_id]
+
+        def checked_factory(binding, factory=factory, implementation_id=implementation_id):
+            adapter = factory(binding)
+            if implementation_id != "deterministic-infrastructure":
+                return adapter
+            values = {
+                "name": adapter.name,
+                "runtime": adapter.runtime,
+                "capabilities": adapter.capabilities,
+            }
+            values[field] = bad_value
+            return SimpleNamespace(**values)
+
+        registry.register(
+            implementation_id,
+            checked_factory,
+            supported_runtimes=metadata.supported_runtimes,
+            capabilities=metadata.capabilities,
+        )
+
+    with pytest.raises(AgentRegistryError, match=message):
+        registry.create_profile(profile)
+
+
+def profile_with_binding(profile, replacement):
+    source = profile.to_canonical_dict()
+    source.pop("config_hash")
+    for index, binding in enumerate(source["agents"]):
+        if binding["name"] == replacement.name:
+            source["agents"][index] = {
+                "name": replacement.name,
+                "implementation_id": replacement.implementation_id,
+                "runtime": replacement.runtime,
+                "enabled": replacement.enabled,
+                "veto_scopes": list(replacement.veto_scopes),
+                "consensus_weight": replacement.consensus_weight,
+                "capabilities": list(replacement.capabilities),
+            }
+            break
+    return ResearchProtocolProfile.from_dict(source)

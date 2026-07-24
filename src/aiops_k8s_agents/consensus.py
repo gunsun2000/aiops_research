@@ -31,32 +31,30 @@ class ConsensusResolver:
         profile: ResearchProtocolProfile,
         decision_scope: str | Iterable[str],
     ) -> ConsensusOutcome:
+        profile.validate_integrity()
         review_tuple = tuple(reviews)
         bindings = {binding.name: binding for binding in profile.agents}
         ordered_reviews = _order_reviews(review_tuple, bindings)
-        bound_reviews = tuple(
-            review for review in ordered_reviews if review.reviewer in bindings
-        )
         enabled_reviews = tuple(
             review
-            for review in bound_reviews
+            for review in ordered_reviews
             if _is_enabled_reviewer(review, bindings)
         )
         revisions = tuple(
             review
-            for review in review_tuple
+            for review in enabled_reviews
             if review.verdict is ReviewVerdict.REVISE
         )
 
         if profile.consensus_strategy is ConsensusStrategy.ROLE_BASED_VETO:
             return self._resolve_role_based_veto(
-                bound_reviews,
+                enabled_reviews,
                 revisions,
                 bindings,
                 _normalize_decision_scopes(decision_scope),
             )
         if profile.consensus_strategy is ConsensusStrategy.UNANIMOUS_VETO:
-            return self._resolve_unanimous_veto(ordered_reviews, revisions)
+            return self._resolve_unanimous_veto(enabled_reviews, revisions)
         if profile.consensus_strategy is ConsensusStrategy.WEIGHTED_MAJORITY:
             return self._resolve_weighted_majority(
                 enabled_reviews, revisions, bindings

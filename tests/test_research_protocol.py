@@ -42,6 +42,33 @@ def test_profile_hash_changes_when_consensus_changes():
     assert first.config_hash != second.config_hash
 
 
+def test_canonical_profile_snapshot_round_trips_with_stable_hash():
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-role-veto-v1.json"
+    )
+
+    snapshot = profile.to_canonical_dict()
+    restored = ResearchProtocolProfile.from_dict(snapshot)
+
+    assert restored == profile
+    assert restored.config_hash == profile.config_hash
+    assert restored.recomputed_config_hash() == profile.config_hash
+    restored.validate_integrity()
+
+
+def test_stale_dataclass_replacement_fails_integrity_validation():
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-role-veto-v1.json"
+    )
+    stale = replace(
+        profile,
+        max_negotiation_rounds=profile.max_negotiation_rounds + 1,
+    )
+
+    with pytest.raises(ValueError, match="config_hash"):
+        stale.validate_integrity()
+
+
 def test_profile_loader_returns_all_profiles_with_enabled_agents():
     profiles = load_protocol_profiles("config/protocol_profiles")
 
@@ -92,6 +119,18 @@ def test_default_profile_selection_rejects_mutated_round_limits(field, value):
     )
 
     with pytest.raises(ValueError, match=field):
+        select_default_protocol_profile(profiles)
+
+
+def test_default_profile_selection_rejects_stale_profile_hash():
+    profiles = load_protocol_profiles("config/protocol_profiles")
+    profile = profiles[DEFAULT_PROTOCOL_PROFILE_ID]
+    profiles[DEFAULT_PROTOCOL_PROFILE_ID] = replace(
+        profile,
+        experiment_tags=(*profile.experiment_tags, "stale"),
+    )
+
+    with pytest.raises(ValueError, match="config_hash"):
         select_default_protocol_profile(profiles)
 
 

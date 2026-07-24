@@ -7,9 +7,14 @@ from aiops_k8s_agents.research_event_store import (
     InMemoryResearchEventStore,
     JsonlResearchEventStore,
 )
+from aiops_k8s_agents.research_protocol import load_research_protocol
 
 
 def test_jsonl_event_store_writes_traceable_research_artifacts(tmp_path):
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-role-veto-v1.json"
+    )
+    protocol_snapshot = profile.to_canonical_dict()
     store = JsonlResearchEventStore(
         root_dir=tmp_path,
         experiment_id="experiment-1",
@@ -27,11 +32,7 @@ def test_jsonl_event_store_writes_traceable_research_artifacts(tmp_path):
         {
             "run_id": "run-1",
             "policy_version": "mutual-v1",
-            "protocol_profile": {
-                "profile_id": "four-agent-role-veto-v1",
-                "version": "1.0.0",
-                "config_hash": "abc123",
-            },
+            "protocol_profile": protocol_snapshot,
             "active_agents": ["AIServiceHASupportAgent"],
             "agent_runtimes": {
                 "AIServiceHASupportAgent": "deterministic",
@@ -57,6 +58,9 @@ def test_jsonl_event_store_writes_traceable_research_artifacts(tmp_path):
             },
             "post_execution_reviews": [{"approved": True}],
             "human_review_required": False,
+            "metadata": {
+                "protocol_profile": protocol_snapshot,
+            },
         }
     )
 
@@ -79,7 +83,7 @@ def test_jsonl_event_store_writes_traceable_research_artifacts(tmp_path):
     assert row["consensus_strategy"] == "role_based_veto"
     assert row["protocol_profile_id"] == "four-agent-role-veto-v1"
     assert row["protocol_profile_version"] == "1.0.0"
-    assert row["protocol_config_hash"] == "abc123"
+    assert row["protocol_config_hash"] == profile.config_hash
     assert row["active_agents"] == "AIServiceHASupportAgent"
     assert row["agent_runtimes"] == "AIServiceHASupportAgent=deterministic"
     assert row["selected_action"] == "scale_out"
@@ -87,6 +91,11 @@ def test_jsonl_event_store_writes_traceable_research_artifacts(tmp_path):
     assert "four-agent-role-veto-v1" in markdown
     assert "AIServiceHASupportAgent=deterministic" in markdown
     assert "role_based_veto" in markdown
+    experiment_config = json.loads(
+        Path(paths["experiment_config"]).read_text(encoding="utf-8")
+    )
+    assert experiment_config["protocol_profile"] == protocol_snapshot
+    assert experiment_config["active_agents"] == ["AIServiceHASupportAgent"]
 
 
 def test_profile_and_contribution_streams_are_available():

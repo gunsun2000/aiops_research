@@ -52,11 +52,8 @@ def test_coordinator_report_records_profile_identity_and_active_runtimes():
         threshold=80.0,
     )
 
-    assert report["protocol_profile"] == {
-        "profile_id": "four-agent-role-veto-v1",
-        "version": "1.0.0",
-        "config_hash": profile.config_hash,
-    }
+    assert report["protocol_profile"] == profile.to_canonical_dict()
+    assert report["metadata"]["protocol_profile"] == profile.to_canonical_dict()
     assert report["active_agents"] == [
         "AIServiceHASupportAgent",
         "AIApplicationManagementAgent",
@@ -112,14 +109,10 @@ def test_coordinator_validates_whole_profile_before_creating_adapters():
             supported_runtimes=metadata.supported_runtimes,
             capabilities=metadata.capabilities,
         )
-    invalid_binding = replace(
-        profile.agents[-1],
-        implementation_id="missing-cost-adapter",
-    )
-    invalid_profile = replace(
-        profile,
-        agents=(*profile.agents[:-1], invalid_binding),
-    )
+    invalid_source = profile.to_canonical_dict()
+    invalid_source.pop("config_hash")
+    invalid_source["agents"][-1]["implementation_id"] = "missing-cost-adapter"
+    invalid_profile = ResearchProtocolProfile.from_dict(invalid_source)
 
     with pytest.raises(AgentRegistryError, match="unregistered implementation"):
         _coordinator(
@@ -128,6 +121,15 @@ def test_coordinator_validates_whole_profile_before_creating_adapters():
         )
 
     assert created == []
+
+
+def test_compatibility_agent_identity_mismatch_is_rejected():
+    with pytest.raises(AgentRegistryError, match="adapter name"):
+        _coordinator(
+            infra_agent=AISemiconductorInfraOpsAgent(
+                name="CostOptimizationAgent",
+            )
+        )
 
 
 @pytest.mark.parametrize("disabled_agent_index", [0, 1])
@@ -152,6 +154,67 @@ def test_missing_required_diagnose_or_propose_capability_safe_stops(
     assert report["fallback_action"] == "observe_only"
     assert report["human_review_required"] is True
     assert report["configuration_errors"]
+
+
+def test_requested_metric_missing_from_single_key_evidence_never_executes():
+    coordinator = MutualSupervisionCoordinator(
+        validator=_validator(),
+        evidence_provider=FakeEvidenceProvider(
+            EvidenceSnapshot(
+                namespace="online-boutique",
+                deployment="paymentservice",
+                metric_values={"memory": 95.0},
+                desired_replicas=1,
+                available_replicas=1,
+            )
+        ),
+        recovery_monitor=FakeRecoveryMonitor(default_success=True),
+        mode=ExecutionMode.MOCK,
+        protocol=_profile(),
+    )
+
+    report = coordinator.run(
+        "online-boutique",
+        "paymentservice",
+        "cpu",
+        80.0,
+    )
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["diagnosis"]["cause"] == "unknown_metric"
+    assert report["executed_actions"] == []
+    assert report["human_review_required"] is True
+
+
+def test_requested_metric_is_selected_from_multi_metric_evidence():
+    coordinator = MutualSupervisionCoordinator(
+        validator=_validator(),
+        evidence_provider=FakeEvidenceProvider(
+            EvidenceSnapshot(
+                namespace="online-boutique",
+                deployment="paymentservice",
+                metric_values={"cpu": 95.0, "memory": 20.0},
+                desired_replicas=1,
+                available_replicas=1,
+            )
+        ),
+        recovery_monitor=FakeRecoveryMonitor(default_success=True),
+        mode=ExecutionMode.MOCK,
+        protocol=_profile(),
+    )
+
+    report = coordinator.run(
+        "online-boutique",
+        "paymentservice",
+        "memory",
+        80.0,
+    )
+
+    assert report["final_status"] == "no_action_required"
+    assert report["diagnosis"]["cause"] == "no_action_required"
+    assert report["diagnosis"]["evidence"]["normalized_metric_name"] == "memory"
+    assert report["executed_actions"] == []
 
 
 def test_cost_agent_revision_changes_replica_target_before_execution():
@@ -259,6 +322,8 @@ def test_infrastructure_veto_blocks_unsafe_scale_out():
     )
     round_result = report["negotiation"]["rounds"][0]
     assert round_result["decision_scopes"] == [
+        "action_validity",
+        "target_alignment",
         "capacity",
         "resource_safety",
         "budget",
@@ -286,6 +351,8 @@ def test_coordinator_delegates_veto_aggregation_to_consensus_resolver():
 
     assert resolver.decision_scopes == [
         (
+            "action_validity",
+            "target_alignment",
             "capacity",
             "resource_safety",
             "budget",
@@ -502,11 +569,76 @@ def test_coordinator_persists_complete_mutual_supervision_trace():
     assert len(event_store.events["post_execution_reviews"]) == 4
     assert len(event_store.events["protocol_profiles"]) == 1
     assert len(event_store.events["agent_contributions"]) == 4
+    protocol_event = event_store.events["protocol_profiles"][0]
+    for key, value in report["protocol_profile"].items():
+        assert protocol_event[key] == value
     for events in event_store.events.values():
         assert all(
             event["protocol_profile"] == report["protocol_profile"]
             for event in events
         )
+
+
+def test_legacy_compatibility_run_uses_one_authoritative_protocol_version():
+    event_store = InMemoryResearchEventStore()
+    coordinator = _coordinator(event_store=event_store)
+
+    report = coordinator.run(
+        "online-boutique",
+        "paymentservice",
+        "cpu",
+        80.0,
+    )
+
+    version = report["protocol_profile"]["version"]
+    trace_versions = {
+        report["policy_version"],
+        *(
+            decision["policy_version"]
+            for decision in report["initial_decisions"]
+        ),
+        *(review["policy_version"] for review in report["peer_reviews"]),
+        *(
+            review["policy_version"]
+            for review in report["post_execution_reviews"]
+        ),
+    }
+    assert trace_versions == {version}
+    for events in event_store.events.values():
+        for event in events:
+            assert event["policy_version"] == version
+            assert event["protocol_profile"]["version"] == version
+
+
+def test_reused_event_store_correlates_every_event_with_its_run():
+    event_store = InMemoryResearchEventStore()
+    coordinator = _coordinator(event_store=event_store)
+
+    first = coordinator.run(
+        "online-boutique",
+        "paymentservice",
+        "cpu",
+        80.0,
+    )
+    second = coordinator.run(
+        "online-boutique",
+        "paymentservice",
+        "cpu",
+        80.0,
+    )
+
+    run_ids = {first["run_id"], second["run_id"]}
+    assert len(run_ids) == 2
+    assert [
+        event["run_id"] for event in event_store.events["evidence"]
+    ] == [first["run_id"], second["run_id"]]
+    assert [
+        event["run_id"]
+        for event in event_store.events["safety_validations"]
+    ] == [first["run_id"], second["run_id"]]
+    for events in event_store.events.values():
+        for event in events:
+            assert event["run_id"] in run_ids
 
 
 def test_event_store_keeps_pre_execution_trace_when_executor_crashes(monkeypatch):

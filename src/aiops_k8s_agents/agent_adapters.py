@@ -39,7 +39,10 @@ class AgentAdapter(Protocol):
     capabilities: tuple[str, ...]
 
     def diagnose(
-        self, evidence: EvidenceSnapshot, threshold: float
+        self,
+        evidence: EvidenceSnapshot,
+        metric: str,
+        threshold: float,
     ) -> tuple[Diagnosis, SupervisionDecision] | None: ...
 
     def propose(
@@ -79,15 +82,22 @@ class DeterministicHAAdapter:
         return ("diagnose", "review", "post_review")
 
     def diagnose(
-        self, evidence: EvidenceSnapshot, threshold: float
+        self,
+        evidence: EvidenceSnapshot,
+        metric: str,
+        threshold: float,
     ) -> tuple[Diagnosis, SupervisionDecision] | None:
-        metrics = tuple(evidence.metric_values)
-        if len(metrics) != 1:
-            return None
+        if not _requested_metric_is_present(self.agent, evidence, metric):
+            return _missing_metric_diagnosis(
+                agent=self.agent,
+                binding=self.binding,
+                evidence=evidence,
+                metric=metric,
+            )
 
         diagnosis, decision = self.agent.diagnose_evidence(
             evidence=evidence,
-            metric=metrics[0],
+            metric=metric,
             threshold=threshold,
         )
         return diagnosis, SupervisionDecision(
@@ -102,7 +112,7 @@ class DeterministicHAAdapter:
             confidence=diagnosis.confidence,
             evidence_refs=(
                 f"evidence_source:{evidence.source}",
-                f"signal:{metrics[0]}",
+                f"signal:{metric}",
             ),
             reward=decision.reward,
             policy_version=self.runtime,
@@ -197,9 +207,12 @@ class DeterministicApplicationAdapter:
         return ("propose", "review", "post_review")
 
     def diagnose(
-        self, evidence: EvidenceSnapshot, threshold: float
+        self,
+        evidence: EvidenceSnapshot,
+        metric: str,
+        threshold: float,
     ) -> tuple[Diagnosis, SupervisionDecision] | None:
-        del evidence, threshold
+        del evidence, metric, threshold
         return None
 
     def propose(
@@ -304,9 +317,12 @@ class DeterministicInfrastructureAdapter:
         return ("review", "post_review")
 
     def diagnose(
-        self, evidence: EvidenceSnapshot, threshold: float
+        self,
+        evidence: EvidenceSnapshot,
+        metric: str,
+        threshold: float,
     ) -> tuple[Diagnosis, SupervisionDecision] | None:
-        del evidence, threshold
+        del evidence, metric, threshold
         return None
 
     def propose(
@@ -385,9 +401,12 @@ class DeterministicCostAdapter:
         return ("review", "post_review")
 
     def diagnose(
-        self, evidence: EvidenceSnapshot, threshold: float
+        self,
+        evidence: EvidenceSnapshot,
+        metric: str,
+        threshold: float,
     ) -> tuple[Diagnosis, SupervisionDecision] | None:
-        del evidence, threshold
+        del evidence, metric, threshold
         return None
 
     def propose(
@@ -472,6 +491,72 @@ class DeterministicCostAdapter:
         )
 
 
+def _requested_metric_is_present(
+    agent: AIServiceHASupportAgent,
+    evidence: EvidenceSnapshot,
+    metric: str,
+) -> bool:
+    metric_policy = agent.policy.metric_policy_for(metric)
+    normalized = metric.strip().lower().replace("-", "_")
+    candidates = [normalized]
+    if metric_policy is not None:
+        candidates.append(metric_policy.canonical_name)
+        candidates.extend(metric_policy.aliases)
+    if any(
+        evidence.primary_metric_value(candidate) is not None
+        for candidate in candidates
+    ):
+        return True
+    canonical = (
+        metric_policy.canonical_name
+        if metric_policy is not None
+        else normalized
+    )
+    return canonical in {"availability", "restart_count"}
+
+
+def _missing_metric_diagnosis(
+    *,
+    agent: AIServiceHASupportAgent,
+    binding: ProtocolAgentBinding,
+    evidence: EvidenceSnapshot,
+    metric: str,
+) -> tuple[Diagnosis, SupervisionDecision]:
+    normalized = metric.strip().lower().replace("-", "_")
+    diagnosis = Diagnosis(
+        service=evidence.deployment,
+        cause="unknown_metric",
+        severity="info",
+        confidence=0.0,
+        evidence={
+            "requested_metric": normalized,
+            "missing_evidence": [normalized],
+            "supporting_evidence": evidence.to_summary(),
+            "diagnosis_reason": (
+                f"requested metric {normalized!r} is absent from evidence"
+            ),
+        },
+    )
+    return diagnosis, SupervisionDecision(
+        decision_id=f"{agent.name}:diagnosis",
+        run_id=f"{agent.name}:runtime",
+        round_index=0,
+        agent=agent.name,
+        decision_type="ha_diagnosis",
+        proposed_action=None,
+        approved=False,
+        reason=diagnosis.evidence["diagnosis_reason"],
+        confidence=diagnosis.confidence,
+        evidence_refs=(
+            f"evidence_source:{evidence.source}",
+            f"signal:{normalized}",
+            "metric_status:missing",
+        ),
+        reward=agent.policy.reward_for("ha_no_action", 0.20),
+        policy_version=binding.runtime,
+    )
+
+
 def _post_review(
     *,
     agent: str,
@@ -530,6 +615,7 @@ class AgentAdapterRegistry:
         )
 
     def validate_profile(self, profile: ResearchProtocolProfile) -> None:
+        profile.validate_integrity()
         for binding in profile.agents:
             try:
                 metadata = self.metadata[binding.implementation_id]
@@ -572,7 +658,27 @@ class AgentAdapterRegistry:
             raise AgentRegistryError(
                 f"unregistered implementation: {binding.implementation_id}"
             ) from exc
-        return factory(binding)
+        adapter = factory(binding)
+        self.validate_adapter(binding, adapter)
+        return adapter
+
+    @staticmethod
+    def validate_adapter(
+        binding: ProtocolAgentBinding,
+        adapter: AgentAdapter,
+    ) -> None:
+        if getattr(adapter, "name", None) != binding.name:
+            raise AgentRegistryError(
+                f"adapter name does not match binding: {binding.name}"
+            )
+        if getattr(adapter, "runtime", None) != binding.runtime:
+            raise AgentRegistryError(
+                f"adapter runtime does not match binding: {binding.name}"
+            )
+        if getattr(adapter, "capabilities", None) != binding.capabilities:
+            raise AgentRegistryError(
+                f"adapter capabilities do not match binding: {binding.name}"
+            )
 
 
 def build_default_agent_adapter_registry() -> AgentAdapterRegistry:
