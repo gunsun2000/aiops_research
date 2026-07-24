@@ -162,6 +162,7 @@ def test_profile_loader_returns_all_profiles_with_enabled_agents():
     profiles = load_protocol_profiles("config/protocol_profiles")
 
     assert set(profiles) == {
+        "four-agent-autogen-v1",
         "four-agent-role-veto-v1",
         "four-agent-unanimous-v1",
         "four-agent-weighted-v1",
@@ -169,8 +170,13 @@ def test_profile_loader_returns_all_profiles_with_enabled_agents():
     assert all(len(profile.enabled_agents) == 4 for profile in profiles.values())
     assert all(
         binding.runtime == "deterministic"
-        for profile in profiles.values()
+        for profile_id, profile in profiles.items()
+        if profile_id != "four-agent-autogen-v1"
         for binding in profile.enabled_agents
+    )
+    assert all(
+        binding.runtime == "autogen-round-robin"
+        for binding in profiles["four-agent-autogen-v1"].enabled_agents
     )
     assert all(
         profile.fallback_action is RecoveryActionKind.OBSERVE_ONLY

@@ -135,6 +135,42 @@ aiops-k8s-agents mutual-supervision-run \
   --allowed-deployment paymentservice
 ```
 
+### Protocol profile selection
+
+Protocol profiles are discovered only from `config/protocol_profiles` and are
+selected by registered ID. File paths and path traversal are not accepted.
+
+```bash
+aiops-k8s-agents list-protocol-profiles
+
+aiops-k8s-agents mutual-supervision-run \
+  --mode mock \
+  --protocol-profile four-agent-role-veto-v1 \
+  --namespace online-boutique \
+  --deployment paymentservice \
+  --metric cpu \
+  --threshold 80 \
+  --evidence-value 95 \
+  --allowed-namespace online-boutique \
+  --allowed-deployment paymentservice \
+  --no-save
+```
+
+`four-agent-autogen-v1` declares the registered `autogen-round-robin` runtime.
+The mutual-supervision CLI does not create a model client from environment
+variables or credentials. Selecting that profile without an explicitly
+injected model client or decision provider returns `runtime_unavailable`,
+performs no execution, and requires human review. Provider output is accepted
+only through the structured schema, is rebound to the configured Agent
+identity and run/policy metadata, and remains subject to the Python Validator.
+
+This repository currently demonstrates AutoGen runtime support and offline
+fake-provider safety tests. Those checks are not evidence of a completed
+networked AutoGen experiment or a real Kubernetes experiment. The existing
+`autogen-run` and `autogen-prometheus-run` commands remain the standalone
+model-client execution paths and require the `autogen` extra plus an
+appropriately configured provider credential.
+
 이 명령은 역할별 초기 판단, 동료 Agent의 `approve/revise/veto`,
 제한된 재합의 라운드, 안전 검증, 실행 후 4-Agent 재평가를 수행합니다.
 실험 기록은 기본적으로 `runs/mutual-supervision/` 아래 JSONL, JSON,

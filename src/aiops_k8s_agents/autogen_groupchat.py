@@ -1,16 +1,41 @@
 from __future__ import annotations
 
+import asyncio
+import inspect
 import json
+import math
 from dataclasses import dataclass, field, replace
-from typing import Any, Awaitable, Callable
+from functools import lru_cache
+from typing import Any, Awaitable, Callable, Mapping
 
+from aiops_k8s_agents.agent_adapters import (
+    AgentAdapterRegistry,
+    ReviewContext,
+    build_default_agent_adapter_registry,
+)
 from aiops_k8s_agents.agent_decision import AgentDecision
+from aiops_k8s_agents.evidence import EvidenceSnapshot
 from aiops_k8s_agents.executor import (
     ExecutionBackend,
     ExecutionMode,
     KubernetesExecutor,
 )
-from aiops_k8s_agents.models import AlertEvent, CommandResult, ScaleAction
+from aiops_k8s_agents.models import (
+    AlertEvent,
+    CommandResult,
+    Diagnosis,
+    RecoveryAction,
+    RecoveryActionKind,
+    ScaleAction,
+)
+from aiops_k8s_agents.mutual_supervision_models import (
+    PeerReview,
+    PostExecutionReview,
+    ReviewVerdict,
+    SupervisionDecision,
+)
+from aiops_k8s_agents.recovery_monitor import RecoveryAssessment
+from aiops_k8s_agents.research_protocol import ProtocolAgentBinding
 from aiops_k8s_agents.validator import CommandValidator
 
 AUTOGEN_AGENT_NAMES = (
@@ -19,6 +44,47 @@ AUTOGEN_AGENT_NAMES = (
     "AISemiconductorInfraOpsAgent",
     "CostOptimizationAgent",
 )
+AUTOGEN_RUNTIME = "autogen-round-robin"
+AUTOGEN_IMPLEMENTATION_IDS = {
+    "AIServiceHASupportAgent": "autogen-round-robin-ha",
+    "AIApplicationManagementAgent": "autogen-round-robin",
+    "AISemiconductorInfraOpsAgent": "autogen-round-robin-infrastructure",
+    "CostOptimizationAgent": "autogen-round-robin-cost",
+}
+AUTOGEN_AGENT_CAPABILITIES = {
+    "AIServiceHASupportAgent": ("diagnose", "review", "post_review"),
+    "AIApplicationManagementAgent": ("propose", "review", "post_review"),
+    "AISemiconductorInfraOpsAgent": ("review", "post_review"),
+    "CostOptimizationAgent": ("review", "post_review"),
+}
+AUTOGEN_ALLOWED_ACTIONS = {
+    "AIServiceHASupportAgent": frozenset(
+        {
+            "ha_scale_out_required",
+            "ha_recovery_required",
+            "ha_no_action",
+        }
+    ),
+    "AIApplicationManagementAgent": frozenset(
+        {
+            "app_observe_only",
+            "app_rollout_restart",
+            "app_scale_deployment",
+        }
+    ),
+    "AISemiconductorInfraOpsAgent": frozenset(
+        {
+            "infra_capacity_approved",
+            "infra_capacity_rejected",
+        }
+    ),
+    "CostOptimizationAgent": frozenset(
+        {
+            "cost_budget_approved",
+            "cost_budget_rejected",
+        }
+    ),
+}
 
 AUTOGEN_AGENT_ALIASES = {
     "AI HA Agent": "AIServiceHASupportAgent",
@@ -74,7 +140,10 @@ AUTOGEN_SYSTEM_MESSAGES = {
     ),
 }
 
-DecisionProvider = Callable[[AlertEvent], Awaitable[list[AgentDecision]]]
+DecisionProvider = Callable[
+    [AlertEvent],
+    Awaitable[list[AgentDecision]],
+]
 
 
 class AutoGenDecisionError(ValueError):
@@ -83,24 +152,44 @@ class AutoGenDecisionError(ValueError):
 
 def parse_autogen_decision(payload: Any, expected_agent: str) -> AgentDecision:
     data = _payload_to_dict(payload)
-    raw_agent = str(data.get("agent", ""))
+    normalized = dict(data)
+    parameters = normalized.get("parameters")
+    if parameters is None:
+        parameters = {}
+    if isinstance(parameters, Mapping):
+        normalized_parameters = {
+            str(key): str(value)
+            for key, value in parameters.items()
+        }
+        for key in ("namespace", "deployment", "replicas"):
+            normalized_parameters.setdefault(key, "")
+        normalized["parameters"] = normalized_parameters
+    try:
+        validated = _decision_schema().model_validate(normalized)
+    except Exception as exc:
+        raise AutoGenDecisionError(
+            f"AutoGen decision does not match the structured schema: {exc}"
+        ) from exc
+
+    data = validated.model_dump()
+    raw_agent = data["agent"]
     agent = _normalize_agent_name(raw_agent)
     if agent != expected_agent:
         raise AutoGenDecisionError(
             f"expected decision from {expected_agent}, received {raw_agent or '<missing>'}"
         )
+    if data["action"] not in AUTOGEN_ALLOWED_ACTIONS.get(agent, frozenset()):
+        raise AutoGenDecisionError(
+            f"unsupported AutoGen action for {agent}: {data['action']}"
+        )
 
-    parameters = {
-        str(key): str(value)
-        for key, value in dict(data.get("parameters") or {}).items()
-    }
     return AgentDecision(
         agent=agent,
-        action=str(data["action"]),
-        reward=float(data["reward"]),
-        approved=bool(data["approved"]),
-        reason=str(data["reason"]),
-        parameters=parameters,
+        action=data["action"],
+        reward=data["reward"],
+        approved=data["approved"],
+        reason=data["reason"],
+        parameters=dict(data["parameters"]),
     )
 
 
@@ -290,6 +379,276 @@ class AutoGenRoundRobinDecisionProvider:
         return transcript
 
 
+@dataclass
+class AutoGenProtocolDecisionSession:
+    decision_provider: DecisionProvider
+    _cache: dict[tuple[Any, ...], dict[str, AgentDecision]] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+
+    def decision_for(
+        self,
+        agent: str,
+        evidence: EvidenceSnapshot,
+        metric: str,
+        threshold: float,
+    ) -> AgentDecision:
+        decisions = self._decisions_for(evidence, metric, threshold)
+        try:
+            return decisions[agent]
+        except KeyError as exc:
+            raise AutoGenDecisionError(
+                f"missing AutoGen decision from {agent}"
+            ) from exc
+
+    def _decisions_for(
+        self,
+        evidence: EvidenceSnapshot,
+        metric: str,
+        threshold: float,
+    ) -> dict[str, AgentDecision]:
+        normalized_metric = _normalize_metric(metric)
+        value = evidence.primary_metric_value(normalized_metric)
+        if value is None:
+            raise AutoGenDecisionError(
+                f"missing evidence for AutoGen metric: {normalized_metric}"
+            )
+        key = (
+            evidence.namespace,
+            evidence.deployment,
+            normalized_metric,
+            float(value),
+            float(threshold),
+            tuple(sorted(evidence.metric_values.items())),
+        )
+        cached = self._cache.get(key)
+        if cached is not None:
+            return cached
+
+        alert = AlertEvent(
+            namespace=evidence.namespace,
+            service=evidence.deployment,
+            metric=normalized_metric,
+            value=float(value),
+            threshold=float(threshold),
+            message=evidence.log_summary or "; ".join(evidence.events),
+        )
+        raw_decisions = self.decision_provider(alert)
+        if inspect.isawaitable(raw_decisions):
+            try:
+                asyncio.get_running_loop()
+            except RuntimeError:
+                raw_decisions = asyncio.run(raw_decisions)
+            else:
+                raise RuntimeError(
+                    "synchronous mutual supervision cannot run an AutoGen "
+                    "provider inside an active event loop"
+                )
+        decisions = _validate_provider_decisions(raw_decisions)
+        cached = {decision.agent: decision for decision in decisions}
+        self._cache[key] = cached
+        return cached
+
+
+@dataclass(frozen=True)
+class AutoGenProtocolAdapter:
+    binding: ProtocolAgentBinding
+    session: AutoGenProtocolDecisionSession
+
+    @property
+    def name(self) -> str:
+        return self.binding.name
+
+    @property
+    def runtime(self) -> str:
+        return self.binding.runtime
+
+    @property
+    def capabilities(self) -> tuple[str, ...]:
+        return self.binding.capabilities
+
+    def diagnose(
+        self,
+        evidence: EvidenceSnapshot,
+        metric: str,
+        threshold: float,
+    ) -> tuple[Diagnosis, SupervisionDecision] | None:
+        if "diagnose" not in self.capabilities:
+            return None
+        normalized_metric = _normalize_metric(metric)
+        value = evidence.primary_metric_value(normalized_metric)
+        decision = self.session.decision_for(
+            self.name,
+            evidence,
+            normalized_metric,
+            threshold,
+        )
+        if value is None:
+            raise AutoGenDecisionError(
+                f"missing evidence for AutoGen metric: {normalized_metric}"
+            )
+        confidence = _decision_confidence(decision)
+        diagnosis = Diagnosis(
+            service=evidence.deployment,
+            cause=(
+                f"{normalized_metric}_saturation"
+                if decision.approved
+                else "no_action_required"
+            ),
+            severity=(
+                "critical"
+                if value >= threshold * 1.2
+                else "high" if value >= threshold else "normal"
+            ),
+            confidence=confidence,
+            evidence={
+                "source": evidence.source,
+                "metric": normalized_metric,
+                "value": value,
+                "threshold": threshold,
+            },
+        )
+        return diagnosis, SupervisionDecision(
+            decision_id=f"{self.name}:autogen-diagnosis",
+            run_id=f"{self.name}:autogen-runtime",
+            round_index=0,
+            agent=self.name,
+            decision_type="autogen_diagnosis",
+            proposed_action=None,
+            approved=decision.approved,
+            reason=decision.reason,
+            confidence=confidence,
+            evidence_refs=(
+                f"evidence_source:{evidence.source}",
+                f"signal:{normalized_metric}",
+            ),
+            reward=decision.reward,
+            policy_version=self.runtime,
+        )
+
+    def propose(
+        self,
+        diagnosis: Diagnosis,
+        evidence: EvidenceSnapshot,
+    ) -> tuple[RecoveryAction, ...] | None:
+        if "propose" not in self.capabilities:
+            return None
+        metric, threshold = _diagnosis_metric_boundary(diagnosis)
+        decision = self.session.decision_for(
+            self.name,
+            evidence,
+            metric,
+            threshold,
+        )
+        return (_recovery_action_from_decision(decision, evidence),)
+
+    def review(
+        self,
+        decision: SupervisionDecision,
+        evidence: EvidenceSnapshot,
+        context: ReviewContext,
+    ) -> PeerReview | None:
+        if "review" not in self.capabilities:
+            return None
+        try:
+            if context.diagnosis is None:
+                raise AutoGenDecisionError(
+                    "AutoGen review requires normalized diagnosis context"
+                )
+            metric, threshold = _diagnosis_metric_boundary(context.diagnosis)
+            autogen_decision = self.session.decision_for(
+                self.name,
+                evidence,
+                metric,
+                threshold,
+            )
+            verdict = (
+                ReviewVerdict.APPROVE
+                if autogen_decision.approved
+                else ReviewVerdict.VETO
+            )
+            reason = autogen_decision.reason
+            confidence = _decision_confidence(autogen_decision)
+        except Exception as exc:
+            verdict = ReviewVerdict.ABSTAIN
+            reason = f"AutoGen output rejected: {exc}"
+            confidence = 0.0
+        return PeerReview(
+            review_id=f"{decision.decision_id}:{self.name}",
+            run_id=context.run_id,
+            round_index=context.round_index,
+            reviewer=self.name,
+            target_agent=decision.agent,
+            target_decision_id=decision.decision_id,
+            verdict=verdict,
+            reason=reason,
+            suggested_action=None,
+            confidence=confidence,
+            evidence_refs=(f"evidence_source:{evidence.source}",),
+            policy_version=context.policy_version,
+        )
+
+    def post_review(
+        self,
+        action: RecoveryAction,
+        assessment: RecoveryAssessment,
+        evidence: EvidenceSnapshot,
+    ) -> PostExecutionReview | None:
+        if "post_review" not in self.capabilities:
+            return None
+        del action
+        return PostExecutionReview(
+            review_id=f"{self.name}:autogen-post-review",
+            run_id=f"{self.name}:autogen-runtime",
+            agent=self.name,
+            action_id="pending-normalization",
+            approved=assessment.recovery_success,
+            reason=(
+                "Recovery monitor confirms the bounded action recovered the service."
+                if assessment.recovery_success
+                else assessment.remaining_problem or "Recovery was not confirmed."
+            ),
+            confidence=assessment.recovery_confidence,
+            evidence_refs=(
+                "recovery_monitor",
+                f"evidence_source:{evidence.source}",
+            ),
+            policy_version=self.runtime,
+        )
+
+
+def build_autogen_agent_adapter_registry(
+    *,
+    model_client: Any | None = None,
+    decision_provider: DecisionProvider | None = None,
+) -> AgentAdapterRegistry:
+    registry = build_default_agent_adapter_registry()
+    if model_client is not None and decision_provider is not None:
+        raise ValueError("supply either model_client or decision_provider, not both")
+    if decision_provider is None and model_client is not None:
+        decision_provider = AutoGenRoundRobinDecisionProvider(
+            model_client=model_client
+        )
+    if decision_provider is None:
+        return registry
+
+    session = AutoGenProtocolDecisionSession(decision_provider)
+    for agent, implementation_id in AUTOGEN_IMPLEMENTATION_IDS.items():
+        capabilities = AUTOGEN_AGENT_CAPABILITIES[agent]
+        registry.register(
+            implementation_id,
+            lambda binding, session=session: AutoGenProtocolAdapter(
+                binding=binding,
+                session=session,
+            ),
+            supported_runtimes=(AUTOGEN_RUNTIME,),
+            capabilities=capabilities,
+        )
+    return registry
+
+
 def create_openai_model_client(model: str) -> Any:
     try:
         from autogen_ext.models.openai import OpenAIChatCompletionClient
@@ -303,12 +662,17 @@ def create_openai_model_client(model: str) -> Any:
 
 def _payload_to_dict(payload: Any) -> dict[str, Any]:
     if hasattr(payload, "model_dump"):
-        return dict(payload.model_dump())
-    if isinstance(payload, dict):
-        return payload
+        payload = payload.model_dump()
     if isinstance(payload, str):
         text = _strip_code_fence(payload)
-        return dict(json.loads(text))
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise AutoGenDecisionError(
+                "AutoGen payload is not valid JSON"
+            ) from exc
+    if isinstance(payload, Mapping):
+        return dict(payload)
     raise AutoGenDecisionError(f"unsupported AutoGen payload type: {type(payload)!r}")
 
 
@@ -326,9 +690,16 @@ def _strip_code_fence(text: str) -> str:
     return stripped
 
 
+@lru_cache(maxsize=1)
 def _decision_schema() -> type[Any]:
     try:
-        from pydantic import BaseModel, Field
+        from pydantic import (
+            BaseModel,
+            ConfigDict,
+            Field,
+            FiniteFloat,
+            StrictBool,
+        )
     except ImportError as exc:
         raise RuntimeError(
             "pydantic is required for AutoGen structured output. Run: "
@@ -336,16 +707,24 @@ def _decision_schema() -> type[Any]:
         ) from exc
 
     class AutoGenActionParameters(BaseModel):
+        model_config = ConfigDict(extra="forbid")
+
         namespace: str
         deployment: str
         replicas: str
 
     class AutoGenDecisionPayload(BaseModel):
-        agent: str
-        action: str
-        reward: float
-        approved: bool
-        reason: str
+        model_config = ConfigDict(
+            extra="forbid",
+            allow_inf_nan=False,
+            str_strip_whitespace=True,
+        )
+
+        agent: str = Field(min_length=1)
+        action: str = Field(min_length=1)
+        reward: FiniteFloat
+        approved: StrictBool
+        reason: str = Field(min_length=1)
         parameters: AutoGenActionParameters = Field(
             description="Kubernetes action parameters as string values."
         )
@@ -354,10 +733,17 @@ def _decision_schema() -> type[Any]:
 
 
 def _order_decisions(decisions: list[AgentDecision]) -> list[AgentDecision]:
+    if len({decision.agent for decision in decisions}) != len(decisions):
+        raise AutoGenDecisionError("duplicate AutoGen agent decisions")
     by_agent = {decision.agent: decision for decision in decisions}
     missing = [name for name in AUTOGEN_AGENT_NAMES if name not in by_agent]
     if missing:
         raise AutoGenDecisionError(f"missing AutoGen decisions: {', '.join(missing)}")
+    unknown = sorted(set(by_agent) - set(AUTOGEN_AGENT_NAMES))
+    if unknown:
+        raise AutoGenDecisionError(
+            f"unknown AutoGen decisions: {', '.join(unknown)}"
+        )
     return [by_agent[name] for name in AUTOGEN_AGENT_NAMES]
 
 
@@ -381,5 +767,92 @@ def _scale_action_from_app_decision(alert: AlertEvent, decision: AgentDecision) 
         namespace=parameters.get("namespace", alert.namespace),
         deployment=parameters.get("deployment", alert.service),
         replicas=int(replicas_text),
+        reason=decision.reason,
+    )
+
+
+def _validate_provider_decisions(payload: Any) -> list[AgentDecision]:
+    if not isinstance(payload, (list, tuple)):
+        raise AutoGenDecisionError(
+            "AutoGen provider must return a decision sequence"
+        )
+    decisions: list[AgentDecision] = []
+    for item in payload:
+        if isinstance(item, AgentDecision):
+            source: Any = {
+                "agent": item.agent,
+                "action": item.action,
+                "reward": item.reward,
+                "approved": item.approved,
+                "reason": item.reason,
+                "parameters": item.parameters,
+            }
+        else:
+            source = item
+        data = _payload_to_dict(source)
+        raw_agent = str(data.get("agent", ""))
+        expected_agent = _normalize_agent_name(raw_agent)
+        if expected_agent not in AUTOGEN_AGENT_NAMES:
+            raise AutoGenDecisionError(
+                f"unknown AutoGen agent identity: {raw_agent or '<missing>'}"
+            )
+        decisions.append(parse_autogen_decision(data, expected_agent))
+    return _order_decisions(decisions)
+
+
+def _normalize_metric(metric: str) -> str:
+    return metric.strip().lower().replace("-", "_")
+
+
+def _decision_confidence(decision: AgentDecision) -> float:
+    if not math.isfinite(decision.reward):
+        raise AutoGenDecisionError("AutoGen reward must be finite")
+    return max(0.0, min(abs(float(decision.reward)), 1.0))
+
+
+def _diagnosis_metric_boundary(diagnosis: Diagnosis) -> tuple[str, float]:
+    metric = _normalize_metric(str(diagnosis.evidence.get("metric", "")))
+    threshold = diagnosis.evidence.get("threshold")
+    if not metric or isinstance(threshold, bool) or not isinstance(
+        threshold, (int, float)
+    ):
+        raise AutoGenDecisionError(
+            "AutoGen diagnosis is missing metric or threshold context"
+        )
+    if not math.isfinite(float(threshold)):
+        raise AutoGenDecisionError("AutoGen threshold must be finite")
+    return metric, float(threshold)
+
+
+def _recovery_action_from_decision(
+    decision: AgentDecision,
+    evidence: EvidenceSnapshot,
+) -> RecoveryAction:
+    parameters = decision.parameters
+    namespace = parameters.get("namespace") or evidence.namespace
+    deployment = parameters.get("deployment") or evidence.deployment
+    if not decision.approved or decision.action == "app_observe_only":
+        kind = RecoveryActionKind.OBSERVE_ONLY
+        replicas = None
+    elif decision.action == "app_rollout_restart":
+        kind = RecoveryActionKind.ROLLOUT_RESTART
+        replicas = None
+    elif decision.action == "app_scale_deployment":
+        replicas_text = parameters.get("replicas", "")
+        if not replicas_text.isdecimal():
+            raise AutoGenDecisionError(
+                f"replicas must be an integer: {replicas_text or '<missing>'}"
+            )
+        kind = RecoveryActionKind.SCALE_OUT
+        replicas = int(replicas_text)
+    else:
+        raise AutoGenDecisionError(
+            f"unsupported AutoGen application action: {decision.action}"
+        )
+    return RecoveryAction(
+        namespace=namespace,
+        deployment=deployment,
+        kind=kind,
+        replicas=replicas,
         reason=decision.reason,
     )

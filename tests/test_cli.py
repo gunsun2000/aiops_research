@@ -404,6 +404,148 @@ def test_cli_mutual_supervision_run_emits_peer_reviews_and_artifacts(
     assert Path(output["artifacts"]["final_report_json"]).exists()
 
 
+def test_cli_mutual_supervision_selects_protocol_profile_by_id(capsys):
+    exit_code = main(
+        [
+            "mutual-supervision-run",
+            "--mode",
+            "mock",
+            "--protocol-profile",
+            "four-agent-unanimous-v1",
+            *_mutual_supervision_alert_args(),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["protocol_profile"]["profile_id"] == (
+        "four-agent-unanimous-v1"
+    )
+    assert output["negotiation"]["strategy"] == "unanimous_veto"
+    assert set(output["agent_runtimes"].values()) == {"deterministic"}
+
+
+def test_cli_lists_protocol_profiles_with_runtime_metadata(capsys):
+    exit_code = main(["list-protocol-profiles"])
+
+    output = json.loads(capsys.readouterr().out)
+    profiles = {
+        profile["profile_id"]: profile for profile in output["profiles"]
+    }
+
+    assert exit_code == 0
+    assert output["command"] == "list-protocol-profiles"
+    assert "four-agent-role-veto-v1" in profiles
+    assert "four-agent-unanimous-v1" in profiles
+    assert "four-agent-autogen-v1" in profiles
+    assert profiles["four-agent-role-veto-v1"]["consensus_strategy"] == (
+        "role_based_veto"
+    )
+    assert profiles["four-agent-role-veto-v1"]["active_agents"] == [
+        "AIServiceHASupportAgent",
+        "AIApplicationManagementAgent",
+        "AISemiconductorInfraOpsAgent",
+        "CostOptimizationAgent",
+    ]
+    assert set(profiles["four-agent-autogen-v1"]["runtimes"].values()) == {
+        "autogen-round-robin"
+    }
+    assert len(profiles["four-agent-autogen-v1"]["config_hash"]) == 64
+
+
+def test_cli_rejects_protocol_profile_paths_and_unknown_ids(capsys):
+    for profile_id in (
+        "../four-agent-role-veto-v1",
+        "config/protocol_profiles/four-agent-role-veto-v1.json",
+        "not-registered",
+    ):
+        exit_code = main(
+            [
+                "mutual-supervision-run",
+                "--mode",
+                "mock",
+                "--protocol-profile",
+                profile_id,
+                *_mutual_supervision_alert_args(),
+            ]
+        )
+        output = json.loads(capsys.readouterr().out)
+
+        assert exit_code == 2
+        assert output["valid"] is False
+        assert output["final_status"] == "configuration_rejected"
+        assert output["human_review_required"] is True
+        assert "unknown protocol profile id" in output["stderr"]
+
+
+def test_cli_rejects_profile_with_unsupported_registered_runtime(
+    monkeypatch,
+    capsys,
+):
+    from aiops_k8s_agents.research_protocol import (
+        ResearchProtocolProfile,
+        load_research_protocol,
+    )
+
+    source = load_research_protocol(
+        "config/protocol_profiles/four-agent-role-veto-v1.json"
+    ).to_canonical_dict()
+    source.pop("config_hash")
+    source["profile_id"] = "unsupported-runtime-v1"
+    source["agents"][0]["runtime"] = "unregistered-runtime"
+    profile = ResearchProtocolProfile.from_dict(source)
+    monkeypatch.setattr(
+        cli,
+        "_load_registered_protocol_profiles",
+        lambda: {profile.profile_id: profile},
+    )
+
+    exit_code = main(
+        [
+            "mutual-supervision-run",
+            "--mode",
+            "mock",
+            "--protocol-profile",
+            profile.profile_id,
+            *_mutual_supervision_alert_args(),
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert output["valid"] is False
+    assert output["final_status"] == "configuration_rejected"
+    assert output["human_review_required"] is True
+    assert "unsupported runtime" in output["stderr"]
+    assert output["executed_actions"] == []
+
+
+def test_cli_autogen_profile_without_provider_returns_runtime_unavailable(capsys):
+    exit_code = main(
+        [
+            "mutual-supervision-run",
+            "--mode",
+            "mock",
+            "--protocol-profile",
+            "four-agent-autogen-v1",
+            *_mutual_supervision_alert_args(),
+        ]
+    )
+
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 1
+    assert output["valid"] is False
+    assert output["final_status"] == "runtime_unavailable"
+    assert output["human_review_required"] is True
+    assert output["executed_actions"] == []
+    assert output["execution_result"]["command"] == ""
+    assert set(output["agent_runtimes"].values()) == {
+        "autogen-round-robin"
+    }
+
+
 def test_cli_mutual_supervision_real_mode_rejects_fake_evidence(capsys):
     exit_code = main(
         [
@@ -434,6 +576,26 @@ def test_cli_mutual_supervision_real_mode_rejects_fake_evidence(capsys):
     assert output["valid"] is False
     assert output["final_status"] == "configuration_rejected"
     assert "kubernetes evidence" in output["stderr"]
+
+
+def _mutual_supervision_alert_args():
+    return [
+        "--namespace",
+        "online-boutique",
+        "--deployment",
+        "paymentservice",
+        "--metric",
+        "cpu",
+        "--threshold",
+        "80",
+        "--evidence-value",
+        "95",
+        "--allowed-namespace",
+        "online-boutique",
+        "--allowed-deployment",
+        "paymentservice",
+        "--no-save",
+    ]
 
 
 def test_cli_passes_go_guard_backend_to_recovery_executor(monkeypatch, capsys):

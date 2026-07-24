@@ -20,9 +20,12 @@ from aiops_k8s_agents.agent_registry import (
     save_agent_registry,
 )
 from aiops_k8s_agents.autogen_groupchat import (
+    AUTOGEN_RUNTIME,
     AutoGenDecisionError,
     AutoGenGroupChatCoordinator,
     AutoGenRoundRobinDecisionProvider,
+    DecisionProvider,
+    build_autogen_agent_adapter_registry,
     create_openai_model_client,
 )
 from aiops_k8s_agents.autonomous import AutonomousAIOpsCoordinator
@@ -77,6 +80,10 @@ from aiops_k8s_agents.recovery_monitor import (
     KubernetesSnapshotRecoveryMonitor,
 )
 from aiops_k8s_agents.research_event_store import JsonlResearchEventStore
+from aiops_k8s_agents.research_protocol import (
+    ResearchProtocolProfile,
+    load_protocol_profiles,
+)
 from aiops_k8s_agents.prometheus import (
     PrometheusAdapter,
     PrometheusAdapterError,
@@ -88,6 +95,9 @@ from aiops_k8s_agents.validator import CommandValidationError, CommandValidator
 
 DEFAULT_OPENAI_MODEL = os.environ.get("AIOPS_OPENAI_MODEL", "gpt-5.5")
 DEFAULT_AGENT_REGISTRY = "config/agent_registry.json"
+PROTOCOL_PROFILE_DIRECTORY = (
+    Path(__file__).resolve().parents[2] / "config" / "protocol_profiles"
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -342,6 +352,15 @@ def build_parser() -> argparse.ArgumentParser:
         help="Versioned mutual-review policy JSON path.",
     )
     mutual_parser.add_argument(
+        "--protocol-profile",
+        default="",
+        metavar="ID",
+        help=(
+            "Select a registered protocol profile by ID. Paths are not "
+            "accepted."
+        ),
+    )
+    mutual_parser.add_argument(
         "--output-dir",
         default="runs/mutual-supervision",
         help="Root directory for JSONL, CSV, JSON, and Markdown artifacts.",
@@ -350,6 +369,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-save",
         action="store_true",
         help="Run without writing research artifacts.",
+    )
+
+    subparsers.add_parser(
+        "list-protocol-profiles",
+        help="List repository protocol profiles and their Agent runtimes.",
     )
 
     list_agents_parser = subparsers.add_parser(
@@ -542,7 +566,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "mutual-supervision-run":
         report = run_mutual_supervision_cli(args)
         _emit_json_report(args, report)
+        if report.get("final_status") == "runtime_unavailable":
+            return 1
         return 0 if report["valid"] else 2
+
+    if args.command == "list-protocol-profiles":
+        report = list_registered_protocol_profiles()
+        _emit_json_report(args, report)
+        return 0
 
     if args.command == "list-agents":
         report = list_registered_agents(args)
@@ -575,6 +606,32 @@ def list_registered_agents(args: argparse.Namespace) -> dict[str, Any]:
         "registry": args.registry,
         "version": registry.version,
         "agents": [registry.agents[name].to_dict() for name in registry.agent_names()],
+    }
+
+
+def list_registered_protocol_profiles() -> dict[str, Any]:
+    profiles = _load_registered_protocol_profiles()
+    return {
+        "command": "list-protocol-profiles",
+        "profiles": [
+            {
+                "profile_id": profile.profile_id,
+                "version": profile.version,
+                "consensus_strategy": profile.consensus_strategy.value,
+                "active_agents": [
+                    binding.name for binding in profile.enabled_agents
+                ],
+                "runtimes": {
+                    binding.name: binding.runtime
+                    for binding in profile.enabled_agents
+                },
+                "config_hash": profile.config_hash,
+            }
+            for profile in sorted(
+                profiles.values(),
+                key=lambda item: item.profile_id,
+            )
+        ],
     }
 
 
@@ -773,7 +830,41 @@ def run_autonomous_cli(args: argparse.Namespace) -> dict[str, Any]:
     )
 
 
-def run_mutual_supervision_cli(args: argparse.Namespace) -> dict[str, Any]:
+def run_mutual_supervision_cli(
+    args: argparse.Namespace,
+    *,
+    decision_provider: DecisionProvider | None = None,
+    model_client: Any | None = None,
+) -> dict[str, Any]:
+    try:
+        protocol = _select_protocol_profile(
+            getattr(args, "protocol_profile", "")
+        )
+    except ValueError as exc:
+        return _mutual_supervision_boundary_failure(
+            args,
+            final_status="configuration_rejected",
+            stderr=str(exc),
+        )
+
+    uses_autogen = (
+        protocol is not None
+        and any(
+            binding.runtime == AUTOGEN_RUNTIME
+            for binding in protocol.enabled_agents
+        )
+    )
+    if uses_autogen and decision_provider is None and model_client is None:
+        return _mutual_supervision_boundary_failure(
+            args,
+            final_status="runtime_unavailable",
+            stderr=(
+                "the selected protocol requires an explicitly supplied "
+                "AutoGen model client or decision provider"
+            ),
+            protocol=protocol,
+        )
+
     if args.mode == ExecutionMode.REAL.value and args.evidence_source != "kubernetes":
         return {
             "command": "mutual-supervision-run",
@@ -788,7 +879,25 @@ def run_mutual_supervision_cli(args: argparse.Namespace) -> dict[str, Any]:
             "human_review_required": True,
         }
 
-    policy = load_mutual_supervision_policy(args.policy)
+    policy = (
+        None
+        if protocol is not None
+        else load_mutual_supervision_policy(args.policy)
+    )
+    adapter_registry = None
+    if uses_autogen:
+        try:
+            adapter_registry = build_autogen_agent_adapter_registry(
+                model_client=model_client,
+                decision_provider=decision_provider,
+            )
+        except (RuntimeError, ValueError) as exc:
+            return _mutual_supervision_boundary_failure(
+                args,
+                final_status="runtime_unavailable",
+                stderr=str(exc),
+                protocol=protocol,
+            )
     evidence_provider = _evidence_provider_from_args(args)
     event_store = None
     if not args.no_save:
@@ -797,7 +906,16 @@ def run_mutual_supervision_cli(args: argparse.Namespace) -> dict[str, Any]:
             root_dir=args.output_dir,
             experiment_id=experiment_id,
             experiment_config={
-                "policy_version": policy.version,
+                "policy_version": (
+                    protocol.version
+                    if protocol is not None
+                    else policy.version
+                ),
+                "protocol_profile": (
+                    protocol.profile_id
+                    if protocol is not None
+                    else "legacy-default"
+                ),
                 "mode": args.mode,
                 "guard_backend": args.guard_backend,
                 "evidence_source": args.evidence_source,
@@ -807,29 +925,124 @@ def run_mutual_supervision_cli(args: argparse.Namespace) -> dict[str, Any]:
                 "threshold": args.threshold,
             },
         )
-    coordinator = MutualSupervisionCoordinator(
-        validator=_validator_from_args(args),
-        evidence_provider=evidence_provider,
-        recovery_monitor=(
-            KubernetesSnapshotRecoveryMonitor(
-                evidence_provider=evidence_provider,
-            )
-            if args.mode == ExecutionMode.REAL.value
-            else FakeRecoveryMonitor(
-                default_success=not args.force_recovery_failure
-            )
-        ),
-        policy=policy,
-        mode=ExecutionMode(args.mode),
-        backend=ExecutionBackend(args.guard_backend),
-        event_store=event_store,
-    )
+    try:
+        coordinator = MutualSupervisionCoordinator(
+            validator=_validator_from_args(args),
+            evidence_provider=evidence_provider,
+            recovery_monitor=(
+                KubernetesSnapshotRecoveryMonitor(
+                    evidence_provider=evidence_provider,
+                )
+                if args.mode == ExecutionMode.REAL.value
+                else FakeRecoveryMonitor(
+                    default_success=not args.force_recovery_failure
+                )
+            ),
+            policy=policy,
+            protocol=protocol,
+            adapter_registry=adapter_registry,
+            mode=ExecutionMode(args.mode),
+            backend=ExecutionBackend(args.guard_backend),
+            event_store=event_store,
+        )
+    except (AgentRegistryError, ValueError) as exc:
+        return _mutual_supervision_boundary_failure(
+            args,
+            final_status="configuration_rejected",
+            stderr=str(exc),
+            protocol=protocol,
+        )
     return coordinator.run(
         namespace=args.namespace,
         deployment=args.deployment,
         metric=args.metric,
         threshold=args.threshold,
     )
+
+
+def _load_registered_protocol_profiles() -> dict[str, ResearchProtocolProfile]:
+    return load_protocol_profiles(PROTOCOL_PROFILE_DIRECTORY)
+
+
+def _select_protocol_profile(
+    profile_id: str,
+) -> ResearchProtocolProfile | None:
+    if not profile_id:
+        return None
+    profiles = _load_registered_protocol_profiles()
+    try:
+        return profiles[profile_id]
+    except KeyError as exc:
+        raise ValueError(
+            f"unknown protocol profile id: {profile_id}"
+        ) from exc
+
+
+def _mutual_supervision_boundary_failure(
+    args: argparse.Namespace,
+    *,
+    final_status: str,
+    stderr: str,
+    protocol: ResearchProtocolProfile | None = None,
+) -> dict[str, Any]:
+    active_agents = (
+        [binding.name for binding in protocol.enabled_agents]
+        if protocol is not None
+        else []
+    )
+    agent_runtimes = (
+        {
+            binding.name: binding.runtime
+            for binding in protocol.enabled_agents
+        }
+        if protocol is not None
+        else {}
+    )
+    profile_identity = (
+        {
+            "profile_id": protocol.profile_id,
+            "version": protocol.version,
+            "config_hash": protocol.config_hash,
+        }
+        if protocol is not None
+        else {}
+    )
+    profile_snapshot = (
+        protocol.to_canonical_dict()
+        if protocol is not None
+        else {}
+    )
+    return {
+        "command": "mutual-supervision-run",
+        "valid": False,
+        "mode": args.mode,
+        "final_status": final_status,
+        "stderr": stderr,
+        "protocol_profile": profile_identity,
+        "protocol_profile_snapshot": profile_snapshot,
+        "active_agents": active_agents,
+        "agent_runtimes": agent_runtimes,
+        "safety_validation": {
+            "valid": False,
+            "command": "",
+            "stderr": "no action validated",
+        },
+        "execution_result": {
+            "command": "",
+            "mode": args.mode,
+            "valid": False,
+            "stdout": "",
+            "stderr": stderr,
+            "metadata": {},
+        },
+        "executed_actions": [],
+        "human_review_required": True,
+        "metadata": {
+            "coordinator": "AI-MCMP",
+            "runtime_boundary": final_status,
+            "agent_runtimes": agent_runtimes,
+        },
+    }
 
 
 def _evidence_provider_from_args(

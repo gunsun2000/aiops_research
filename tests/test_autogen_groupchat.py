@@ -1,6 +1,9 @@
 import asyncio
 import json
 
+import pytest
+
+import aiops_k8s_agents.autogen_groupchat as autogen_groupchat
 from aiops_k8s_agents.autogen_groupchat import (
     AUTOGEN_AGENT_NAMES,
     AutoGenGroupChatCoordinator,
@@ -8,8 +11,13 @@ from aiops_k8s_agents.autogen_groupchat import (
     _decision_schema,
     parse_autogen_decision,
 )
+from aiops_k8s_agents.agent_registry import AgentRegistryError
+from aiops_k8s_agents.evidence import FakeEvidenceProvider
 from aiops_k8s_agents.executor import ExecutionMode
 from aiops_k8s_agents.models import AlertEvent
+from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
+from aiops_k8s_agents.recovery_monitor import FakeRecoveryMonitor
+from aiops_k8s_agents.research_protocol import load_research_protocol
 from aiops_k8s_agents.validator import CommandValidationError
 from aiops_k8s_agents.validator import CommandValidator
 
@@ -65,6 +73,69 @@ def test_parse_autogen_decision_accepts_known_agent_alias_from_llm():
     assert decision.agent == "AIServiceHASupportAgent"
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {
+            "agent": "AIServiceHASupportAgent",
+            "action": "ha_scale_out_required",
+            "reward": 0.9,
+            "approved": "true",
+            "reason": "Boolean strings must not be accepted.",
+            "parameters": {
+                "namespace": "online-boutique",
+                "deployment": "paymentservice",
+                "replicas": "3",
+            },
+        },
+        {
+            "agent": "AIServiceHASupportAgent",
+            "action": "ha_scale_out_required",
+            "reward": 0.9,
+            "approved": True,
+            "reason": "Unknown fields must not be accepted.",
+            "parameters": {
+                "namespace": "online-boutique",
+                "deployment": "paymentservice",
+                "replicas": "3",
+            },
+            "command": "kubectl delete pod unsafe",
+        },
+        {
+            "agent": "AIServiceHASupportAgent",
+            "action": "ha_scale_out_required",
+            "reward": 0.9,
+            "approved": True,
+            "reason": "Unknown parameter fields must not be accepted.",
+            "parameters": {
+                "namespace": "online-boutique",
+                "deployment": "paymentservice",
+                "replicas": "3",
+                "command": "kubectl delete pod unsafe",
+            },
+        },
+        {
+            "agent": "AIServiceHASupportAgent",
+            "action": "delete_everything",
+            "reward": 0.9,
+            "approved": True,
+            "reason": "Unknown role actions must not be accepted.",
+            "parameters": {
+                "namespace": "online-boutique",
+                "deployment": "paymentservice",
+                "replicas": "3",
+            },
+        },
+    ],
+)
+def test_parse_autogen_decision_rejects_malformed_schema(payload):
+    with pytest.raises(autogen_groupchat.AutoGenDecisionError):
+        parse_autogen_decision(
+            payload,
+            expected_agent="AIServiceHASupportAgent",
+        )
+
+
 def test_decision_schema_is_strict_openai_response_format_compatible():
     schema = _decision_schema().model_json_schema()
 
@@ -94,6 +165,151 @@ def test_round_robin_groupchat_allows_task_plus_all_agent_replies():
     team = provider._build_team()
 
     assert team._termination_condition._max_messages == len(AUTOGEN_AGENT_NAMES) + 1
+
+
+def test_autogen_runtime_is_registered_only_with_explicit_provider():
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-autogen-v1.json"
+    )
+    unavailable_registry = (
+        autogen_groupchat.build_autogen_agent_adapter_registry()
+    )
+
+    assert "autogen-round-robin" not in unavailable_registry.factories
+    with pytest.raises(
+        AgentRegistryError,
+        match="unregistered implementation",
+    ):
+        unavailable_registry.validate_profile(profile)
+
+    async def fake_provider(_alert):
+        return _autogen_decisions(replicas=3)
+
+    available_registry = (
+        autogen_groupchat.build_autogen_agent_adapter_registry(
+            decision_provider=fake_provider
+        )
+    )
+
+    adapters = available_registry.create_profile(profile)
+
+    assert "autogen-round-robin" in available_registry.factories
+    assert [adapter.name for adapter in adapters] == list(AUTOGEN_AGENT_NAMES)
+    assert {adapter.runtime for adapter in adapters} == {
+        "autogen-round-robin"
+    }
+
+
+def test_autogen_profile_normalizes_identity_and_cannot_bypass_validator():
+    class FakeProvider:
+        def __init__(self):
+            self.call_count = 0
+
+        async def __call__(self, _alert):
+            self.call_count += 1
+            return _autogen_decisions(replicas=99)
+
+    provider = FakeProvider()
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-autogen-v1.json"
+    )
+    coordinator = MutualSupervisionCoordinator(
+        validator=CommandValidator(
+            allowed_namespaces={"online-boutique"},
+            allowed_deployments={"paymentservice"},
+            min_replicas=1,
+            max_replicas=5,
+        ),
+        evidence_provider=FakeEvidenceProvider.cpu_saturation(
+            namespace="online-boutique",
+            deployment="paymentservice",
+            value=95.0,
+        ),
+        recovery_monitor=FakeRecoveryMonitor(),
+        mode=ExecutionMode.MOCK,
+        protocol=profile,
+        adapter_registry=(
+            autogen_groupchat.build_autogen_agent_adapter_registry(
+                decision_provider=provider
+            )
+        ),
+    )
+
+    report = coordinator.run(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+    )
+
+    assert provider.call_count == 1
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["human_review_required"] is True
+    assert report["safety_validation"]["valid"] is False
+    assert "replicas" in report["safety_validation"]["stderr"]
+    assert report["executed_actions"] == []
+    assert set(report["agent_runtimes"].values()) == {
+        "autogen-round-robin"
+    }
+    assert all(
+        decision["run_id"] == report["run_id"]
+        and decision["policy_version"] == profile.version
+        and decision["agent"] in report["active_agents"]
+        for decision in report["initial_decisions"]
+    )
+    assert all(
+        review["run_id"] == report["run_id"]
+        and review["policy_version"] == profile.version
+        and review["reviewer"] in report["active_agents"]
+        for review in report["peer_reviews"]
+    )
+
+
+def test_malformed_autogen_runtime_output_fails_without_execution():
+    async def malformed_provider(_alert):
+        return [
+            {
+                "agent": "AIServiceHASupportAgent",
+                "approved": True,
+            }
+        ]
+
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-autogen-v1.json"
+    )
+    coordinator = MutualSupervisionCoordinator(
+        validator=CommandValidator(
+            allowed_namespaces={"online-boutique"},
+            allowed_deployments={"paymentservice"},
+        ),
+        evidence_provider=FakeEvidenceProvider.cpu_saturation(
+            namespace="online-boutique",
+            deployment="paymentservice",
+            value=95.0,
+        ),
+        recovery_monitor=FakeRecoveryMonitor(),
+        mode=ExecutionMode.MOCK,
+        protocol=profile,
+        adapter_registry=(
+            autogen_groupchat.build_autogen_agent_adapter_registry(
+                decision_provider=malformed_provider
+            )
+        ),
+    )
+
+    report = coordinator.run(
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+    )
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["human_review_required"] is True
+    assert report["executed_actions"] == []
+    assert report["execution_result"]["command"] == ""
 
 
 def test_autogen_groupchat_coordinator_executes_valid_groupchat_decisions():
@@ -336,3 +552,68 @@ def test_autogen_groupchat_blocks_unsafe_replica_count_before_kubernetes():
         assert "replicas" in str(exc)
     else:
         raise AssertionError("unsafe AutoGen replica count reached execution")
+
+
+def _autogen_decisions(replicas):
+    return [
+        parse_autogen_decision(
+            {
+                "agent": "AIServiceHASupportAgent",
+                "action": "ha_scale_out_required",
+                "reward": 0.90,
+                "approved": True,
+                "reason": "HA evidence requires bounded recovery.",
+                "parameters": {
+                    "namespace": "online-boutique",
+                    "deployment": "paymentservice",
+                    "replicas": replicas,
+                },
+            },
+            expected_agent="AIServiceHASupportAgent",
+        ),
+        parse_autogen_decision(
+            {
+                "agent": "AIApplicationManagementAgent",
+                "action": "app_scale_deployment",
+                "reward": 0.85,
+                "approved": True,
+                "reason": "Scale the saturated application deployment.",
+                "parameters": {
+                    "namespace": "online-boutique",
+                    "deployment": "paymentservice",
+                    "replicas": replicas,
+                },
+            },
+            expected_agent="AIApplicationManagementAgent",
+        ),
+        parse_autogen_decision(
+            {
+                "agent": "AISemiconductorInfraOpsAgent",
+                "action": "infra_capacity_approved",
+                "reward": 0.70,
+                "approved": True,
+                "reason": "The structured proposal fits infrastructure policy.",
+                "parameters": {
+                    "namespace": "online-boutique",
+                    "deployment": "paymentservice",
+                    "replicas": replicas,
+                },
+            },
+            expected_agent="AISemiconductorInfraOpsAgent",
+        ),
+        parse_autogen_decision(
+            {
+                "agent": "CostOptimizationAgent",
+                "action": "cost_budget_approved",
+                "reward": 0.60,
+                "approved": True,
+                "reason": "The structured proposal fits cost policy.",
+                "parameters": {
+                    "namespace": "online-boutique",
+                    "deployment": "paymentservice",
+                    "replicas": replicas,
+                },
+            },
+            expected_agent="CostOptimizationAgent",
+        ),
+    ]
