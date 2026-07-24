@@ -18,6 +18,9 @@ class AgentProfile:
     responsibilities: tuple[str, ...]
     bounded_actions: tuple[str, ...]
     reward_signals: tuple[str, ...]
+    implementation_id: str = ""
+    supported_runtimes: tuple[str, ...] = ()
+    capabilities: tuple[str, ...] = ()
     enabled: bool = True
 
     @classmethod
@@ -37,6 +40,11 @@ class AgentProfile:
             ),
             bounded_actions=actions,
             reward_signals=tuple(str(item) for item in data.get("reward_signals", [])),
+            implementation_id=str(data.get("implementation_id", "")),
+            supported_runtimes=tuple(
+                str(item) for item in data.get("supported_runtimes", [])
+            ),
+            capabilities=tuple(str(item) for item in data.get("capabilities", [])),
             enabled=bool(data.get("enabled", True)),
         )
 
@@ -45,6 +53,8 @@ class AgentProfile:
         data["responsibilities"] = list(self.responsibilities)
         data["bounded_actions"] = list(self.bounded_actions)
         data["reward_signals"] = list(self.reward_signals)
+        data["supported_runtimes"] = list(self.supported_runtimes)
+        data["capabilities"] = list(self.capabilities)
         return data
 
 

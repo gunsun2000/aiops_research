@@ -23,6 +23,10 @@ def test_default_agent_registry_loads_four_research_agents():
         "AIApplicationManagementAgent",
         "app_scale_deployment",
     )
+    application = registry.get("AIApplicationManagementAgent")
+    assert application.implementation_id == "deterministic-application"
+    assert application.supported_runtimes == ("deterministic",)
+    assert application.capabilities == ("propose",)
     assert not registry.validate_action(
         "AIApplicationManagementAgent",
         "kubectl_delete_namespace",

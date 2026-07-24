@@ -24,6 +24,9 @@
         "Penalty when unnecessary recovery is requested.",
         "Penalty when a real service fault is ignored."
       ],
+      "implementation_id": "deterministic-ha",
+      "supported_runtimes": ["deterministic"],
+      "capabilities": ["diagnose"],
       "enabled": true
     },
     {
@@ -48,6 +51,9 @@
         "Additional reward when recovery time is reduced.",
         "Penalty for unnecessary restart or scale-out."
       ],
+      "implementation_id": "deterministic-application",
+      "supported_runtimes": ["deterministic"],
+      "capabilities": ["propose"],
       "enabled": true
     },
     {
@@ -70,6 +76,9 @@
         "Penalty when an unsafe replica increase is approved.",
         "Positive reward when low-risk observation prevents unnecessary infrastructure changes."
       ],
+      "implementation_id": "deterministic-infrastructure",
+      "supported_runtimes": ["deterministic"],
+      "capabilities": ["review"],
       "enabled": true
     },
     {
@@ -92,6 +101,9 @@
         "Penalty for unnecessary replica increase.",
         "Penalty when cost pressure blocks a necessary recovery action."
       ],
+      "implementation_id": "deterministic-cost",
+      "supported_runtimes": ["deterministic"],
+      "capabilities": ["review"],
       "enabled": true
     }
   ]
