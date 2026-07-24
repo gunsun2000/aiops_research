@@ -1,0 +1,69 @@
+{
+  "profile_id": "four-agent-role-veto-v1",
+  "version": "1.0.0",
+  "agents": [
+    {
+      "name": "AIServiceHASupportAgent",
+      "implementation_id": "deterministic-ha",
+      "runtime": "deterministic",
+      "enabled": true,
+      "veto_scopes": ["availability", "recovery"],
+      "consensus_weight": 1.0
+    },
+    {
+      "name": "AIApplicationManagementAgent",
+      "implementation_id": "deterministic-application",
+      "runtime": "deterministic",
+      "enabled": true,
+      "veto_scopes": ["action_validity", "target_alignment"],
+      "consensus_weight": 1.0
+    },
+    {
+      "name": "AISemiconductorInfraOpsAgent",
+      "implementation_id": "deterministic-infrastructure",
+      "runtime": "deterministic",
+      "enabled": true,
+      "veto_scopes": ["capacity", "resource_safety"],
+      "consensus_weight": 1.0
+    },
+    {
+      "name": "CostOptimizationAgent",
+      "implementation_id": "deterministic-cost",
+      "runtime": "deterministic",
+      "enabled": true,
+      "veto_scopes": ["budget", "cost_efficiency"],
+      "consensus_weight": 1.0
+    }
+  ],
+  "review_matrix": {
+    "AIServiceHASupportAgent": [
+      "AIApplicationManagementAgent",
+      "AISemiconductorInfraOpsAgent"
+    ],
+    "AIApplicationManagementAgent": [
+      "AIServiceHASupportAgent",
+      "AISemiconductorInfraOpsAgent",
+      "CostOptimizationAgent"
+    ],
+    "AISemiconductorInfraOpsAgent": [
+      "AIApplicationManagementAgent",
+      "CostOptimizationAgent"
+    ],
+    "CostOptimizationAgent": [
+      "AIApplicationManagementAgent",
+      "AISemiconductorInfraOpsAgent"
+    ]
+  },
+  "consensus_strategy": "role_based_veto",
+  "max_negotiation_rounds": 2,
+  "max_replan_attempts": 1,
+  "fallback_action": "observe_only",
+  "action_space": ["observe_only", "rollout_restart", "scale_out"],
+  "reward_weights": {
+    "availability_recovery": 0.4,
+    "action_validity": 0.3,
+    "resource_safety": 0.2,
+    "cost_efficiency": 0.1
+  },
+  "experiment_tags": ["deterministic", "baseline", "role-based-veto"]
+}
