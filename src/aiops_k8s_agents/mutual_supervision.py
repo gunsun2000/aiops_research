@@ -65,6 +65,43 @@ class AdapterOutputError(ValueError):
     """Raised when a runtime adapter returns an unsafe contract value."""
 
 
+class ReviewCollectionFailure(AdapterOutputError):
+    """Carry valid peer reviews collected before a reviewer failed."""
+
+    def __init__(self, message: str, reviews: list[PeerReview]) -> None:
+        super().__init__(message)
+        self.reviews = tuple(reviews)
+
+
+class NegotiationFailure(AdapterOutputError):
+    """Carry the valid negotiation trace collected before safe-stop."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        decisions: list[SupervisionDecision],
+        reviews: list[PeerReview],
+        rounds: list[NegotiationRound],
+    ) -> None:
+        super().__init__(message)
+        self.decisions = tuple(decisions)
+        self.reviews = tuple(reviews)
+        self.rounds = tuple(rounds)
+
+
+class PostReviewFailure(AdapterOutputError):
+    """Carry valid post-execution reviews collected before failure."""
+
+    def __init__(
+        self,
+        message: str,
+        reviews: list[PostExecutionReview],
+    ) -> None:
+        super().__init__(message)
+        self.reviews = tuple(reviews)
+
+
 @dataclass
 class MutualSupervisionCoordinator:
     validator: CommandValidator
@@ -182,13 +219,15 @@ class MutualSupervisionCoordinator:
                 evidence_refs=_evidence_refs(evidence, metric),
                 expected_service=deployment,
             )
-        except AdapterOutputError as exc:
-            return self._finalize_report(
-                self._configuration_failure_report(
-                    run_id=run_id,
-                    errors=(str(exc),),
-                )
+        except Exception as exc:
+            report = self._configuration_failure_report(
+                run_id=run_id,
+                errors=(
+                    f"{diagnosis_adapter.name} diagnose failed: {exc}",
+                ),
             )
+            report["evidence"] = evidence.to_summary()
+            return self._finalize_report(report)
         initial_decisions = [normalized_decision]
         self._record("initial_decisions", initial_decisions[0], run_id)
 
@@ -224,7 +263,7 @@ class MutualSupervisionCoordinator:
                 proposal_adapter,
                 proposal_adapter.propose(diagnosis, evidence),
             )
-        except AdapterOutputError as exc:
+        except Exception as exc:
             report = self._base_report(
                 run_id=run_id,
                 evidence=evidence,
@@ -235,33 +274,26 @@ class MutualSupervisionCoordinator:
                 final_status="safe_stopped",
                 human_review_required=self.protocol.human_review_on_failure,
             )
-            report["configuration_errors"] = [str(exc)]
+            report["configuration_errors"] = [
+                f"{proposal_adapter.name} propose failed: {exc}"
+            ]
             return self._finalize_report(report)
 
         candidates: list[RecoveryActionCandidate] = []
         replanning_attempts: list[dict[str, Any]] = []
         for index, action in enumerate(proposed_actions):
-            target_error = _target_alignment_error(
+            action_error = _action_semantic_error(
                 action,
+                protocol=self.protocol,
+                evidence=evidence,
                 namespace=namespace,
                 deployment=deployment,
             )
-            if target_error:
+            if action_error:
                 replanning_attempts.append(
                     {
                         "failed_action": action.kind.value,
-                        "reason": target_error,
-                        "next_step": "human_review_required",
-                    }
-                )
-                continue
-            if action.kind not in self.protocol.action_space:
-                replanning_attempts.append(
-                    {
-                        "failed_action": action.kind.value,
-                        "reason": (
-                            "proposal action is outside the protocol action space"
-                        ),
+                        "reason": action_error,
                         "next_step": "human_review_required",
                     }
                 )
@@ -311,7 +343,10 @@ class MutualSupervisionCoordinator:
                     candidates=[candidate],
                     round_offset=len(all_rounds),
                 )
-            except AdapterOutputError as exc:
+            except NegotiationFailure as exc:
+                initial_decisions.extend(exc.decisions)
+                all_reviews.extend(exc.reviews)
+                all_rounds.extend(exc.rounds)
                 report = self._base_report(
                     run_id=run_id,
                     evidence=evidence,
@@ -343,16 +378,18 @@ class MutualSupervisionCoordinator:
                 return self._finalize_report(report)
 
             last_action = selected_action
-            target_error = _target_alignment_error(
+            action_error = _action_semantic_error(
                 selected_action,
+                protocol=self.protocol,
+                evidence=evidence,
                 namespace=namespace,
                 deployment=deployment,
             )
-            if target_error:
+            if action_error:
                 last_validation = {
                     "valid": False,
                     "command": "",
-                    "stderr": target_error,
+                    "stderr": action_error,
                 }
                 self._record(
                     "safety_validations",
@@ -362,7 +399,7 @@ class MutualSupervisionCoordinator:
                 replanning_attempts.append(
                     {
                         "failed_action": selected_action.kind.value,
-                        "reason": target_error,
+                        "reason": action_error,
                         "next_step": (
                             "try_next_candidate"
                             if candidate_index + 1 < max_attempts
@@ -454,7 +491,8 @@ class MutualSupervisionCoordinator:
                     _empty_result(self.mode.value, str(exc))
                 )
                 return self._finalize_report(report)
-            except AdapterOutputError as exc:
+            except PostReviewFailure as exc:
+                all_post_reviews.extend(exc.reviews)
                 report = self._base_report(
                     run_id=run_id,
                     evidence=evidence,
@@ -486,8 +524,6 @@ class MutualSupervisionCoordinator:
                 return self._finalize_report(report)
 
             all_post_reviews.extend(post_reviews)
-            for post_review in post_reviews:
-                self._record("post_execution_reviews", post_review, run_id)
             recovered = (
                 execution.valid
                 and assessment.recovery_success
@@ -613,16 +649,23 @@ class MutualSupervisionCoordinator:
             )
             decisions.append(decision)
             self._record("initial_decisions", decision, run_id)
-            reviews = self._review_application_action(
-                run_id=run_id,
-                round_index=round_index,
-                decision=decision,
-                diagnosis=diagnosis,
-                evidence=evidence,
-            )
+            try:
+                reviews = self._review_application_action(
+                    run_id=run_id,
+                    round_index=round_index,
+                    decision=decision,
+                    diagnosis=diagnosis,
+                    evidence=evidence,
+                )
+            except ReviewCollectionFailure as exc:
+                all_reviews.extend(exc.reviews)
+                raise NegotiationFailure(
+                    str(exc),
+                    decisions=decisions,
+                    reviews=all_reviews,
+                    rounds=rounds,
+                ) from exc
             all_reviews.extend(reviews)
-            for review in reviews:
-                self._record("peer_reviews", review, run_id)
 
             abstentions = tuple(
                 review.reviewer
@@ -656,10 +699,54 @@ class MutualSupervisionCoordinator:
                 return None, decisions, all_reviews, rounds
 
             if outcome.revisions:
-                revised_action, revision_notes = _apply_revisions(
-                    action,
-                    list(outcome.revisions),
-                )
+                try:
+                    revised_action, revision_notes = _apply_revisions(
+                        action,
+                        list(outcome.revisions),
+                    )
+                    revision_error = _action_semantic_error(
+                        revised_action,
+                        protocol=self.protocol,
+                        evidence=evidence,
+                        namespace=evidence.namespace,
+                        deployment=evidence.deployment,
+                    )
+                    if revision_error:
+                        raise AdapterOutputError(
+                            f"revised action rejected: {revision_error}"
+                        )
+                except Exception as exc:
+                    failure_round = NegotiationRound(
+                        run_id=run_id,
+                        round_index=round_index,
+                        input_decision_ids=(decision.decision_id,),
+                        review_ids=tuple(
+                            review.review_id for review in reviews
+                        ),
+                        revisions=(f"rejected:{exc}",),
+                        remaining_vetoes=outcome.blocking_vetoes,
+                        remaining_abstentions=abstentions,
+                        consensus_status="revision_rejected",
+                        selected_action_id=None,
+                        decision_scopes=decision_scopes,
+                        consensus_strategy=outcome.strategy,
+                        non_blocking_objections=(
+                            outcome.non_blocking_objections
+                        ),
+                        consensus_reason=str(exc),
+                    )
+                    rounds.append(failure_round)
+                    self._record(
+                        "negotiation_rounds",
+                        failure_round,
+                        run_id,
+                    )
+                    raise NegotiationFailure(
+                        str(exc),
+                        decisions=decisions,
+                        reviews=all_reviews,
+                        rounds=rounds,
+                    ) from exc
                 round_result = NegotiationRound(
                     run_id=run_id,
                     round_index=round_index,
@@ -716,17 +803,31 @@ class MutualSupervisionCoordinator:
         for adapter in self.adapters.values():
             if "post_review" not in adapter.capabilities:
                 continue
-            review = adapter.post_review(action, assessment, after_evidence)
-            if review is None:
-                continue
-            reviews.append(
-                _normalize_post_review_output(
+            try:
+                review = adapter.post_review(
+                    action,
+                    assessment,
+                    after_evidence,
+                )
+                if review is None:
+                    continue
+                normalized_review = _normalize_post_review_output(
                     adapter,
                     review,
                     run_id=run_id,
                     action_id=action_id,
                     policy_version=self._policy_version(),
                 )
+            except Exception as exc:
+                raise PostReviewFailure(
+                    f"{adapter.name} post_review failed: {exc}",
+                    reviews,
+                ) from exc
+            reviews.append(normalized_review)
+            self._record(
+                "post_execution_reviews",
+                normalized_review,
+                run_id,
             )
         return reviews
 
@@ -747,27 +848,34 @@ class MutualSupervisionCoordinator:
             adapter = self.adapters.get(reviewer)
             if adapter is None or "review" not in adapter.capabilities:
                 continue
-            review = adapter.review(
-                decision,
-                evidence,
-                ReviewContext(
-                    run_id=run_id,
-                    round_index=round_index,
-                    policy_version=self.protocol.version,
-                    diagnosis=diagnosis,
-                ),
-            )
-            if review is not None:
-                reviews.append(
-                    _normalize_peer_review_output(
-                        adapter,
-                        review,
-                        decision=decision,
+            try:
+                review = adapter.review(
+                    decision,
+                    evidence,
+                    ReviewContext(
                         run_id=run_id,
                         round_index=round_index,
                         policy_version=self.protocol.version,
-                    )
+                        diagnosis=diagnosis,
+                    ),
                 )
+                if review is None:
+                    continue
+                normalized_review = _normalize_peer_review_output(
+                    adapter,
+                    review,
+                    decision=decision,
+                    run_id=run_id,
+                    round_index=round_index,
+                    policy_version=self.protocol.version,
+                )
+            except Exception as exc:
+                raise ReviewCollectionFailure(
+                    f"{adapter.name} review failed: {exc}",
+                    reviews,
+                ) from exc
+            reviews.append(normalized_review)
+            self._record("peer_reviews", normalized_review, run_id)
         return reviews
 
     def _validate_action(self, action: RecoveryAction) -> dict[str, Any]:
@@ -1241,6 +1349,39 @@ def _target_alignment_error(
     )
 
 
+def _action_semantic_error(
+    action: RecoveryAction,
+    *,
+    protocol: ResearchProtocolProfile,
+    evidence: EvidenceSnapshot,
+    namespace: str,
+    deployment: str,
+) -> str:
+    target_error = _target_alignment_error(
+        action,
+        namespace=namespace,
+        deployment=deployment,
+    )
+    if target_error:
+        return target_error
+    if action.kind not in protocol.action_space:
+        return (
+            f"{action.kind.value} action is outside the protocol action space"
+        )
+    if action.kind is RecoveryActionKind.SCALE_OUT:
+        if (
+            isinstance(action.replicas, bool)
+            or not isinstance(action.replicas, int)
+        ):
+            return "scale_out replicas must be an integer"
+        if action.replicas <= evidence.desired_replicas:
+            return (
+                "scale_out replicas must be strictly greater than observed "
+                f"desired replicas ({evidence.desired_replicas})"
+            )
+    return ""
+
+
 def _validate_recovery_action_output(
     adapter: AgentAdapter,
     action: RecoveryAction,
@@ -1320,11 +1461,28 @@ def _apply_revisions(
     ]
     if not suggestions:
         return action, []
+    cross_kind = [
+        suggestion
+        for suggestion in suggestions
+        if suggestion.kind is not action.kind
+    ]
+    if cross_kind:
+        raise AdapterOutputError(
+            "cross-kind revision is not allowed: "
+            f"{action.kind.value}->{cross_kind[0].kind.value}"
+        )
     if action.kind == RecoveryActionKind.SCALE_OUT:
+        if any(
+            isinstance(suggestion.replicas, bool)
+            or not isinstance(suggestion.replicas, int)
+            for suggestion in suggestions
+        ):
+            raise AdapterOutputError(
+                "scale_out revision replicas must be integers"
+            )
         replicas = min(
             suggestion.replicas
             for suggestion in suggestions
-            if suggestion.replicas is not None
         )
         revised = replace(
             action,
@@ -1332,7 +1490,7 @@ def _apply_revisions(
             reason=suggestions[0].reason,
         )
         return revised, [f"replicas:{action.replicas}->{replicas}"]
-    return suggestions[0], [f"action:{action.kind.value}->{suggestions[0].kind.value}"]
+    return suggestions[0], [f"{action.kind.value}:reviewer_revision"]
 
 
 def _decision_scopes(action: RecoveryAction) -> tuple[str, ...]:

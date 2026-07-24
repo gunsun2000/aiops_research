@@ -280,6 +280,45 @@ def test_allowlisted_wrong_target_proposal_is_never_executed():
     assert report["human_review_required"] is True
 
 
+def test_scale_out_below_observed_desired_replicas_is_never_executed():
+    event_store = InMemoryResearchEventStore()
+    coordinator = MutualSupervisionCoordinator(
+        validator=_validator(),
+        evidence_provider=FakeEvidenceProvider.cpu_saturation(
+            "online-boutique",
+            "paymentservice",
+            95.0,
+            desired_replicas=4,
+            available_replicas=4,
+        ),
+        recovery_monitor=FakeRecoveryMonitor(default_success=True),
+        mode=ExecutionMode.MOCK,
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-application",
+            UnsafeScaleApplicationAdapter,
+        ),
+        event_store=event_store,
+    )
+
+    report = coordinator.run(
+        "online-boutique",
+        "paymentservice",
+        "cpu",
+        80.0,
+    )
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_failure"
+    assert report["executed_actions"] == []
+    assert event_store.events["executed_actions"] == []
+    assert any(
+        "greater than observed desired replicas (4)" in attempt["reason"]
+        for attempt in report["replanning_attempts"]
+    )
+    assert report["human_review_required"] is True
+
+
 def test_spoofed_diagnosis_decision_identity_safe_stops():
     report = _coordinator(
         protocol=_profile(),
@@ -371,12 +410,14 @@ def test_semantically_malformed_recovery_action_safe_stops():
 
 
 def test_malformed_peer_review_output_safe_stops():
+    event_store = InMemoryResearchEventStore()
     report = _coordinator(
         protocol=_profile(),
         adapter_registry=_registry_with_replacement(
             "deterministic-cost",
             MalformedReviewCostAdapter,
         ),
+        event_store=event_store,
     ).run("online-boutique", "paymentservice", "cpu", 80.0)
 
     assert report["valid"] is False
@@ -385,6 +426,24 @@ def test_malformed_peer_review_output_safe_stops():
     assert any(
         "review output" in error
         for error in report["configuration_errors"]
+    )
+    assert len(report["initial_decisions"]) == 2
+    assert len(report["peer_reviews"]) == 2
+    assert [
+        review["review_id"] for review in report["peer_reviews"]
+    ] == [
+        review["review_id"]
+        for review in event_store.events["peer_reviews"]
+    ]
+    assert (
+        report["agent_contributions"]["AIServiceHASupportAgent"]["approvals"]
+        == 1
+    )
+    assert (
+        report["agent_contributions"]["AISemiconductorInfraOpsAgent"][
+            "approvals"
+        ]
+        == 1
     )
 
 
@@ -407,12 +466,14 @@ def test_non_enum_review_verdict_safe_stops():
 
 
 def test_spoofed_post_review_identity_marks_execution_unsafe():
+    event_store = InMemoryResearchEventStore()
     report = _coordinator(
         protocol=_profile(),
         adapter_registry=_registry_with_replacement(
             "deterministic-cost",
             SpoofedPostReviewCostAdapter,
         ),
+        event_store=event_store,
     ).run("online-boutique", "paymentservice", "cpu", 80.0)
 
     assert report["valid"] is False
@@ -422,9 +483,27 @@ def test_spoofed_post_review_identity_marks_execution_unsafe():
         "post-review agent" in error
         for error in report["configuration_errors"]
     )
+    assert len(report["post_execution_reviews"]) == 3
+    assert {
+        review["agent"] for review in report["post_execution_reviews"]
+    } == {
+        "AIServiceHASupportAgent",
+        "AIApplicationManagementAgent",
+        "AISemiconductorInfraOpsAgent",
+    }
+    assert [
+        review["review_id"] for review in report["post_execution_reviews"]
+    ] == [
+        review["review_id"]
+        for review in event_store.events["post_execution_reviews"]
+    ]
     assert all(
-        review["agent"] != "AIServiceHASupportAgent"
-        for review in report["post_execution_reviews"]
+        report["agent_contributions"][agent]["post_reviews"] == 1
+        for agent in (
+            "AIServiceHASupportAgent",
+            "AIApplicationManagementAgent",
+            "AISemiconductorInfraOpsAgent",
+        )
     )
 
 
@@ -467,6 +546,92 @@ def test_cost_agent_revision_changes_replica_target_before_execution():
         review["verdict"] == "revise"
         and review["reviewer"] == "CostOptimizationAgent"
         for review in report["peer_reviews"]
+    )
+
+
+def test_revision_cannot_leave_observe_only_action_space():
+    source = _profile_source()
+    source["action_space"] = ["observe_only"]
+    profile = ResearchProtocolProfile.from_dict(source)
+    event_store = InMemoryResearchEventStore()
+    registry = _registry_with_replacements(
+        {
+            "deterministic-application": ObserveOnlyApplicationAdapter,
+            "deterministic-cost": ForbiddenScaleRevisionCostAdapter,
+        }
+    )
+
+    report = _coordinator(
+        protocol=profile,
+        adapter_registry=registry,
+        event_store=event_store,
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["executed_actions"] == []
+    assert event_store.events["executed_actions"] == []
+    assert any(
+        "cross-kind revision" in error
+        for error in report["configuration_errors"]
+    )
+
+
+def test_cross_kind_revision_safe_stops_instead_of_crashing():
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-cost",
+            ObserveRevisionCostAdapter,
+        ),
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["executed_actions"] == []
+    assert any(
+        "cross-kind revision" in error
+        for error in report["configuration_errors"]
+    )
+
+
+def test_same_kind_scale_revision_must_exceed_observed_desired_replicas():
+    event_store = InMemoryResearchEventStore()
+    coordinator = MutualSupervisionCoordinator(
+        validator=_validator(),
+        evidence_provider=FakeEvidenceProvider.cpu_saturation(
+            "online-boutique",
+            "paymentservice",
+            95.0,
+            desired_replicas=4,
+            available_replicas=4,
+        ),
+        recovery_monitor=FakeRecoveryMonitor(default_success=True),
+        mode=ExecutionMode.MOCK,
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacements(
+            {
+                "deterministic-application": HighScaleApplicationAdapter,
+                "deterministic-cost": UnsafeReplicaRevisionCostAdapter,
+            }
+        ),
+        event_store=event_store,
+    )
+
+    report = coordinator.run(
+        "online-boutique",
+        "paymentservice",
+        "cpu",
+        80.0,
+    )
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["executed_actions"] == []
+    assert event_store.events["executed_actions"] == []
+    assert any(
+        "greater than observed desired replicas (4)" in error
+        for error in report["configuration_errors"]
     )
 
 
@@ -883,6 +1048,99 @@ def test_reused_event_store_correlates_every_event_with_its_run():
             assert event["run_id"] in run_ids
 
 
+@pytest.mark.parametrize(
+    ("implementation_id", "replacement", "phase"),
+    [
+        ("deterministic-ha", "RaisingDiagnosisHAAdapter", "diagnose"),
+        (
+            "deterministic-application",
+            "RaisingProposalApplicationAdapter",
+            "propose",
+        ),
+    ],
+)
+def test_pre_execution_adapter_exception_safe_stops(
+    implementation_id,
+    replacement,
+    phase,
+):
+    event_store = InMemoryResearchEventStore()
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            implementation_id,
+            globals()[replacement],
+        ),
+        event_store=event_store,
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["human_review_required"] is True
+    assert report["executed_actions"] == []
+    assert event_store.events["executed_actions"] == []
+    assert any(phase in error for error in report["configuration_errors"])
+    assert report["evidence"]["deployment"] == "paymentservice"
+
+
+def test_review_exception_safe_stops_with_valid_prefix_trace():
+    event_store = InMemoryResearchEventStore()
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-cost",
+            RaisingReviewCostAdapter,
+        ),
+        event_store=event_store,
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["human_review_required"] is True
+    assert report["executed_actions"] == []
+    assert len(report["initial_decisions"]) == 2
+    assert len(report["peer_reviews"]) == 2
+    assert [
+        review["review_id"] for review in report["peer_reviews"]
+    ] == [
+        review["review_id"]
+        for review in event_store.events["peer_reviews"]
+    ]
+    assert any(
+        "review" in error and "simulated review failure" in error
+        for error in report["configuration_errors"]
+    )
+
+
+def test_post_review_exception_marks_executed_action_unsafe_with_prefix_trace():
+    event_store = InMemoryResearchEventStore()
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-cost",
+            RaisingPostReviewCostAdapter,
+        ),
+        event_store=event_store,
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_failure"
+    assert report["human_review_required"] is True
+    assert len(report["executed_actions"]) == 1
+    assert report["execution_result"]["valid"] is True
+    assert len(report["post_execution_reviews"]) == 3
+    assert [
+        review["review_id"] for review in report["post_execution_reviews"]
+    ] == [
+        review["review_id"]
+        for review in event_store.events["post_execution_reviews"]
+    ]
+    assert any(
+        "post_review" in error and "simulated post-review failure" in error
+        for error in report["configuration_errors"]
+    )
+
+
 def test_event_store_keeps_pre_execution_trace_when_executor_crashes(monkeypatch):
     event_store = InMemoryResearchEventStore()
     coordinator = _coordinator(event_store=event_store)
@@ -1068,6 +1326,47 @@ class WrongTargetApplicationAdapter(DeterministicApplicationAdapter):
         )
 
 
+class UnsafeScaleApplicationAdapter(DeterministicApplicationAdapter):
+    def propose(self, diagnosis, evidence):
+        del diagnosis
+        return (
+            RecoveryAction(
+                namespace=evidence.namespace,
+                deployment=evidence.deployment,
+                kind=RecoveryActionKind.SCALE_OUT,
+                replicas=1,
+                reason="malicious scale target below observed desired replicas",
+            ),
+        )
+
+
+class ObserveOnlyApplicationAdapter(DeterministicApplicationAdapter):
+    def propose(self, diagnosis, evidence):
+        del diagnosis
+        return (
+            RecoveryAction(
+                namespace=evidence.namespace,
+                deployment=evidence.deployment,
+                kind=RecoveryActionKind.OBSERVE_ONLY,
+                reason="bounded observation",
+            ),
+        )
+
+
+class HighScaleApplicationAdapter(DeterministicApplicationAdapter):
+    def propose(self, diagnosis, evidence):
+        del diagnosis
+        return (
+            RecoveryAction(
+                namespace=evidence.namespace,
+                deployment=evidence.deployment,
+                kind=RecoveryActionKind.SCALE_OUT,
+                replicas=5,
+                reason="initially valid bounded scale target",
+            ),
+        )
+
+
 class SpoofedDecisionHAAdapter(DeterministicHAAdapter):
     def diagnose(self, evidence, metric, threshold):
         result = super().diagnose(evidence, metric, threshold)
@@ -1142,14 +1441,91 @@ class NonBooleanPostReviewCostAdapter(DeterministicCostAdapter):
         return replace(review, approved="yes")
 
 
+class ForbiddenScaleRevisionCostAdapter(DeterministicCostAdapter):
+    def review(self, decision, evidence, context):
+        review = super().review(decision, evidence, context)
+        assert review is not None
+        return replace(
+            review,
+            verdict=mutual_supervision_module.ReviewVerdict.REVISE,
+            suggested_action=RecoveryAction(
+                namespace=evidence.namespace,
+                deployment=evidence.deployment,
+                kind=RecoveryActionKind.SCALE_OUT,
+                replicas=evidence.desired_replicas + 1,
+                reason="forbidden cross-kind scale revision",
+            ),
+        )
+
+
+class ObserveRevisionCostAdapter(DeterministicCostAdapter):
+    def review(self, decision, evidence, context):
+        review = super().review(decision, evidence, context)
+        assert review is not None
+        return replace(
+            review,
+            verdict=mutual_supervision_module.ReviewVerdict.REVISE,
+            suggested_action=RecoveryAction(
+                namespace=evidence.namespace,
+                deployment=evidence.deployment,
+                kind=RecoveryActionKind.OBSERVE_ONLY,
+                reason="malformed cross-kind observation revision",
+            ),
+        )
+
+
+class UnsafeReplicaRevisionCostAdapter(DeterministicCostAdapter):
+    def review(self, decision, evidence, context):
+        review = super().review(decision, evidence, context)
+        assert review is not None
+        assert decision.proposed_action is not None
+        return replace(
+            review,
+            verdict=mutual_supervision_module.ReviewVerdict.REVISE,
+            suggested_action=replace(
+                decision.proposed_action,
+                replicas=1,
+                reason="malicious same-kind replica revision",
+            ),
+        )
+
+
+class RaisingDiagnosisHAAdapter(DeterministicHAAdapter):
+    def diagnose(self, evidence, metric, threshold):
+        del evidence, metric, threshold
+        raise RuntimeError("simulated diagnose failure")
+
+
+class RaisingProposalApplicationAdapter(DeterministicApplicationAdapter):
+    def propose(self, diagnosis, evidence):
+        del diagnosis, evidence
+        raise RuntimeError("simulated propose failure")
+
+
+class RaisingReviewCostAdapter(DeterministicCostAdapter):
+    def review(self, decision, evidence, context):
+        del decision, evidence, context
+        raise RuntimeError("simulated review failure")
+
+
+class RaisingPostReviewCostAdapter(DeterministicCostAdapter):
+    def post_review(self, action, assessment, evidence):
+        del action, assessment, evidence
+        raise RuntimeError("simulated post-review failure")
+
+
 def _registry_with_replacement(implementation_id, replacement):
+    return _registry_with_replacements({implementation_id: replacement})
+
+
+def _registry_with_replacements(replacements):
     default_registry = build_default_agent_adapter_registry()
     registry = AgentAdapterRegistry(factories={})
     for current_id, factory in default_registry.factories.items():
         metadata = default_registry.metadata[current_id]
         registry.register(
             current_id,
-            replacement if current_id == implementation_id else factory,
+            replacements.get(current_id, factory),
             supported_runtimes=metadata.supported_runtimes,
             capabilities=metadata.capabilities,
         )
