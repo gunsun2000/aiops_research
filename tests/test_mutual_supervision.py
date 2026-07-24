@@ -6,7 +6,9 @@ import pytest
 
 from aiops_k8s_agents.agent_adapters import (
     AgentAdapterRegistry,
+    DeterministicApplicationAdapter,
     DeterministicCostAdapter,
+    DeterministicHAAdapter,
     build_default_agent_adapter_registry,
 )
 from aiops_k8s_agents.agent_registry import AgentRegistryError
@@ -16,7 +18,11 @@ from aiops_k8s_agents.evidence import EvidenceSnapshot, FakeEvidenceProvider
 from aiops_k8s_agents.executor import ExecutionMode
 from aiops_k8s_agents.infra_agent import AISemiconductorInfraOpsAgent
 import aiops_k8s_agents.mutual_supervision as mutual_supervision_module
-from aiops_k8s_agents.models import CommandResult, RecoveryActionKind
+from aiops_k8s_agents.models import (
+    CommandResult,
+    RecoveryAction,
+    RecoveryActionKind,
+)
 from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
 from aiops_k8s_agents.mutual_supervision_policy import (
     load_mutual_supervision_policy,
@@ -44,6 +50,11 @@ def test_profile_driven_coordinator_dependencies_are_public():
 
 def test_coordinator_report_records_profile_identity_and_active_runtimes():
     profile = _profile()
+    identity = {
+        "profile_id": profile.profile_id,
+        "version": profile.version,
+        "config_hash": profile.config_hash,
+    }
 
     report = _coordinator(protocol=profile).run(
         namespace="online-boutique",
@@ -52,8 +63,19 @@ def test_coordinator_report_records_profile_identity_and_active_runtimes():
         threshold=80.0,
     )
 
-    assert report["protocol_profile"] == profile.to_canonical_dict()
-    assert report["metadata"]["protocol_profile"] == profile.to_canonical_dict()
+    assert report["protocol_profile"] == identity
+    assert report["protocol_profile_snapshot"] == profile.to_canonical_dict()
+    assert report["metadata"]["protocol_profile"] == identity
+    assert (
+        report["metadata"]["protocol_profile_snapshot"]
+        == profile.to_canonical_dict()
+    )
+    assert (
+        ResearchProtocolProfile.from_dict(
+            report["protocol_profile_snapshot"]
+        )
+        == profile
+    )
     assert report["active_agents"] == [
         "AIServiceHASupportAgent",
         "AIApplicationManagementAgent",
@@ -215,6 +237,213 @@ def test_requested_metric_is_selected_from_multi_metric_evidence():
     assert report["diagnosis"]["cause"] == "no_action_required"
     assert report["diagnosis"]["evidence"]["normalized_metric_name"] == "memory"
     assert report["executed_actions"] == []
+
+
+def test_allowlisted_wrong_target_proposal_is_never_executed():
+    event_store = InMemoryResearchEventStore()
+    coordinator = MutualSupervisionCoordinator(
+        validator=CommandValidator(
+            allowed_namespaces={"online-boutique", "other-namespace"},
+            allowed_deployments={"paymentservice", "other-service"},
+            min_replicas=1,
+            max_replicas=5,
+        ),
+        evidence_provider=FakeEvidenceProvider.cpu_saturation(
+            "online-boutique",
+            "paymentservice",
+            95.0,
+        ),
+        recovery_monitor=FakeRecoveryMonitor(default_success=True),
+        mode=ExecutionMode.MOCK,
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-application",
+            WrongTargetApplicationAdapter,
+        ),
+        event_store=event_store,
+    )
+
+    report = coordinator.run(
+        "online-boutique",
+        "paymentservice",
+        "cpu",
+        80.0,
+    )
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_failure"
+    assert report["executed_actions"] == []
+    assert event_store.events["executed_actions"] == []
+    assert report["safety_validation"]["command"] == ""
+    assert report["replanning_attempts"]
+    assert "target mismatch" in report["replanning_attempts"][0]["reason"]
+    assert report["human_review_required"] is True
+
+
+def test_spoofed_diagnosis_decision_identity_safe_stops():
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-ha",
+            SpoofedDecisionHAAdapter,
+        ),
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["executed_actions"] == []
+    assert any(
+        "decision agent" in error
+        for error in report["configuration_errors"]
+    )
+
+
+def test_spoofed_diagnosis_service_safe_stops():
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-ha",
+            SpoofedDiagnosisServiceHAAdapter,
+        ),
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["executed_actions"] == []
+    assert any(
+        "diagnosis service" in error
+        for error in report["configuration_errors"]
+    )
+
+
+def test_non_boolean_diagnosis_approval_safe_stops():
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-ha",
+            NonBooleanDecisionHAAdapter,
+        ),
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["executed_actions"] == []
+    assert any(
+        "decision approved" in error
+        for error in report["configuration_errors"]
+    )
+
+
+def test_malformed_proposal_output_safe_stops():
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-application",
+            MalformedProposalApplicationAdapter,
+        ),
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["executed_actions"] == []
+    assert any(
+        "proposal output" in error
+        for error in report["configuration_errors"]
+    )
+
+
+def test_semantically_malformed_recovery_action_safe_stops():
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-application",
+            MalformedActionApplicationAdapter,
+        ),
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["executed_actions"] == []
+    assert any(
+        "action kind" in error
+        for error in report["configuration_errors"]
+    )
+
+
+def test_malformed_peer_review_output_safe_stops():
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-cost",
+            MalformedReviewCostAdapter,
+        ),
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["executed_actions"] == []
+    assert any(
+        "review output" in error
+        for error in report["configuration_errors"]
+    )
+
+
+def test_non_enum_review_verdict_safe_stops():
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-cost",
+            NonEnumReviewVerdictCostAdapter,
+        ),
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_stopped"
+    assert report["executed_actions"] == []
+    assert any(
+        "review verdict" in error
+        for error in report["configuration_errors"]
+    )
+
+
+def test_spoofed_post_review_identity_marks_execution_unsafe():
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-cost",
+            SpoofedPostReviewCostAdapter,
+        ),
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_failure"
+    assert report["human_review_required"] is True
+    assert any(
+        "post-review agent" in error
+        for error in report["configuration_errors"]
+    )
+    assert all(
+        review["agent"] != "AIServiceHASupportAgent"
+        for review in report["post_execution_reviews"]
+    )
+
+
+def test_non_boolean_post_review_approval_marks_execution_unsafe():
+    report = _coordinator(
+        protocol=_profile(),
+        adapter_registry=_registry_with_replacement(
+            "deterministic-cost",
+            NonBooleanPostReviewCostAdapter,
+        ),
+    ).run("online-boutique", "paymentservice", "cpu", 80.0)
+
+    assert report["valid"] is False
+    assert report["final_status"] == "safe_failure"
+    assert report["human_review_required"] is True
+    assert any(
+        "post-review approved" in error
+        for error in report["configuration_errors"]
+    )
 
 
 def test_cost_agent_revision_changes_replica_target_before_execution():
@@ -572,9 +801,20 @@ def test_coordinator_persists_complete_mutual_supervision_trace():
     protocol_event = event_store.events["protocol_profiles"][0]
     for key, value in report["protocol_profile"].items():
         assert protocol_event[key] == value
+    assert (
+        ResearchProtocolProfile.from_dict(
+            protocol_event["protocol_profile_snapshot"]
+        ).config_hash
+        == report["protocol_profile"]["config_hash"]
+    )
     for events in event_store.events.values():
         assert all(
             event["protocol_profile"] == report["protocol_profile"]
+            for event in events
+        )
+        assert all(
+            event["protocol_profile_snapshot"]
+            == report["protocol_profile_snapshot"]
             for event in events
         )
 
@@ -591,6 +831,8 @@ def test_legacy_compatibility_run_uses_one_authoritative_protocol_version():
     )
 
     version = report["protocol_profile"]["version"]
+    assert version == "mutual-supervision-v1"
+    assert report["protocol_profile_snapshot"]["version"] == version
     trace_versions = {
         report["policy_version"],
         *(
@@ -810,3 +1052,105 @@ class NoPostReviewCostAdapter(DeterministicCostAdapter):
     def post_review(self, action, assessment, evidence):
         del action, assessment, evidence
         return None
+
+
+class WrongTargetApplicationAdapter(DeterministicApplicationAdapter):
+    def propose(self, diagnosis, evidence):
+        del diagnosis, evidence
+        return (
+            RecoveryAction(
+                namespace="other-namespace",
+                deployment="other-service",
+                kind=RecoveryActionKind.SCALE_OUT,
+                replicas=2,
+                reason="malicious allowlisted target",
+            ),
+        )
+
+
+class SpoofedDecisionHAAdapter(DeterministicHAAdapter):
+    def diagnose(self, evidence, metric, threshold):
+        result = super().diagnose(evidence, metric, threshold)
+        assert result is not None
+        diagnosis, decision = result
+        return diagnosis, replace(
+            decision,
+            agent="CostOptimizationAgent",
+        )
+
+
+class SpoofedDiagnosisServiceHAAdapter(DeterministicHAAdapter):
+    def diagnose(self, evidence, metric, threshold):
+        result = super().diagnose(evidence, metric, threshold)
+        assert result is not None
+        diagnosis, decision = result
+        return replace(diagnosis, service="other-service"), decision
+
+
+class NonBooleanDecisionHAAdapter(DeterministicHAAdapter):
+    def diagnose(self, evidence, metric, threshold):
+        result = super().diagnose(evidence, metric, threshold)
+        assert result is not None
+        diagnosis, decision = result
+        return diagnosis, replace(decision, approved="yes")
+
+
+class MalformedProposalApplicationAdapter(DeterministicApplicationAdapter):
+    def propose(self, diagnosis, evidence):
+        del diagnosis, evidence
+        return (object(),)
+
+
+class MalformedActionApplicationAdapter(DeterministicApplicationAdapter):
+    def propose(self, diagnosis, evidence):
+        del diagnosis, evidence
+        return (
+            RecoveryAction(
+                namespace="online-boutique",
+                deployment="paymentservice",
+                kind="scale_out",
+                replicas=2,
+                reason="invalid enum",
+            ),
+        )
+
+
+class MalformedReviewCostAdapter(DeterministicCostAdapter):
+    def review(self, decision, evidence, context):
+        del decision, evidence, context
+        return "malformed-review"
+
+
+class NonEnumReviewVerdictCostAdapter(DeterministicCostAdapter):
+    def review(self, decision, evidence, context):
+        review = super().review(decision, evidence, context)
+        assert review is not None
+        return replace(review, verdict="veto")
+
+
+class SpoofedPostReviewCostAdapter(DeterministicCostAdapter):
+    def post_review(self, action, assessment, evidence):
+        review = super().post_review(action, assessment, evidence)
+        assert review is not None
+        return replace(review, agent="AIServiceHASupportAgent")
+
+
+class NonBooleanPostReviewCostAdapter(DeterministicCostAdapter):
+    def post_review(self, action, assessment, evidence):
+        review = super().post_review(action, assessment, evidence)
+        assert review is not None
+        return replace(review, approved="yes")
+
+
+def _registry_with_replacement(implementation_id, replacement):
+    default_registry = build_default_agent_adapter_registry()
+    registry = AgentAdapterRegistry(factories={})
+    for current_id, factory in default_registry.factories.items():
+        metadata = default_registry.metadata[current_id]
+        registry.register(
+            current_id,
+            replacement if current_id == implementation_id else factory,
+            supported_runtimes=metadata.supported_runtimes,
+            capabilities=metadata.capabilities,
+        )
+    return registry

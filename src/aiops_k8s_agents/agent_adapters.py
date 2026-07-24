@@ -580,6 +580,12 @@ def _post_review(
 
 
 AgentAdapterFactory = Callable[[ProtocolAgentBinding], AgentAdapter]
+_ADAPTER_PROTOCOL_METHODS = (
+    "diagnose",
+    "propose",
+    "review",
+    "post_review",
+)
 
 
 @dataclass(frozen=True)
@@ -679,6 +685,18 @@ class AgentAdapterRegistry:
             raise AgentRegistryError(
                 f"adapter capabilities do not match binding: {binding.name}"
             )
+        for method_name in _ADAPTER_PROTOCOL_METHODS:
+            if not callable(getattr(adapter, method_name, None)):
+                raise AgentRegistryError(
+                    f"adapter method is not callable: "
+                    f"{binding.name}.{method_name}"
+                )
+        for capability in binding.capabilities:
+            if not callable(getattr(adapter, capability, None)):
+                raise AgentRegistryError(
+                    f"declared adapter capability is not callable: "
+                    f"{binding.name}.{capability}"
+                )
 
 
 def build_default_agent_adapter_registry() -> AgentAdapterRegistry:

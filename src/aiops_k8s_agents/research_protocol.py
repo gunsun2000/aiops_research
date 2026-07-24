@@ -64,25 +64,64 @@ def _required_text(data: Mapping[str, Any], key: str, label: str) -> str:
     return value.strip()
 
 
-def _required_list(value: Any, label: str) -> list[Any]:
-    if not isinstance(value, list) or not value:
-        raise ValueError(f"{label} must be a non-empty list")
+def _list_value(value: Any, label: str) -> list[Any]:
+    if not isinstance(value, list):
+        raise ValueError(f"{label} must be a list")
     return value
 
 
-def _weight(value: Any, label: str) -> float:
+def _number_value(value: Any, label: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(f"{label} must be a number")
-    normalized = float(value)
-    if not math.isfinite(normalized) or normalized < 0:
+    return float(value)
+
+
+def _integer_value(value: Any, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    return value
+
+
+def _semantic_text(value: Any, label: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{label} must not be empty")
+
+
+def _semantic_weight(value: Any, label: str) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{label} must be a number")
+    if not math.isfinite(float(value)) or float(value) < 0:
         raise ValueError(f"{label} must not be negative")
-    return normalized
 
 
-def _round_count(value: Any, label: str, minimum: int) -> int:
+def _semantic_round_count(
+    value: Any,
+    label: str,
+    minimum: int,
+) -> None:
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ValueError(f"{label} must be at least {minimum}")
-    return value
+
+
+def _validate_binding_semantics(binding: ProtocolAgentBinding) -> None:
+    _semantic_text(binding.name, "agent name")
+    _semantic_text(binding.implementation_id, "implementation_id")
+    _semantic_text(binding.runtime, "runtime")
+    if not isinstance(binding.enabled, bool):
+        raise ValueError("enabled must be a boolean")
+    if not isinstance(binding.veto_scopes, tuple) or not binding.veto_scopes:
+        raise ValueError("veto_scopes must be a non-empty tuple")
+    for scope in binding.veto_scopes:
+        _semantic_text(scope, "veto scope")
+    if len(set(binding.veto_scopes)) != len(binding.veto_scopes):
+        raise ValueError("veto_scopes must not contain duplicates")
+    _semantic_weight(binding.consensus_weight, "consensus_weight")
+    if not isinstance(binding.capabilities, tuple) or not binding.capabilities:
+        raise ValueError("capabilities must be a non-empty tuple")
+    for capability in binding.capabilities:
+        _semantic_text(capability, "capability")
+    if len(set(binding.capabilities)) != len(binding.capabilities):
+        raise ValueError("capabilities must not contain duplicates")
 
 
 @dataclass(frozen=True)
@@ -105,22 +144,16 @@ class ProtocolAgentBinding:
                 + ", ".join(sorted(unknown))
             )
 
-        raw_scopes = _required_list(source.get("veto_scopes"), "veto_scopes")
+        raw_scopes = _list_value(source.get("veto_scopes"), "veto_scopes")
         scopes = tuple(_required_text({"value": item}, "value", "veto scope") for item in raw_scopes)
-        if len(set(scopes)) != len(scopes):
-            raise ValueError("veto_scopes must not contain duplicates")
-        raw_capabilities = _required_list(
+        raw_capabilities = _list_value(
             source.get("capabilities"), "capabilities"
         )
         capabilities = tuple(
             _required_text({"value": item}, "value", "capability")
             for item in raw_capabilities
         )
-        if len(set(capabilities)) != len(capabilities):
-            raise ValueError("capabilities must not contain duplicates")
         enabled = source.get("enabled")
-        if not isinstance(enabled, bool):
-            raise ValueError("enabled must be a boolean")
 
         return cls(
             name=_required_text(source, "name", "agent name"),
@@ -130,7 +163,7 @@ class ProtocolAgentBinding:
             runtime=_required_text(source, "runtime", "runtime"),
             enabled=enabled,
             veto_scopes=scopes,
-            consensus_weight=_weight(
+            consensus_weight=_number_value(
                 source.get("consensus_weight"), "consensus_weight"
             ),
             capabilities=capabilities,
@@ -166,7 +199,121 @@ class ResearchProtocolProfile:
     def recomputed_config_hash(self) -> str:
         return _config_hash(_canonical_profile_payload(self))
 
+    def validate_semantics(self) -> None:
+        _semantic_text(self.profile_id, "profile_id")
+        _semantic_text(self.version, "version")
+        if not isinstance(self.agents, tuple) or not self.agents:
+            raise ValueError("profile must contain at least one agent")
+
+        agent_names: list[str] = []
+        enabled_names: set[str] = set()
+        for binding in self.agents:
+            if not isinstance(binding, ProtocolAgentBinding):
+                raise ValueError(
+                    "agents must contain ProtocolAgentBinding values"
+                )
+            _validate_binding_semantics(binding)
+            agent_names.append(binding.name)
+            if binding.enabled:
+                enabled_names.add(binding.name)
+        if len(set(agent_names)) != len(agent_names):
+            raise ValueError("duplicate agent name in profile")
+        if not enabled_names:
+            raise ValueError("profile must contain at least one enabled agent")
+
+        if not isinstance(self.review_matrix, Mapping):
+            raise ValueError("review_matrix must be an object")
+        matrix_targets = set(self.review_matrix)
+        known_agents = set(agent_names)
+        if matrix_targets != known_agents:
+            missing = sorted(known_agents - matrix_targets)
+            unknown_targets = sorted(matrix_targets - known_agents)
+            details = []
+            if missing:
+                details.append("missing targets: " + ", ".join(missing))
+            if unknown_targets:
+                details.append(
+                    "unknown targets: " + ", ".join(unknown_targets)
+                )
+            raise ValueError(
+                "review_matrix does not match agents ("
+                + "; ".join(details)
+                + ")"
+            )
+        for target, reviewers in self.review_matrix.items():
+            _semantic_text(target, "review_matrix target")
+            if not isinstance(reviewers, tuple) or not reviewers:
+                raise ValueError(
+                    f"reviewers for {target} must be a non-empty tuple"
+                )
+            for reviewer in reviewers:
+                _semantic_text(reviewer, "review participant")
+            unknown_reviewers = set(reviewers) - known_agents
+            if unknown_reviewers:
+                raise ValueError(
+                    "unknown review participant: "
+                    + ", ".join(sorted(unknown_reviewers))
+                )
+            if target in reviewers:
+                raise ValueError(f"agent cannot self-review: {target}")
+            if len(set(reviewers)) != len(reviewers):
+                raise ValueError(
+                    f"reviewers for {target} must not contain duplicates"
+                )
+
+        if not isinstance(self.consensus_strategy, ConsensusStrategy):
+            raise ValueError("unknown consensus_strategy")
+        _semantic_round_count(
+            self.max_negotiation_rounds,
+            "max_negotiation_rounds",
+            1,
+        )
+        _semantic_round_count(
+            self.max_replan_attempts,
+            "max_replan_attempts",
+            0,
+        )
+        if not isinstance(self.fallback_action, RecoveryActionKind):
+            raise ValueError("unknown fallback_action")
+        if self.fallback_action is not RecoveryActionKind.OBSERVE_ONLY:
+            raise ValueError("fallback_action must be observe_only")
+        if self.human_review_on_failure is not True:
+            raise ValueError("human_review_on_failure must be true")
+
+        if not isinstance(self.action_space, tuple) or not self.action_space:
+            raise ValueError("action_space must be a non-empty tuple")
+        if any(
+            not isinstance(action, RecoveryActionKind)
+            for action in self.action_space
+        ):
+            raise ValueError(
+                "action_space contains an unknown recovery action"
+            )
+        if len(set(self.action_space)) != len(self.action_space):
+            raise ValueError("action_space must not contain duplicates")
+        if self.fallback_action not in self.action_space:
+            raise ValueError(
+                "fallback_action must be included in action_space"
+            )
+
+        if not isinstance(self.reward_weights, Mapping) or not self.reward_weights:
+            raise ValueError("reward_weights must be a non-empty object")
+        for name, weight in self.reward_weights.items():
+            _semantic_text(name, "reward weight name")
+            _semantic_weight(weight, f"reward_weights[{name}]")
+
+        if (
+            not isinstance(self.experiment_tags, tuple)
+            or not self.experiment_tags
+        ):
+            raise ValueError("experiment_tags must be a non-empty tuple")
+        for tag in self.experiment_tags:
+            _semantic_text(tag, "experiment tag")
+        if len(set(self.experiment_tags)) != len(self.experiment_tags):
+            raise ValueError("experiment_tags must not contain duplicates")
+
     def validate_integrity(self) -> None:
+        self.validate_semantics()
         expected = self.recomputed_config_hash()
         if self.config_hash != expected:
             raise ValueError(
@@ -184,46 +331,30 @@ class ResearchProtocolProfile:
             )
 
         raw_agents = source.get("agents")
-        if not isinstance(raw_agents, list) or not raw_agents:
-            raise ValueError("profile must contain at least one agent")
+        if not isinstance(raw_agents, list):
+            raise ValueError("agents must be a list")
         agents = tuple(ProtocolAgentBinding.from_dict(item) for item in raw_agents)
-        agent_names = tuple(binding.name for binding in agents)
-        if len(set(agent_names)) != len(agent_names):
-            raise ValueError("duplicate agent name in profile")
 
         matrix_source = _require_mapping(
             source.get("review_matrix"), "review_matrix"
         )
-        if set(matrix_source) != set(agent_names):
-            missing = sorted(set(agent_names) - set(matrix_source))
-            unknown_targets = sorted(set(matrix_source) - set(agent_names))
-            details = []
-            if missing:
-                details.append("missing targets: " + ", ".join(missing))
-            if unknown_targets:
-                details.append("unknown targets: " + ", ".join(unknown_targets))
-            raise ValueError("review_matrix does not match agents (" + "; ".join(details) + ")")
 
         matrix: dict[str, tuple[str, ...]] = {}
         for target, raw_reviewers in matrix_source.items():
-            if not isinstance(target, str) or not target.strip():
-                raise ValueError("review_matrix targets must be non-empty strings")
-            reviewers = _required_list(raw_reviewers, f"reviewers for {target}")
+            normalized_target = _required_text(
+                {"value": target},
+                "value",
+                "review_matrix target",
+            )
+            reviewers = _list_value(
+                raw_reviewers,
+                f"reviewers for {normalized_target}",
+            )
             normalized_reviewers = tuple(
                 _required_text({"value": reviewer}, "value", "reviewer")
                 for reviewer in reviewers
             )
-            unknown_reviewers = set(normalized_reviewers) - set(agent_names)
-            if unknown_reviewers:
-                raise ValueError(
-                    "unknown review participant: "
-                    + ", ".join(sorted(unknown_reviewers))
-                )
-            if target in normalized_reviewers:
-                raise ValueError(f"agent cannot self-review: {target}")
-            if len(set(normalized_reviewers)) != len(normalized_reviewers):
-                raise ValueError(f"reviewers for {target} must not contain duplicates")
-            matrix[target] = normalized_reviewers
+            matrix[normalized_target] = normalized_reviewers
 
         try:
             consensus_strategy = ConsensusStrategy(
@@ -240,42 +371,35 @@ class ResearchProtocolProfile:
             fallback_action = RecoveryActionKind(fallback_raw)
         except ValueError as exc:
             raise ValueError(f"unknown fallback_action: {fallback_raw}") from exc
-        if fallback_action is not RecoveryActionKind.OBSERVE_ONLY:
-            raise ValueError("fallback_action must be observe_only")
 
         human_review_on_failure = source.get("human_review_on_failure")
-        if human_review_on_failure is not True:
-            raise ValueError("human_review_on_failure must be true")
 
-        raw_actions = _required_list(source.get("action_space"), "action_space")
+        raw_actions = _list_value(source.get("action_space"), "action_space")
         try:
             action_space = tuple(RecoveryActionKind(str(item)) for item in raw_actions)
         except ValueError as exc:
             raise ValueError("action_space contains an unknown recovery action") from exc
-        if len(set(action_space)) != len(action_space):
-            raise ValueError("action_space must not contain duplicates")
-        if fallback_action not in action_space:
-            raise ValueError("fallback_action must be included in action_space")
 
         reward_source = _require_mapping(
             source.get("reward_weights"), "reward_weights"
         )
-        if not reward_source:
-            raise ValueError("reward_weights must be a non-empty object")
         reward_weights = {
-            _required_text({"value": key}, "value", "reward weight name"): _weight(
-                value, f"reward_weights[{key}]"
-            )
+            _required_text(
+                {"value": key},
+                "value",
+                "reward weight name",
+            ): _number_value(value, f"reward_weights[{key}]")
             for key, value in reward_source.items()
         }
 
-        raw_tags = _required_list(source.get("experiment_tags"), "experiment_tags")
+        raw_tags = _list_value(
+            source.get("experiment_tags"),
+            "experiment_tags",
+        )
         experiment_tags = tuple(
             _required_text({"value": tag}, "value", "experiment tag")
             for tag in raw_tags
         )
-        if len(set(experiment_tags)) != len(experiment_tags):
-            raise ValueError("experiment_tags must not contain duplicates")
 
         profile = cls(
             profile_id=_required_text(source, "profile_id", "profile_id"),
@@ -283,11 +407,13 @@ class ResearchProtocolProfile:
             agents=agents,
             review_matrix=MappingProxyType(matrix),
             consensus_strategy=consensus_strategy,
-            max_negotiation_rounds=_round_count(
-                source.get("max_negotiation_rounds"), "max_negotiation_rounds", 1
+            max_negotiation_rounds=_integer_value(
+                source.get("max_negotiation_rounds"),
+                "max_negotiation_rounds",
             ),
-            max_replan_attempts=_round_count(
-                source.get("max_replan_attempts"), "max_replan_attempts", 0
+            max_replan_attempts=_integer_value(
+                source.get("max_replan_attempts"),
+                "max_replan_attempts",
             ),
             fallback_action=fallback_action,
             human_review_on_failure=human_review_on_failure,
@@ -296,6 +422,7 @@ class ResearchProtocolProfile:
             experiment_tags=experiment_tags,
             config_hash="",
         )
+        profile.validate_semantics()
         config_hash = profile.recomputed_config_hash()
         supplied_hash = source.get("config_hash")
         if supplied_hash is not None:

@@ -393,6 +393,12 @@ def test_cli_mutual_supervision_run_emits_peer_reviews_and_artifacts(
     assert exit_code == 0
     assert output["command"] == "mutual-supervision-run"
     assert output["valid"] is True
+    assert output["policy_version"] == "mutual-supervision-v1"
+    assert output["protocol_profile"]["version"] == "mutual-supervision-v1"
+    assert (
+        output["protocol_profile_snapshot"]["version"]
+        == "mutual-supervision-v1"
+    )
     assert output["negotiation"]["consensus"] == "approved"
     assert len(output["peer_reviews"]) >= 3
     assert Path(output["artifacts"]["final_report_json"]).exists()

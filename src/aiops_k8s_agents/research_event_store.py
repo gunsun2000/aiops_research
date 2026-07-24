@@ -92,6 +92,10 @@ class JsonlResearchEventStore:
                     "protocol_profile",
                     {},
                 ),
+                "protocol_profile_snapshot": serializable_report.get(
+                    "protocol_profile_snapshot",
+                    {},
+                ),
                 "active_agents": serializable_report.get(
                     "active_agents",
                     [],

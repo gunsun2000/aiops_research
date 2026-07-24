@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import asdict, dataclass, field, replace
+import math
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,10 @@ from aiops_k8s_agents.validator import (
     CommandValidator,
     render_recovery_command,
 )
+
+
+class AdapterOutputError(ValueError):
+    """Raised when a runtime adapter returns an unsafe contract value."""
 
 
 @dataclass
@@ -162,31 +167,29 @@ class MutualSupervisionCoordinator:
         evidence = self.evidence_provider.collect(namespace, deployment)
         self._record("evidence", evidence.to_summary(), run_id)
         diagnosis_adapter = self._single_adapter_for("diagnose")
-        diagnosis_result = diagnosis_adapter.diagnose(
-            evidence,
-            metric,
-            threshold,
-        )
-        if diagnosis_result is None:
+        try:
+            diagnosis_result = diagnosis_adapter.diagnose(
+                evidence,
+                metric,
+                threshold,
+            )
+            diagnosis, normalized_decision = _normalize_diagnosis_output(
+                diagnosis_adapter,
+                diagnosis_result,
+                run_id=run_id,
+                round_index=0,
+                policy_version=self.protocol.version,
+                evidence_refs=_evidence_refs(evidence, metric),
+                expected_service=deployment,
+            )
+        except AdapterOutputError as exc:
             return self._finalize_report(
                 self._configuration_failure_report(
                     run_id=run_id,
-                    errors=(
-                        f"{diagnosis_adapter.name} did not produce a diagnosis",
-                    ),
+                    errors=(str(exc),),
                 )
             )
-        diagnosis, adapter_decision = diagnosis_result
-        initial_decisions = [
-            replace(
-                adapter_decision,
-                decision_id=new_trace_id("decision"),
-                run_id=run_id,
-                round_index=0,
-                evidence_refs=_evidence_refs(evidence, metric),
-                policy_version=self.protocol.version,
-            )
-        ]
+        initial_decisions = [normalized_decision]
         self._record("initial_decisions", initial_decisions[0], run_id)
 
         if not initial_decisions[0].approved:
@@ -216,20 +219,67 @@ class MutualSupervisionCoordinator:
             )
 
         proposal_adapter = self._single_adapter_for("propose")
-        proposed_actions = proposal_adapter.propose(diagnosis, evidence) or ()
-        candidates = [
-            RecoveryActionCandidate(
-                action=action,
-                reason=action.reason,
-                expected_effect=action.reason,
-                risk_level="bounded",
-                estimated_cost=0.0,
-                confidence=diagnosis.confidence,
-                priority=max(1.0 - (index * 0.1), 0.0),
+        try:
+            proposed_actions = _normalize_proposal_output(
+                proposal_adapter,
+                proposal_adapter.propose(diagnosis, evidence),
             )
-            for index, action in enumerate(proposed_actions)
-            if action.kind in self.protocol.action_space
-        ]
+        except AdapterOutputError as exc:
+            report = self._base_report(
+                run_id=run_id,
+                evidence=evidence,
+                diagnosis=diagnosis,
+                initial_decisions=initial_decisions,
+                peer_reviews=[],
+                rounds=[],
+                final_status="safe_stopped",
+                human_review_required=self.protocol.human_review_on_failure,
+            )
+            report["configuration_errors"] = [str(exc)]
+            return self._finalize_report(report)
+
+        candidates: list[RecoveryActionCandidate] = []
+        replanning_attempts: list[dict[str, Any]] = []
+        for index, action in enumerate(proposed_actions):
+            target_error = _target_alignment_error(
+                action,
+                namespace=namespace,
+                deployment=deployment,
+            )
+            if target_error:
+                replanning_attempts.append(
+                    {
+                        "failed_action": action.kind.value,
+                        "reason": target_error,
+                        "next_step": "human_review_required",
+                    }
+                )
+                continue
+            if action.kind not in self.protocol.action_space:
+                replanning_attempts.append(
+                    {
+                        "failed_action": action.kind.value,
+                        "reason": (
+                            "proposal action is outside the protocol action space"
+                        ),
+                        "next_step": "human_review_required",
+                    }
+                )
+                continue
+            candidates.append(
+                RecoveryActionCandidate(
+                    action=action,
+                    reason=action.reason,
+                    expected_effect=action.reason,
+                    risk_level="bounded",
+                    estimated_cost=0.0,
+                    confidence=diagnosis.confidence,
+                    priority=max(1.0 - (index * 0.1), 0.0),
+                )
+            )
+        if candidates:
+            for attempt in replanning_attempts:
+                attempt["next_step"] = "try_next_candidate"
         executor = KubernetesExecutor(
             validator=self.validator,
             mode=self.mode,
@@ -239,7 +289,6 @@ class MutualSupervisionCoordinator:
         all_rounds: list[NegotiationRound] = []
         all_post_reviews: list[PostExecutionReview] = []
         executed_actions: list[RecoveryAction] = []
-        replanning_attempts: list[dict[str, Any]] = []
         last_validation: dict[str, Any] = {
             "valid": False,
             "command": "",
@@ -254,31 +303,74 @@ class MutualSupervisionCoordinator:
             self.protocol.max_replan_attempts + 1,
         )
         for candidate_index, candidate in enumerate(candidates[:max_attempts]):
-            selected_action, decisions, reviews, rounds = self._negotiate(
-                run_id=run_id,
-                diagnosis=diagnosis,
-                evidence=evidence,
-                candidates=[candidate],
-                round_offset=len(all_rounds),
-            )
+            try:
+                selected_action, decisions, reviews, rounds = self._negotiate(
+                    run_id=run_id,
+                    diagnosis=diagnosis,
+                    evidence=evidence,
+                    candidates=[candidate],
+                    round_offset=len(all_rounds),
+                )
+            except AdapterOutputError as exc:
+                report = self._base_report(
+                    run_id=run_id,
+                    evidence=evidence,
+                    diagnosis=diagnosis,
+                    initial_decisions=initial_decisions,
+                    peer_reviews=all_reviews,
+                    rounds=all_rounds,
+                    final_status="safe_stopped",
+                    human_review_required=self.protocol.human_review_on_failure,
+                )
+                report["configuration_errors"] = [str(exc)]
+                report["replanning_attempts"] = replanning_attempts
+                return self._finalize_report(report)
             initial_decisions.extend(decisions)
             all_reviews.extend(reviews)
             all_rounds.extend(rounds)
             if selected_action is None:
-                return self._finalize_report(
-                    self._base_report(
-                        run_id=run_id,
-                        evidence=evidence,
-                        diagnosis=diagnosis,
-                        initial_decisions=initial_decisions,
-                        peer_reviews=all_reviews,
-                        rounds=all_rounds,
-                        final_status="safe_stopped",
-                        human_review_required=True,
-                    )
+                report = self._base_report(
+                    run_id=run_id,
+                    evidence=evidence,
+                    diagnosis=diagnosis,
+                    initial_decisions=initial_decisions,
+                    peer_reviews=all_reviews,
+                    rounds=all_rounds,
+                    final_status="safe_stopped",
+                    human_review_required=True,
                 )
+                report["replanning_attempts"] = replanning_attempts
+                return self._finalize_report(report)
 
             last_action = selected_action
+            target_error = _target_alignment_error(
+                selected_action,
+                namespace=namespace,
+                deployment=deployment,
+            )
+            if target_error:
+                last_validation = {
+                    "valid": False,
+                    "command": "",
+                    "stderr": target_error,
+                }
+                self._record(
+                    "safety_validations",
+                    last_validation,
+                    run_id,
+                )
+                replanning_attempts.append(
+                    {
+                        "failed_action": selected_action.kind.value,
+                        "reason": target_error,
+                        "next_step": (
+                            "try_next_candidate"
+                            if candidate_index + 1 < max_attempts
+                            else "human_review_required"
+                        ),
+                    }
+                )
+                continue
             validation = self._validate_action(selected_action)
             last_validation = validation
             self._record("safety_validations", validation, run_id)
@@ -360,6 +452,36 @@ class MutualSupervisionCoordinator:
                 report["safety_validation"] = validation
                 report["execution_result"] = asdict(
                     _empty_result(self.mode.value, str(exc))
+                )
+                return self._finalize_report(report)
+            except AdapterOutputError as exc:
+                report = self._base_report(
+                    run_id=run_id,
+                    evidence=evidence,
+                    diagnosis=diagnosis,
+                    initial_decisions=initial_decisions,
+                    peer_reviews=all_reviews,
+                    rounds=all_rounds,
+                    final_status="safe_failure",
+                    human_review_required=self.protocol.human_review_on_failure,
+                )
+                report.update(
+                    {
+                        "selected_action": to_serializable(selected_action),
+                        "safety_validation": validation,
+                        "execution_result": asdict(execution),
+                        "recovery_monitoring": assessment.to_dict(),
+                        "executed_actions": [
+                            to_serializable(action)
+                            for action in executed_actions
+                        ],
+                        "post_execution_reviews": [
+                            to_serializable(review)
+                            for review in all_post_reviews
+                        ],
+                        "replanning_attempts": replanning_attempts,
+                        "configuration_errors": [str(exc)],
+                    }
                 )
                 return self._finalize_report(report)
 
@@ -598,9 +720,9 @@ class MutualSupervisionCoordinator:
             if review is None:
                 continue
             reviews.append(
-                replace(
+                _normalize_post_review_output(
+                    adapter,
                     review,
-                    review_id=new_trace_id("post-review"),
                     run_id=run_id,
                     action_id=action_id,
                     policy_version=self._policy_version(),
@@ -637,13 +759,12 @@ class MutualSupervisionCoordinator:
             )
             if review is not None:
                 reviews.append(
-                    replace(
+                    _normalize_peer_review_output(
+                        adapter,
                         review,
+                        decision=decision,
                         run_id=run_id,
                         round_index=round_index,
-                        reviewer=adapter.name,
-                        target_agent=decision.agent,
-                        target_decision_id=decision.decision_id,
                         policy_version=self.protocol.version,
                     )
                 )
@@ -684,6 +805,7 @@ class MutualSupervisionCoordinator:
             "run_id": run_id,
             "policy_version": self._policy_version(),
             "protocol_profile": self._protocol_identity(),
+            "protocol_profile_snapshot": self._protocol_snapshot(),
             "active_agents": list(self.adapters),
             "agent_runtimes": {
                 name: adapter.runtime for name, adapter in self.adapters.items()
@@ -735,10 +857,20 @@ class MutualSupervisionCoordinator:
                 "safety": "bounded_structured_action",
                 "guard_backend": self.backend.value,
                 "protocol_profile": self._protocol_identity(),
+                "protocol_profile_snapshot": self._protocol_snapshot(),
             },
         }
 
-    def _protocol_identity(self) -> dict[str, Any]:
+    def _protocol_identity(self) -> dict[str, str]:
+        assert self.protocol is not None
+        self.protocol.validate_integrity()
+        return {
+            "profile_id": self.protocol.profile_id,
+            "version": self.protocol.version,
+            "config_hash": self.protocol.config_hash,
+        }
+
+    def _protocol_snapshot(self) -> dict[str, Any]:
         assert self.protocol is not None
         self.protocol.validate_integrity()
         return self.protocol.to_canonical_dict()
@@ -782,6 +914,7 @@ class MutualSupervisionCoordinator:
             "run_id": run_id,
             "policy_version": self._policy_version(),
             "protocol_profile": self._protocol_identity(),
+            "protocol_profile_snapshot": self._protocol_snapshot(),
             "active_agents": list(self.adapters),
             "agent_runtimes": {
                 name: adapter.runtime for name, adapter in self.adapters.items()
@@ -832,6 +965,7 @@ class MutualSupervisionCoordinator:
                 "safety": "bounded_structured_action",
                 "guard_backend": self.backend.value,
                 "protocol_profile": self._protocol_identity(),
+                "protocol_profile_snapshot": self._protocol_snapshot(),
             },
         }
 
@@ -867,6 +1001,7 @@ class MutualSupervisionCoordinator:
                     "run_id": run_id,
                     "policy_version": self.protocol.version,
                     "protocol_profile": self._protocol_identity(),
+                    "protocol_profile_snapshot": self._protocol_snapshot(),
                     "active_agents": list(self.adapters),
                     "agent_runtimes": {
                         name: adapter.runtime
@@ -889,6 +1024,270 @@ class MutualSupervisionCoordinator:
         )
 
 
+def _normalize_diagnosis_output(
+    adapter: AgentAdapter,
+    result: Any,
+    *,
+    run_id: str,
+    round_index: int,
+    policy_version: str,
+    evidence_refs: tuple[str, ...],
+    expected_service: str,
+) -> tuple[Diagnosis, SupervisionDecision]:
+    if (
+        not isinstance(result, tuple)
+        or len(result) != 2
+        or not isinstance(result[0], Diagnosis)
+        or not isinstance(result[1], SupervisionDecision)
+    ):
+        raise AdapterOutputError(
+            f"{adapter.name} diagnosis output must be "
+            "(Diagnosis, SupervisionDecision)"
+        )
+    diagnosis, decision = result
+    if diagnosis.service != expected_service:
+        raise AdapterOutputError(
+            f"{adapter.name} diagnosis service does not match the run target"
+        )
+    _require_output_text(
+        diagnosis.cause,
+        f"{adapter.name} diagnosis cause",
+    )
+    _require_output_text(
+        diagnosis.severity,
+        f"{adapter.name} diagnosis severity",
+    )
+    _require_output_confidence(
+        diagnosis.confidence,
+        f"{adapter.name} diagnosis confidence",
+    )
+    if not isinstance(diagnosis.evidence, dict):
+        raise AdapterOutputError(
+            f"{adapter.name} diagnosis evidence must be a dictionary"
+        )
+    if decision.agent != adapter.name:
+        raise AdapterOutputError(
+            f"{adapter.name} decision agent does not match adapter identity"
+        )
+    if not isinstance(decision.approved, bool):
+        raise AdapterOutputError(
+            f"{adapter.name} decision approved must be a boolean"
+        )
+    _require_output_text(
+        decision.decision_type,
+        f"{adapter.name} decision type",
+    )
+    _require_output_text(
+        decision.reason,
+        f"{adapter.name} decision reason",
+    )
+    _require_output_confidence(
+        decision.confidence,
+        f"{adapter.name} decision confidence",
+    )
+    if (
+        isinstance(decision.reward, bool)
+        or not isinstance(decision.reward, (int, float))
+        or not math.isfinite(float(decision.reward))
+    ):
+        raise AdapterOutputError(
+            f"{adapter.name} decision reward must be finite"
+        )
+    if decision.proposed_action is not None:
+        raise AdapterOutputError(
+            f"{adapter.name} diagnosis decision must not contain an action"
+        )
+    return diagnosis, replace(
+        decision,
+        decision_id=new_trace_id("decision"),
+        run_id=run_id,
+        round_index=round_index,
+        agent=adapter.name,
+        evidence_refs=evidence_refs,
+        policy_version=policy_version,
+    )
+
+
+def _normalize_proposal_output(
+    adapter: AgentAdapter,
+    result: Any,
+) -> tuple[RecoveryAction, ...]:
+    if result is None:
+        return ()
+    if not isinstance(result, (list, tuple)):
+        raise AdapterOutputError(
+            f"{adapter.name} proposal output must be a recovery action sequence"
+        )
+    actions = tuple(result)
+    if any(not isinstance(action, RecoveryAction) for action in actions):
+        raise AdapterOutputError(
+            f"{adapter.name} proposal output contains a non-RecoveryAction"
+        )
+    for action in actions:
+        _validate_recovery_action_output(adapter, action)
+    return actions
+
+
+def _normalize_peer_review_output(
+    adapter: AgentAdapter,
+    review: Any,
+    *,
+    decision: SupervisionDecision,
+    run_id: str,
+    round_index: int,
+    policy_version: str,
+) -> PeerReview:
+    if not isinstance(review, PeerReview):
+        raise AdapterOutputError(
+            f"{adapter.name} review output must be a PeerReview"
+        )
+    if review.reviewer != adapter.name:
+        raise AdapterOutputError(
+            f"{adapter.name} review reviewer does not match adapter identity"
+        )
+    if (
+        review.target_agent != decision.agent
+        or review.target_decision_id != decision.decision_id
+    ):
+        raise AdapterOutputError(
+            f"{adapter.name} review target does not match the proposal decision"
+        )
+    if (
+        review.suggested_action is not None
+        and not isinstance(review.suggested_action, RecoveryAction)
+    ):
+        raise AdapterOutputError(
+            f"{adapter.name} review suggestion must be a RecoveryAction"
+        )
+    if review.suggested_action is not None:
+        _validate_recovery_action_output(
+            adapter,
+            review.suggested_action,
+        )
+    if not isinstance(review.verdict, ReviewVerdict):
+        raise AdapterOutputError(
+            f"{adapter.name} review verdict must be a ReviewVerdict"
+        )
+    _require_output_text(
+        review.reason,
+        f"{adapter.name} review reason",
+    )
+    _require_output_confidence(
+        review.confidence,
+        f"{adapter.name} review confidence",
+    )
+    return replace(
+        review,
+        review_id=new_trace_id("review"),
+        run_id=run_id,
+        round_index=round_index,
+        reviewer=adapter.name,
+        target_agent=decision.agent,
+        target_decision_id=decision.decision_id,
+        policy_version=policy_version,
+    )
+
+
+def _normalize_post_review_output(
+    adapter: AgentAdapter,
+    review: Any,
+    *,
+    run_id: str,
+    action_id: str,
+    policy_version: str,
+) -> PostExecutionReview:
+    if not isinstance(review, PostExecutionReview):
+        raise AdapterOutputError(
+            f"{adapter.name} post-review output must be a PostExecutionReview"
+        )
+    if review.agent != adapter.name:
+        raise AdapterOutputError(
+            f"{adapter.name} post-review agent does not match adapter identity"
+        )
+    if not isinstance(review.approved, bool):
+        raise AdapterOutputError(
+            f"{adapter.name} post-review approved must be a boolean"
+        )
+    _require_output_text(
+        review.reason,
+        f"{adapter.name} post-review reason",
+    )
+    _require_output_confidence(
+        review.confidence,
+        f"{adapter.name} post-review confidence",
+    )
+    return replace(
+        review,
+        review_id=new_trace_id("post-review"),
+        run_id=run_id,
+        agent=adapter.name,
+        action_id=action_id,
+        policy_version=policy_version,
+    )
+
+
+def _target_alignment_error(
+    action: RecoveryAction,
+    *,
+    namespace: str,
+    deployment: str,
+) -> str:
+    if action.namespace == namespace and action.deployment == deployment:
+        return ""
+    return (
+        "target mismatch: expected "
+        f"{namespace}/{deployment}, got "
+        f"{action.namespace}/{action.deployment}"
+    )
+
+
+def _validate_recovery_action_output(
+    adapter: AgentAdapter,
+    action: RecoveryAction,
+) -> None:
+    _require_output_text(
+        action.namespace,
+        f"{adapter.name} action namespace",
+    )
+    _require_output_text(
+        action.deployment,
+        f"{adapter.name} action deployment",
+    )
+    if not isinstance(action.kind, RecoveryActionKind):
+        raise AdapterOutputError(
+            f"{adapter.name} action kind must be a RecoveryActionKind"
+        )
+    if (
+        action.replicas is not None
+        and (
+            isinstance(action.replicas, bool)
+            or not isinstance(action.replicas, int)
+        )
+    ):
+        raise AdapterOutputError(
+            f"{adapter.name} action replicas must be an integer or null"
+        )
+    if not isinstance(action.reason, str):
+        raise AdapterOutputError(
+            f"{adapter.name} action reason must be text"
+        )
+
+
+def _require_output_text(value: Any, label: str) -> None:
+    if not isinstance(value, str) or not value.strip():
+        raise AdapterOutputError(f"{label} must not be empty")
+
+
+def _require_output_confidence(value: Any, label: str) -> None:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(float(value))
+        or not 0.0 <= float(value) <= 1.0
+    ):
+        raise AdapterOutputError(f"{label} must be between 0 and 1")
+
+
 def _profile_with_legacy_policy(
     profile: ResearchProtocolProfile,
     policy: MutualSupervisionPolicy,
@@ -897,6 +1296,7 @@ def _profile_with_legacy_policy(
     source.pop("config_hash")
     source.update(
         {
+            "version": policy.version,
             "review_matrix": {
                 target: list(reviewers)
                 for target, reviewers in policy.review_matrix.items()

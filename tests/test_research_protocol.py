@@ -69,6 +69,95 @@ def test_stale_dataclass_replacement_fails_integrity_validation():
         stale.validate_integrity()
 
 
+def test_loaded_profile_passes_reusable_semantic_validation():
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-role-veto-v1.json"
+    )
+
+    profile.validate_semantics()
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("agents", (), "at least one agent"),
+        ("max_negotiation_rounds", 0, "max_negotiation_rounds"),
+        ("max_replan_attempts", -1, "max_replan_attempts"),
+        (
+            "fallback_action",
+            RecoveryActionKind.SCALE_OUT,
+            "fallback_action must be observe_only",
+        ),
+        ("human_review_on_failure", False, "human_review_on_failure"),
+        ("action_space", (), "action_space"),
+        ("reward_weights", {"safety": -0.1}, "reward_weights"),
+        ("experiment_tags", (), "experiment_tags"),
+    ],
+)
+def test_hash_consistent_direct_profile_rejects_semantic_field_violation(
+    field,
+    value,
+    message,
+):
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-role-veto-v1.json"
+    )
+    invalid = _with_consistent_hash(replace(profile, **{field: value}))
+
+    with pytest.raises(ValueError, match=message):
+        invalid.validate_integrity()
+
+
+@pytest.mark.parametrize(
+    ("matrix_mutation", "message"),
+    [
+        ("missing", "review_matrix"),
+        ("empty", "non-empty"),
+        ("self", "self-review"),
+        ("unknown", "unknown review participant"),
+    ],
+)
+def test_hash_consistent_direct_profile_rejects_invalid_review_matrix(
+    matrix_mutation,
+    message,
+):
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-role-veto-v1.json"
+    )
+    matrix = dict(profile.review_matrix)
+    target = "AIApplicationManagementAgent"
+    if matrix_mutation == "missing":
+        matrix.pop(target)
+    elif matrix_mutation == "empty":
+        matrix[target] = ()
+    elif matrix_mutation == "self":
+        matrix[target] = (*matrix[target], target)
+    else:
+        matrix[target] = (*matrix[target], "UnboundReviewer")
+    invalid = _with_consistent_hash(
+        replace(profile, review_matrix=matrix)
+    )
+
+    with pytest.raises(ValueError, match=message):
+        invalid.validate_integrity()
+
+
+def test_hash_consistent_direct_profile_rejects_invalid_agent_weight():
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-role-veto-v1.json"
+    )
+    invalid_binding = replace(profile.agents[0], consensus_weight=-1.0)
+    invalid = _with_consistent_hash(
+        replace(
+            profile,
+            agents=(invalid_binding, *profile.agents[1:]),
+        )
+    )
+
+    with pytest.raises(ValueError, match="consensus_weight"):
+        invalid.validate_integrity()
+
+
 def test_profile_loader_returns_all_profiles_with_enabled_agents():
     profiles = load_protocol_profiles("config/protocol_profiles")
 
@@ -256,3 +345,12 @@ def test_profile_loader_rejects_missing_and_empty_directories(tmp_path):
         load_protocol_profiles(missing)
     with pytest.raises(ValueError, match="no JSON profiles"):
         load_protocol_profiles(empty)
+
+
+def _with_consistent_hash(
+    profile: ResearchProtocolProfile,
+) -> ResearchProtocolProfile:
+    return replace(
+        profile,
+        config_hash=profile.recomputed_config_hash(),
+    )

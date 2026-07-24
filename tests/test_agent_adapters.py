@@ -234,6 +234,52 @@ def test_registry_rejects_factory_adapter_identity_mismatch(
         registry.create_profile(profile)
 
 
+@pytest.mark.parametrize(
+    "missing_method",
+    ["diagnose", "propose", "review", "post_review"],
+)
+def test_registry_rejects_adapter_with_noncallable_protocol_method(
+    missing_method,
+):
+    profile = load_research_protocol(
+        "config/protocol_profiles/four-agent-role-veto-v1.json"
+    )
+    default_registry = build_default_agent_adapter_registry()
+    registry = AgentAdapterRegistry(factories={})
+    for implementation_id, factory in default_registry.factories.items():
+        metadata = default_registry.metadata[implementation_id]
+
+        def incomplete_factory(
+            binding,
+            factory=factory,
+            implementation_id=implementation_id,
+        ):
+            adapter = factory(binding)
+            if implementation_id != "deterministic-infrastructure":
+                return adapter
+            values = {
+                "name": adapter.name,
+                "runtime": adapter.runtime,
+                "capabilities": adapter.capabilities,
+                "diagnose": adapter.diagnose,
+                "propose": adapter.propose,
+                "review": adapter.review,
+                "post_review": adapter.post_review,
+            }
+            values[missing_method] = None
+            return SimpleNamespace(**values)
+
+        registry.register(
+            implementation_id,
+            incomplete_factory,
+            supported_runtimes=metadata.supported_runtimes,
+            capabilities=metadata.capabilities,
+        )
+
+    with pytest.raises(AgentRegistryError, match=missing_method):
+        registry.create_profile(profile)
+
+
 def profile_with_binding(profile, replacement):
     source = profile.to_canonical_dict()
     source.pop("config_hash")

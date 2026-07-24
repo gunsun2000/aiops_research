@@ -7,7 +7,10 @@ from aiops_k8s_agents.research_event_store import (
     InMemoryResearchEventStore,
     JsonlResearchEventStore,
 )
-from aiops_k8s_agents.research_protocol import load_research_protocol
+from aiops_k8s_agents.research_protocol import (
+    ResearchProtocolProfile,
+    load_research_protocol,
+)
 
 
 def test_jsonl_event_store_writes_traceable_research_artifacts(tmp_path):
@@ -15,6 +18,11 @@ def test_jsonl_event_store_writes_traceable_research_artifacts(tmp_path):
         "config/protocol_profiles/four-agent-role-veto-v1.json"
     )
     protocol_snapshot = profile.to_canonical_dict()
+    protocol_identity = {
+        "profile_id": profile.profile_id,
+        "version": profile.version,
+        "config_hash": profile.config_hash,
+    }
     store = JsonlResearchEventStore(
         root_dir=tmp_path,
         experiment_id="experiment-1",
@@ -32,7 +40,8 @@ def test_jsonl_event_store_writes_traceable_research_artifacts(tmp_path):
         {
             "run_id": "run-1",
             "policy_version": "mutual-v1",
-            "protocol_profile": protocol_snapshot,
+            "protocol_profile": protocol_identity,
+            "protocol_profile_snapshot": protocol_snapshot,
             "active_agents": ["AIServiceHASupportAgent"],
             "agent_runtimes": {
                 "AIServiceHASupportAgent": "deterministic",
@@ -59,7 +68,8 @@ def test_jsonl_event_store_writes_traceable_research_artifacts(tmp_path):
             "post_execution_reviews": [{"approved": True}],
             "human_review_required": False,
             "metadata": {
-                "protocol_profile": protocol_snapshot,
+                "protocol_profile": protocol_identity,
+                "protocol_profile_snapshot": protocol_snapshot,
             },
         }
     )
@@ -94,7 +104,21 @@ def test_jsonl_event_store_writes_traceable_research_artifacts(tmp_path):
     experiment_config = json.loads(
         Path(paths["experiment_config"]).read_text(encoding="utf-8")
     )
-    assert experiment_config["protocol_profile"] == protocol_snapshot
+    assert experiment_config["protocol_profile"] == protocol_identity
+    assert (
+        experiment_config["protocol_profile_snapshot"]
+        == protocol_snapshot
+    )
+    final_report = json.loads(
+        Path(paths["final_report_json"]).read_text(encoding="utf-8")
+    )
+    assert final_report["protocol_profile"] == protocol_identity
+    assert (
+        ResearchProtocolProfile.from_dict(
+            final_report["protocol_profile_snapshot"]
+        )
+        == profile
+    )
     assert experiment_config["active_agents"] == ["AIServiceHASupportAgent"]
 
 
