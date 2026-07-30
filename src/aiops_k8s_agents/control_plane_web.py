@@ -8,10 +8,13 @@ from aiops_k8s_agents.control_plane_data import (
     agent_cards,
     artifact_path,
     build_overview,
+    get_experiment_session,
     latest_recovery_run,
     project_root,
     run_mock_alert,
     run_mutual_supervision_mock,
+    run_scenario_experiment_mock,
+    scenario_catalog,
 )
 
 try:
@@ -48,6 +51,11 @@ class MockAlertRequest(BaseModel):
     backend: Literal["python", "go"] = "python"
 
 
+class ScenarioExperimentRequest(BaseModel):
+    scenario_id: str = Field(min_length=1)
+    backend: Literal["python", "go"] = "python"
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -66,6 +74,11 @@ def api_overview() -> dict[str, object]:
 @app.get("/api/agents")
 def api_agents() -> dict[str, object]:
     return {"agents": agent_cards()}
+
+
+@app.get("/api/scenarios")
+def api_scenarios() -> dict[str, object]:
+    return {"scenarios": scenario_catalog()}
 
 
 @app.get("/api/runs/latest")
@@ -110,6 +123,28 @@ def api_mutual_supervision_mock(
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/experiments/mock")
+def api_experiment_mock(
+    request: ScenarioExperimentRequest,
+) -> dict[str, object]:
+    try:
+        session = run_scenario_experiment_mock(
+            scenario_id=request.scenario_id,
+            backend=request.backend,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return session.to_dict()
+
+
+@app.get("/api/experiments/{experiment_id}")
+def api_experiment(experiment_id: str) -> dict[str, object]:
+    session = get_experiment_session(experiment_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="experiment not found")
+    return session.to_dict()
 
 
 @app.get("/api/artifacts/{relative_path:path}")

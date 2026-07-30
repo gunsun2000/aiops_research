@@ -100,6 +100,8 @@ def test_mutual_report_normalizes_to_one_experiment_session():
     assert session.stages["safety"]["experiment_id"] == session.experiment_id
     assert session.stages["result"]["experiment_id"] == session.experiment_id
     assert session.stages["execution"]["status"] == "completed"
+    assert session.guard_backend == "python"
+    assert session.to_dict()["guard_backend"] == "python"
 
 
 def test_validation_rejection_blocks_safety_and_skips_execution():

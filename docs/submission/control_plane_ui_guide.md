@@ -4,16 +4,23 @@
 
 ## 목적
 
-Control Plane UI는 기존 연구 코어를 바꾸지 않고 목적별 독립 화면을 제공합니다.
+Control Plane UI는 기존 연구 코어를 바꾸지 않고 하나의 운영 실험을
+`ExperimentSession`으로 연결해 보여줍니다.
 
 - 대시보드: 연구 상태와 전체 운영 흐름
-- 장애 실험: Chaos Mesh 장애 4종과 action 비교 매트릭스
-- 4-Agent 판단: mock 기반 역할별 decision, action, reward
+- 운영 실험: 장애 4종 중 하나를 선택해 Evidence부터 결과까지 7단계 실행
+- 4-Agent 판단: 현재 세션의 역할별 decision, action, reward
+- 상호감시: 현재 세션의 peer review, veto, 협상 라운드와 합의
 - 안전 검증: Python Validator와 선택적 Go Guard 경계
-- 실험 결과: 최근 recovery 결과, reward ranking, 정량 artifact
+- 실험 근거: 동일 브라우저 세션의 실행 이력과 원본 ExperimentSession JSON
 - 연구 문서: 공식 DOCX 보고서·실행 가이드·정책 명세와 MD 원본
 
-UI는 연구 설명과 안전한 mock 판단 확인을 위한 시연 화면입니다. 실제 Kubernetes `real` 제어는 기존 CLI와 명시적 확인 절차로 수행합니다.
+`조건 → Evidence → Agent 진단 → 상호검토·합의 → 안전 검증 → 실행·복구 관찰
+→ 결과·산출물`은 모두 같은 `experiment_id`를 사용합니다. 따라서 각 메뉴는
+서로 다른 프로그램이 아니라 동일한 실험 세션을 연구 목적별로 분석하는 화면입니다.
+
+UI는 연구 설명과 안전한 mock 판단 확인을 위한 시연 화면입니다. 실제 Kubernetes
+`real` 제어는 기존 CLI와 명시적 확인 절차로 수행합니다.
 
 ## 설치
 
@@ -67,16 +74,17 @@ aiops-control-plane
 
 | 화면 | Hash route | 내용 |
 | --- | --- | --- |
-| 대시보드 | `#/dashboard` | 연구 상태, 4-Agent, 6단계 운영 흐름, 최근 실험 |
-| 장애 실험 | `#/experiments` | 장애 4종, action 3종, 36회 실험 매트릭스 |
-| 4-Agent 판단 | `#/decision` | mock 장애 입력, Agent별 판단, 합의와 검증 명령 |
-| 상호감시 실험 | `#/supervision` | 초기 판단, 동료 검토, 협상 라운드, 안전 실행, 실행 후 4-Agent 재평가 |
-| 안전 검증 | `#/safety` | Registry, consensus, Validator, Guard, dry-run 경계 |
-| 실험 결과 | `#/evidence` | JSONL, reward ranking, CSV·PNG·SVG artifact |
+| 연구 개요 | `#/dashboard` | 연구 상태, 4-Agent, 폐쇄 루프와 mock/real 경계 |
+| 운영 실험 | `#/experiments` | Pod Kill, CPU Stress, Memory Stress, Network Delay를 동일한 7단계 UI로 실행 |
+| 4-Agent 판단 | `#/decision` | 현재 ExperimentSession의 Agent별 진단·제안·reward |
+| 상호감시 | `#/supervision` | 현재 세션의 동료 검토, veto, 협상 라운드와 합의 |
+| 안전 경계 | `#/safety` | 현재 Action에 적용된 Validator, 선택적 Go Guard와 bounded command |
+| 실험 근거 | `#/evidence` | 브라우저 실행 이력과 현재 ExperimentSession 원본 JSON |
 | 연구 문서 | `#/documents` | 공식 DOCX 3종, 기술 원본 MD, 전체 구성도 |
 
-사이드바는 같은 문서 안의 위치로 스크롤하지 않습니다. 메뉴를 선택하면 중앙
-workspace 전체가 해당 기능 화면으로 교체됩니다.
+사이드바를 이동해도 `currentSession`은 유지됩니다. 메뉴를 선택하면 중앙 workspace는
+바뀌지만, Agent 판단·합의·안전 검증·실험 근거는 모두 같은 `experiment_id`를
+참조합니다.
 
 ## 안전 정책
 
@@ -84,9 +92,11 @@ workspace 전체가 해당 기능 화면으로 교체됩니다.
 
 - UI에는 real-mode 실행 버튼을 제공하지 않습니다.
 - 실제 Kubernetes 제어는 `docs/submission/execution_code_guide.md`의 CLI 절차로 실행합니다.
-- UI는 `runs/` 결과와 `docs/` 문서를 읽어 보여주는 관측 화면 역할을 우선합니다.
+- UI의 4개 시나리오는 재현 가능한 `FakeEvidenceProvider` 기반 mock preset입니다.
+- 화면에는 Evidence source와 `Mock research boundary`를 표시해 real 결과와 구분합니다.
 - `POST /api/mock-alert`는 기존 Coordinator, Agent, Validator 경로를 사용하지만 실행 모드는 `mock`으로 고정됩니다.
 - `POST /api/mutual-supervision/mock`은 deterministic 상호감시 엔진을 호출하며 실제 Kubernetes 상태를 변경하지 않습니다.
+- `POST /api/experiments/mock`은 시나리오 preset을 실행하고 전체 결과를 하나의 `ExperimentSession`으로 정규화합니다.
 - 상호감시 deterministic v1은 응용관리 Action을 HA·인프라·비용 Agent가 교차 검토하고, 실행 후에는 4-Agent 역할별 재평가를 수행합니다.
 - 실제 제어는 UI에서 직접 제공하지 않습니다. CLI `real` 모드는 Kubernetes evidence, target lock, Validator를 모두 통과해야 합니다.
 
@@ -114,6 +124,9 @@ python scripts/build_research_documents.py
 | `GET /healthz` | UI backend 상태 확인 |
 | `GET /api/overview` | 프로젝트 상태, 최신 run, 안전 계층 요약 |
 | `GET /api/agents` | Agent Registry 조회 |
+| `GET /api/scenarios` | UI에서 실행 가능한 mock 장애 시나리오 4종 조회 |
+| `POST /api/experiments/mock` | 선택한 장애를 실행하고 통합 ExperimentSession 생성 |
+| `GET /api/experiments/{experiment_id}` | 저장된 ExperimentSession 조회 |
 | `GET /api/runs/latest` | 최신 recovery-action-pilot run 조회 |
 | `POST /api/mock-alert` | mock 4-Agent 판단 실행 |
 | `POST /api/mutual-supervision/mock` | mock 상호검토·재합의·사후평가 실행 |

@@ -4,11 +4,21 @@ import json
 import os
 from dataclasses import asdict
 from pathlib import Path
-from typing import Any
+from types import MappingProxyType
+from typing import Any, Mapping
 
 from aiops_k8s_agents.agent_registry import load_agent_registry
 from aiops_k8s_agents.coordinator import AIMCMPCoordinator
-from aiops_k8s_agents.evidence import EvidenceSnapshot, FakeEvidenceProvider
+from aiops_k8s_agents.evidence import (
+    EvidenceSnapshot,
+    FakeEvidenceProvider,
+    SequencedEvidenceProvider,
+)
+from aiops_k8s_agents.experiment_session import (
+    ExperimentSession,
+    InMemoryExperimentSessionStore,
+    normalize_experiment_session,
+)
 from aiops_k8s_agents.executor import ExecutionBackend, ExecutionMode
 from aiops_k8s_agents.models import AlertEvent, CommandResult
 from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
@@ -17,6 +27,80 @@ from aiops_k8s_agents.mutual_supervision_policy import (
 )
 from aiops_k8s_agents.recovery_monitor import FakeRecoveryMonitor
 from aiops_k8s_agents.validator import CommandValidator
+
+
+_SCENARIOS = MappingProxyType(
+    {
+        "pod-kill": {
+            "scenario_id": "pod-kill",
+            "label": "Pod Kill",
+            "namespace": "online-boutique",
+            "deployment": "paymentservice",
+            "metric": "availability",
+            "value": 0.0,
+            "threshold": 1.0,
+            "desired_replicas": 1,
+            "available_replicas": 0,
+            "pod_statuses": ("Terminating",),
+            "after_value": 1.0,
+            "after_desired_replicas": 3,
+            "after_available_replicas": 3,
+            "after_pod_statuses": ("Running",),
+            "signal": "ready / available replicas",
+            "summary": (
+                "Pod 종료 상태에서 Kubernetes 자체 복구와 "
+                "4-Agent 추가 조치 판단을 비교합니다."
+            ),
+            "mode": "mock",
+        },
+        "cpu-stress": {
+            "scenario_id": "cpu-stress",
+            "label": "CPU Stress",
+            "namespace": "online-boutique",
+            "deployment": "paymentservice",
+            "metric": "cpu",
+            "value": 95.0,
+            "threshold": 80.0,
+            "signal": "container CPU usage",
+            "summary": (
+                "CPU 포화 Evidence에 대해 역할별 판단과 "
+                "bounded recovery Action을 검증합니다."
+            ),
+            "mode": "mock",
+        },
+        "memory-stress": {
+            "scenario_id": "memory-stress",
+            "label": "Memory Stress",
+            "namespace": "online-boutique",
+            "deployment": "checkoutservice",
+            "metric": "memory",
+            "value": 95.7,
+            "threshold": 80.0,
+            "signal": "working set / restart count",
+            "summary": (
+                "메모리 포화와 OOM 위험에 대한 Agent 합의와 "
+                "복구 Action을 검증합니다."
+            ),
+            "mode": "mock",
+        },
+        "network-delay": {
+            "scenario_id": "network-delay",
+            "label": "Network Delay",
+            "namespace": "online-boutique",
+            "deployment": "paymentservice",
+            "metric": "latency",
+            "value": 0.234,
+            "threshold": 0.1,
+            "signal": "probe duration",
+            "summary": (
+                "서비스 지연 Evidence에 대한 원인 진단과 "
+                "복구 후 평가 흐름을 검증합니다."
+            ),
+            "mode": "mock",
+        },
+    }
+)
+_EXPERIMENT_SESSIONS = InMemoryExperimentSessionStore(max_sessions=50)
 
 
 def project_root() -> Path:
@@ -44,12 +128,7 @@ def build_overview(root: Path | None = None) -> dict[str, Any]:
             "Kubernetes dry-run",
             "Post-action recovery monitor",
         ],
-        "scenarios": [
-            "pod-kill",
-            "cpu-stress",
-            "memory-stress",
-            "network-delay",
-        ],
+        "scenarios": [item["scenario_id"] for item in scenario_catalog()],
         "actions": ["observe_only", "rollout_restart", "scale_out"],
         "latest_recovery_run": latest_recovery,
         "latest_final_run": latest_final,
@@ -174,6 +253,10 @@ def run_mutual_supervision_mock(
     min_replicas: int = 1,
     max_replicas: int = 5,
     backend: str = "python",
+    desired_replicas: int = 1,
+    available_replicas: int = 1,
+    pod_statuses: tuple[str, ...] = ("Running",),
+    after_evidence: EvidenceSnapshot | None = None,
 ) -> dict[str, Any]:
     repo = project_root()
     execution_backend = (
@@ -182,6 +265,21 @@ def run_mutual_supervision_mock(
         else ExecutionBackend.PYTHON
     )
     normalized_metric = metric.strip().lower().replace("-", "_")
+    before_evidence = EvidenceSnapshot(
+        namespace=namespace,
+        deployment=deployment,
+        metric_values={normalized_metric: value},
+        desired_replicas=desired_replicas,
+        available_replicas=available_replicas,
+        pod_statuses=pod_statuses,
+        events=("control-plane mutual-supervision mock",),
+        source="control-plane-fake",
+    )
+    evidence_provider = (
+        SequencedEvidenceProvider((before_evidence, after_evidence))
+        if after_evidence is not None
+        else FakeEvidenceProvider(before_evidence)
+    )
     coordinator = MutualSupervisionCoordinator(
         validator=CommandValidator(
             allowed_namespaces={namespace},
@@ -189,17 +287,7 @@ def run_mutual_supervision_mock(
             min_replicas=min_replicas,
             max_replicas=max_replicas,
         ),
-        evidence_provider=FakeEvidenceProvider(
-            EvidenceSnapshot(
-                namespace=namespace,
-                deployment=deployment,
-                metric_values={normalized_metric: value},
-                desired_replicas=1,
-                available_replicas=1,
-                events=("control-plane mutual-supervision mock",),
-                source="control-plane-fake",
-            )
-        ),
+        evidence_provider=evidence_provider,
         recovery_monitor=FakeRecoveryMonitor(default_success=True),
         policy=load_mutual_supervision_policy(
             repo / "config" / "mutual_supervision_policy.json"
@@ -213,6 +301,53 @@ def run_mutual_supervision_mock(
         metric=normalized_metric,
         threshold=threshold,
     )
+
+
+def scenario_catalog() -> list[dict[str, Any]]:
+    return [dict(definition) for definition in _SCENARIOS.values()]
+
+
+def run_scenario_experiment_mock(
+    *,
+    scenario_id: str,
+    backend: str = "python",
+) -> ExperimentSession:
+    normalized_id = scenario_id.strip().lower()
+    definition = _SCENARIOS.get(normalized_id)
+    if definition is None:
+        raise ValueError(f"unknown scenario: {scenario_id}")
+
+    report = run_mutual_supervision_mock(
+        namespace=str(definition["namespace"]),
+        deployment=str(definition["deployment"]),
+        metric=str(definition["metric"]),
+        value=float(definition["value"]),
+        threshold=float(definition["threshold"]),
+        backend=backend,
+        desired_replicas=int(definition.get("desired_replicas", 1)),
+        available_replicas=int(definition.get("available_replicas", 1)),
+        pod_statuses=tuple(
+            str(status)
+            for status in definition.get("pod_statuses", ("Running",))
+        ),
+        after_evidence=_scenario_after_evidence(definition),
+    )
+    evidence = dict(report.get("evidence", {}))
+    evidence["scenario"] = normalized_id
+    report["evidence"] = evidence
+    report["artifacts"] = {
+        "scenario_manifest": (
+            f"k8s/chaos/{_scenario_manifest_name(normalized_id)}"
+        )
+    }
+    session = normalize_experiment_session(report)
+    return _EXPERIMENT_SESSIONS.put(session)
+
+
+def get_experiment_session(
+    experiment_id: str,
+) -> ExperimentSession | None:
+    return _EXPERIMENT_SESSIONS.get(experiment_id)
 
 
 def command_result_to_dict(result: CommandResult) -> dict[str, Any]:
@@ -299,3 +434,41 @@ def _optional_float(value: str) -> float | None:
         return float(value)
     except ValueError:
         return None
+
+
+def _scenario_manifest_name(scenario_id: str) -> str:
+    names = {
+        "pod-kill": "paymentservice-pod-kill.yaml",
+        "cpu-stress": "paymentservice-cpu-stress.yaml",
+        "memory-stress": "checkoutservice-memory-stress.yaml",
+        "network-delay": "paymentservice-network-delay.yaml",
+    }
+    return names[scenario_id]
+
+
+def _scenario_after_evidence(
+    definition: Mapping[str, Any],
+) -> EvidenceSnapshot | None:
+    if "after_available_replicas" not in definition:
+        return None
+    metric = str(definition["metric"])
+    return EvidenceSnapshot(
+        namespace=str(definition["namespace"]),
+        deployment=str(definition["deployment"]),
+        metric_values={
+            metric: float(definition.get("after_value", definition["value"]))
+        },
+        desired_replicas=int(
+            definition.get(
+                "after_desired_replicas",
+                definition.get("desired_replicas", 1),
+            )
+        ),
+        available_replicas=int(definition["after_available_replicas"]),
+        pod_statuses=tuple(
+            str(status)
+            for status in definition.get("after_pod_statuses", ("Running",))
+        ),
+        events=("control-plane mock recovery observed",),
+        source="control-plane-fake",
+    )

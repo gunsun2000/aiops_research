@@ -81,6 +81,37 @@ class FakeEvidenceProvider:
         )
 
 
+@dataclass
+class SequencedEvidenceProvider:
+    """Return deterministic before/after snapshots for mock recovery loops."""
+
+    snapshots: tuple[EvidenceSnapshot, ...]
+    _index: int = field(default=0, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        if not self.snapshots:
+            raise ValueError("snapshots must not be empty")
+
+    def collect(self, namespace: str, deployment: str) -> EvidenceSnapshot:
+        snapshot = self.snapshots[min(self._index, len(self.snapshots) - 1)]
+        self._index += 1
+        return EvidenceSnapshot(
+            namespace=namespace,
+            deployment=deployment,
+            metric_values=dict(snapshot.metric_values),
+            desired_replicas=snapshot.desired_replicas,
+            available_replicas=snapshot.available_replicas,
+            restart_count=snapshot.restart_count,
+            pod_statuses=tuple(snapshot.pod_statuses),
+            pod_identities=tuple(snapshot.pod_identities),
+            events=tuple(snapshot.events),
+            latency_ms=snapshot.latency_ms,
+            error_rate=snapshot.error_rate,
+            log_summary=snapshot.log_summary,
+            source="fake",
+        )
+
+
 @dataclass(frozen=True)
 class KubernetesEvidenceProvider:
     """Optional provider backed by kubectl snapshots.

@@ -25,6 +25,7 @@ class ExperimentSession:
     experiment_id: str
     created_at: str
     mode: str
+    guard_backend: str
     status: str
     protocol_profile: Mapping[str, Any]
     condition: Mapping[str, Any]
@@ -38,6 +39,7 @@ class ExperimentSession:
             "experiment_id": self.experiment_id,
             "created_at": self.created_at,
             "mode": self.mode,
+            "guard_backend": self.guard_backend,
             "status": self.status,
             "protocol_profile": _thaw(self.protocol_profile),
             "condition": _thaw(self.condition),
@@ -92,6 +94,7 @@ def normalize_experiment_session(
     final_status = str(report.get("final_status", "unknown")).strip() or "unknown"
 
     condition = {
+        "scenario": evidence.get("scenario", ""),
         "namespace": evidence.get("namespace", ""),
         "deployment": evidence.get("deployment", ""),
         "metric_values": evidence.get("metric_values", {}),
@@ -162,6 +165,7 @@ def normalize_experiment_session(
         experiment_id=experiment_id,
         created_at=created_at,
         mode=str(report.get("mode", "unknown")),
+        guard_backend=str(metadata.get("guard_backend", "unknown")),
         status=final_status,
         protocol_profile=_freeze(_mapping(report.get("protocol_profile"))),
         condition=_freeze(condition),
@@ -219,7 +223,11 @@ def _result_status(
     recovery: Mapping[str, Any],
 ) -> str:
     if recovery:
-        return "completed" if recovery.get("recovered") is True else "failed"
+        recovered = recovery.get(
+            "recovered",
+            recovery.get("recovery_success"),
+        )
+        return "completed" if recovered is True else "failed"
     if final_status in {"no_action_required", "recovered", "recovered_after_replan"}:
         return "completed"
     if final_status in {

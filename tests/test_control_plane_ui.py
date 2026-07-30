@@ -48,14 +48,57 @@ def test_control_plane_has_one_renderer_for_each_workspace():
     assert "function evidenceAndDemo(" not in source
 
 
-def test_control_plane_mutual_supervision_workspace_has_research_timeline():
+def test_control_plane_uses_one_experiment_session_for_all_scenarios():
     source = _source(APP_JS)
 
-    assert 'fetch("/api/mutual-supervision/mock"' in source
-    assert "mutualResult" in source
-    assert "peer-review-timeline" in source
-    assert "negotiation-rounds" in source
-    assert "post-execution-review" in source
+    assert 'fetch("/api/scenarios"' in source
+    assert 'fetch("/api/experiments/mock"' in source
+    assert "currentSession" in source
+    assert "experimentHistory" in source
+    assert "mockResult" not in source
+    assert "mutualResult" not in source
+
+
+def test_scenario_change_clears_a_mismatched_current_session():
+    source = _source(APP_JS)
+
+    assert "state.currentSession.condition.scenario !== scenarioId" in source
+    assert "state.currentSession = null;" in source
+
+
+def test_guard_backend_selection_and_session_provenance_stay_visible():
+    source = _source(APP_JS)
+
+    assert 'selected: state.backend === "python"' in source
+    assert 'selected: state.backend === "go"' in source
+    assert "session ? session.guard_backend : state.backend" in source
+
+
+def test_control_plane_exposes_all_four_fault_scenarios():
+    source = _source(APP_JS)
+
+    for scenario_id in (
+        "pod-kill",
+        "cpu-stress",
+        "memory-stress",
+        "network-delay",
+    ):
+        assert scenario_id in source
+
+
+def test_control_plane_renders_the_seven_experiment_stages():
+    source = _source(APP_JS)
+
+    for stage in (
+        "조건 설정",
+        "Evidence",
+        "Agent 진단",
+        "상호검토·합의",
+        "안전 검증",
+        "실행·복구 관찰",
+        "결과·산출물",
+    ):
+        assert stage in source
 
 
 def test_control_plane_styles_separate_navigation_and_workspace():

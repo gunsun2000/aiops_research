@@ -3,13 +3,18 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from aiops_k8s_agents.control_plane_data import (
     artifact_path,
     build_overview,
+    get_experiment_session,
     latest_recovery_run,
     parse_agent_reviews,
     run_mock_alert,
     run_mutual_supervision_mock,
+    run_scenario_experiment_mock,
+    scenario_catalog,
 )
 
 
@@ -128,6 +133,74 @@ def test_mutual_supervision_mock_exposes_negotiation_and_post_reviews():
     assert len(report["peer_reviews"]) >= 3
     assert len(report["post_execution_reviews"]) == 4
     assert report["execution_result"]["mode"] == "mock"
+
+
+@pytest.mark.parametrize(
+    ("scenario_id", "deployment", "metric", "value"),
+    [
+        ("cpu-stress", "paymentservice", "cpu", 95.0),
+        ("memory-stress", "checkoutservice", "memory", 95.7),
+        ("network-delay", "paymentservice", "latency", 0.234),
+        ("pod-kill", "paymentservice", "availability", 0.0),
+    ],
+)
+def test_scenario_experiment_creates_one_stored_session(
+    scenario_id: str,
+    deployment: str,
+    metric: str,
+    value: float,
+):
+    session = run_scenario_experiment_mock(
+        scenario_id=scenario_id,
+        backend="python",
+    )
+
+    assert session.mode == "mock"
+    assert session.status == "recovered"
+    assert session.condition["scenario"] == scenario_id
+    assert session.condition["deployment"] == deployment
+    assert session.condition["metric_values"][metric] == value
+    assert len(session.active_agents) == 4
+    assert session.stages["execution"]["status"] == "completed"
+    assert session.stages["result"]["status"] == "completed"
+    assert (
+        session.stages["consensus"]["payload"]["selected_action"]["kind"]
+        in {"observe_only", "rollout_restart", "scale_out"}
+    )
+    assert get_experiment_session(session.experiment_id) == session
+
+
+def test_scenario_catalog_exposes_all_registered_faults():
+    catalog = scenario_catalog()
+
+    assert [item["scenario_id"] for item in catalog] == [
+        "pod-kill",
+        "cpu-stress",
+        "memory-stress",
+        "network-delay",
+    ]
+    assert all(item["mode"] == "mock" for item in catalog)
+
+
+def test_scenario_experiment_rejects_unknown_scenario():
+    with pytest.raises(ValueError, match="unknown scenario"):
+        run_scenario_experiment_mock(
+            scenario_id="disk-pressure",
+            backend="python",
+        )
+
+
+def test_pod_kill_scenario_uses_internally_consistent_unavailable_evidence():
+    session = run_scenario_experiment_mock(
+        scenario_id="pod-kill",
+        backend="python",
+    )
+    evidence = session.stages["evidence"]["payload"]
+
+    assert evidence["metric_values"]["availability"] == 0.0
+    assert evidence["desired_replicas"] == 1
+    assert evidence["available_replicas"] == 0
+    assert "Running" not in evidence["pod_statuses"]
 
 
 def test_artifact_path_rejects_files_outside_allowed_roots(tmp_path: Path):

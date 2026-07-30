@@ -89,8 +89,13 @@ go test ./...
 ## Control Plane UI
 
 교수님 시연과 연구실 점검을 위해 FastAPI 기반 웹 Control Plane을 제공합니다.
-사이드바에서 대시보드, 장애 실험, 4-Agent 판단, 상호감시 실험, 안전 검증, 실험 결과,
-연구 문서를 독립 화면으로 전환할 수 있습니다.
+Pod Kill, CPU Stress, Memory Stress, Network Delay 중 하나를 선택하면
+`조건 → Evidence → Agent 진단 → 상호검토·합의 → 안전 검증 → 실행·복구 관찰
+→ 결과`가 하나의 `ExperimentSession`으로 연결됩니다. 사이드바의 4-Agent 판단,
+상호감시, 안전 경계, 실험 근거 화면은 동일한 세션을 각 연구 관점에서 보여줍니다.
+
+웹 실행은 재현 가능한 mock evidence로 제한되며 실제 Kubernetes `real` 제어는
+기존 CLI와 명시적 확인 절차를 사용합니다.
 
 ```bash
 python -m pip install -e ".[ui,dev,autogen]"
