@@ -159,3 +159,13 @@ def test_session_store_rejects_non_positive_capacity():
         assert "max_sessions" in str(exc)
     else:
         raise AssertionError("non-positive session capacity was accepted")
+
+
+def test_runtime_terminal_statuses_are_preserved_in_session_result_stage():
+    for status in ("cancelled", "interrupted", "blocked", "cleanup_failed"):
+        report = _mutual_report()
+        report["final_status"] = status
+        report["recovery_monitoring"] = {}
+        session = normalize_experiment_session(report)
+        assert session.status == status
+        assert session.stages["result"]["status"] == status

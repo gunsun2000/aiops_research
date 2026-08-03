@@ -230,6 +230,8 @@ def _result_status(
         return "completed" if recovered is True else "failed"
     if final_status in {"no_action_required", "recovered", "recovered_after_replan"}:
         return "completed"
+    if final_status in {"cancelled", "interrupted", "blocked", "cleanup_failed"}:
+        return final_status
     if final_status in {
         "safe_failure",
         "runtime_unavailable",
