@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from dataclasses import dataclass
@@ -22,6 +23,8 @@ from aiops_k8s_agents.control_plane_data import (
 )
 from aiops_k8s_agents.experiment_runtime_factory import build_experiment_runtime
 from aiops_k8s_agents.experiment_runtime import RuntimePreflightResult
+from aiops_k8s_agents.experiment_job_runner import ExperimentJobRunner
+from aiops_k8s_agents.experiment_jobs import SQLiteExperimentJobStore
 from aiops_k8s_agents.experiment_runtime_models import ExperimentRuntimeRequest
 from aiops_k8s_agents.executor import ExecutionBackend, ExecutionMode
 from aiops_k8s_agents.real_evidence import RuntimeConfiguration, load_runtime_configuration
@@ -29,7 +32,7 @@ from aiops_k8s_agents.research_protocol import load_protocol_profiles
 
 try:
     from fastapi import APIRouter, FastAPI, HTTPException, Request
-    from fastapi.responses import FileResponse, HTMLResponse
+    from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel, Field
 except ModuleNotFoundError as exc:  # pragma: no cover - exercised at runtime.
@@ -50,6 +53,8 @@ class RuntimeApiState:
     protocol_profiles: Mapping[str, Any]
     runtime_factory: Callable[[], Any]
     connection_probes: Mapping[str, RuntimeProbe]
+    job_store: SQLiteExperimentJobStore
+    job_runner: ExperimentJobRunner
 
 
 class EmptyEventSink:
@@ -86,6 +91,10 @@ class ExperimentValidationRequest(BaseModel):
     backend: Literal["python", "go"] = "python"
     protocol_profile: str = Field(min_length=1)
     repetitions: int = Field(default=1, ge=1)
+
+
+class ExperimentCreateRequest(ExperimentValidationRequest):
+    real_confirmation: str = ""
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -171,12 +180,119 @@ def api_experiment_mock(
     return session.to_dict()
 
 
+@router.post("/api/experiments", status_code=202)
+def api_create_experiment(
+    request: ExperimentCreateRequest,
+    http_request: Request,
+) -> dict[str, object]:
+    if request.mode == "real":
+        if os.environ.get("CONFIRM_REAL_RUN") != "YES":
+            raise HTTPException(
+                status_code=403,
+                detail="real execution is disabled on this server",
+            )
+        if request.real_confirmation.strip() != "EXECUTE REAL EXPERIMENT":
+            raise HTTPException(
+                status_code=400,
+                detail="real_confirmation must be exactly EXECUTE REAL EXPERIMENT",
+            )
+    validated = api_validate_experiment(request, http_request)
+    runtime_request = _runtime_request(validated["resolved"])
+    state: RuntimeApiState = http_request.app.state.runtime_api
+    try:
+        job = state.job_runner.submit(runtime_request)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return job.to_dict()
+
+
+@router.get("/api/experiments")
+def api_experiment_jobs(
+    request: Request,
+    limit: int = 50,
+) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        jobs = state.job_store.list(limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"jobs": [job.to_dict() for job in jobs]}
+
+
 @router.get("/api/experiments/{experiment_id}")
-def api_experiment(experiment_id: str) -> dict[str, object]:
+def api_experiment(experiment_id: str, request: Request) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    job = state.job_store.get(experiment_id)
+    if job is not None:
+        payload = job.to_dict()
+        payload["events"] = [
+            event.to_dict()
+            for event in state.job_store.events_after(experiment_id)
+        ]
+        return payload
     session = get_experiment_session(experiment_id)
     if session is None:
         raise HTTPException(status_code=404, detail="experiment not found")
     return session.to_dict()
+
+
+@router.post("/api/experiments/{experiment_id}/cancel", status_code=202)
+def api_cancel_experiment(
+    experiment_id: str,
+    request: Request,
+) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        job = state.job_runner.cancel(experiment_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="experiment not found") from exc
+    return job.to_dict()
+
+
+@router.get("/api/experiments/{experiment_id}/events")
+def api_experiment_events(
+    experiment_id: str,
+    request: Request,
+) -> StreamingResponse:
+    state: RuntimeApiState = request.app.state.runtime_api
+    if state.job_store.get(experiment_id) is None:
+        raise HTTPException(status_code=404, detail="experiment not found")
+    raw_cursor = request.headers.get("last-event-id", "0").strip() or "0"
+    try:
+        cursor = int(raw_cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Last-Event-ID must be an integer") from exc
+    if cursor < 0:
+        raise HTTPException(status_code=400, detail="Last-Event-ID must be non-negative")
+
+    def stream():
+        nonlocal cursor
+        while True:
+            events = state.job_runner.wait_for_events(
+                experiment_id,
+                after_sequence=cursor,
+                timeout=10.0,
+            )
+            for event in events:
+                cursor = event.sequence
+                yield _sse("runtime", event.to_dict(), event_id=event.sequence)
+            job = state.job_store.get(experiment_id)
+            if job is None:
+                return
+            if job.status.terminal:
+                yield _sse("job", job.to_dict())
+                return
+            if not events:
+                yield ": keep-alive\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.get("/api/artifacts/{relative_path:path}")
@@ -196,12 +312,15 @@ def api_platform(request: Request) -> dict[str, object]:
     real_missing = connection_result["missing_prerequisites"]
     return {
         "api_version": "1.0",
-        "runtime_boundary": "preflight_only",
+        "runtime_boundary": "persistent_bounded_jobs",
         "capabilities": {
-            "persistent_jobs": False,
+            "persistent_jobs": True,
             "real_runtime": True,
-            "fault_injection_api": False,
-            "kubernetes_mutation": False,
+            "fault_injection_api": True,
+            "kubernetes_mutation": True,
+            "sse_events": True,
+            "cancellation": True,
+            "restart_recovery": "interrupt_nonterminal",
         },
         "runtime_modes": {
             "mock": {"ready": True, "external_prerequisites": []},
@@ -212,7 +331,7 @@ def api_platform(request: Request) -> dict[str, object]:
                 "ready": False,
                 "external_prerequisites": True,
                 "request_specific_preflight_required": True,
-                "required_connections": _connection_names(state),
+                "required_connections": _required_real_connections(state),
                 "missing_prerequisites": real_missing,
                 "safety_bounds": {
                     "min_replicas": configuration.min_replicas,
@@ -227,6 +346,7 @@ def api_platform(request: Request) -> dict[str, object]:
 def api_connections(request: Request) -> dict[str, object]:
     state: RuntimeApiState = request.app.state.runtime_api
     connections: dict[str, dict[str, object]] = {}
+    required = set(_required_real_connections(state))
     for name in _connection_names(state):
         try:
             result = state.connection_probes[name]()
@@ -235,7 +355,7 @@ def api_connections(request: Request) -> dict[str, object]:
             ready = False
         connections[name] = {
             "ready": bool(ready),
-            "required_for_real": True,
+            "required_for_real": name in required,
         }
     missing = [
         name for name, result in connections.items()
@@ -355,6 +475,41 @@ def _connection_names(state: RuntimeApiState) -> tuple[str, ...]:
     return tuple(state.connection_probes)
 
 
+def _required_real_connections(state: RuntimeApiState) -> tuple[str, ...]:
+    required = (
+        "kubernetes",
+        "prometheus",
+        "chaos_mesh",
+        "artifact_directory",
+    )
+    return tuple(name for name in required if name in state.connection_probes)
+
+
+def _runtime_request(data: Mapping[str, Any]) -> ExperimentRuntimeRequest:
+    return ExperimentRuntimeRequest(
+        scenario_id=data["scenario_id"],
+        namespace=data["namespace"],
+        deployment=data["deployment"],
+        metric=data["metric"],
+        threshold=data["threshold"],
+        mode=ExecutionMode(data["mode"]),
+        backend=ExecutionBackend(data["backend"]),
+        protocol_profile=data["protocol_profile"],
+        repetitions=data["repetitions"],
+    )
+
+
+def _sse(event: str, payload: Mapping[str, Any], event_id: int | None = None) -> str:
+    lines = []
+    if event_id is not None:
+        lines.append(f"id: {event_id}")
+    lines.append(f"event: {event}")
+    lines.append(
+        "data: " + json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    )
+    return "\n".join(lines) + "\n\n"
+
+
 def _default_probe(command: list[str]) -> RuntimeProbe:
     def probe() -> bool:
         try:
@@ -397,6 +552,8 @@ def _default_connection_probes(root: Path, prometheus_url: str) -> dict[str, Run
 def create_app(
     *,
     runtime_factory: Callable[[], Any] | None = None,
+    job_runtime_factory: Callable[[Any, Any, str], Any] | None = None,
+    job_database_path: str | Path | None = None,
     connection_probes: Mapping[str, RuntimeProbe] | None = None,
     configuration_path: str | Path | None = None,
     prometheus_url: str | None = None,
@@ -412,6 +569,25 @@ def create_app(
             event_sink=EmptyEventSink(),
         )
     )
+    database_path = Path(
+        job_database_path
+        or os.environ.get(
+            "AIOPS_JOB_DATABASE",
+            root / "runs" / "control-plane" / "experiment-jobs.sqlite3",
+        )
+    )
+    job_store = SQLiteExperimentJobStore(database_path)
+    runtime_builder = job_runtime_factory or (
+        lambda event_sink, cancellation_event, experiment_id: build_experiment_runtime(
+            configuration_path=config_path,
+            prometheus_url=prometheus_url
+            or os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9090"),
+            event_sink=event_sink,
+            experiment_id_factory=lambda: experiment_id,
+            cancellation_event=cancellation_event,
+        )
+    )
+    job_runner = ExperimentJobRunner(job_store, runtime_builder)
     app_instance = FastAPI(
         title="AIOps 4-Agent Control Plane",
         version="0.1.0",
@@ -425,6 +601,8 @@ def create_app(
         connection_probes=connection_probes or _default_connection_probes(
             root, prometheus_url or os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9090")
         ),
+        job_store=job_store,
+        job_runner=job_runner,
     )
     app_instance.include_router(router)
     app_instance.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

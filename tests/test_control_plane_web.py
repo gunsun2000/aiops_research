@@ -1,9 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from threading import Event
+from time import monotonic, sleep
+
 from fastapi.testclient import TestClient
 
 from aiops_k8s_agents.control_plane_web import app, create_app
 from aiops_k8s_agents.experiment_runtime import RuntimePreflightResult
+from aiops_k8s_agents.experiment_runtime_models import RuntimeEvent, RuntimeStage
 
 
 client = TestClient(app)
@@ -17,8 +22,9 @@ def test_platform_capabilities_describe_current_runtime_boundary():
     assert response.status_code == 200
     payload = response.json()
     assert payload["api_version"] == "1.0"
-    assert payload["capabilities"]["persistent_jobs"] is False
+    assert payload["capabilities"]["persistent_jobs"] is True
     assert payload["capabilities"]["real_runtime"] is True
+    assert payload["capabilities"]["fault_injection_api"] is True
     assert payload["runtime_modes"]["mock"]["ready"] is True
     assert payload["runtime_modes"]["dry-run"]["ready"] is True
     assert "required_connections" in payload["runtime_modes"]["real"]
@@ -258,5 +264,193 @@ def test_scenario_experiment_api_rejects_unknown_scenario():
 
 def test_scenario_experiment_api_returns_not_found_for_unknown_session():
     response = client.get("/api/experiments/not-a-real-session")
+
+    assert response.status_code == 404
+
+
+@dataclass
+class _JobRuntimeResult:
+    experiment_id: str
+    status: str = "recovered"
+
+    def to_dict(self):
+        return {
+            "experiment_id": self.experiment_id,
+            "status": self.status,
+            "session": {"experiment_id": self.experiment_id},
+        }
+
+
+class _JobRuntime:
+    def __init__(self, sink, cancellation, experiment_id, *, block=False):
+        self.sink = sink
+        self.cancellation = cancellation
+        self.experiment_id = experiment_id
+        self.block = block
+
+    def run(self, _request):
+        self.sink.emit(
+            RuntimeEvent(
+                experiment_id=self.experiment_id,
+                sequence=1,
+                stage=RuntimeStage.PREFLIGHT,
+                status="running",
+                message="runtime preflight",
+                created_at="2026-08-03T03:00:00+00:00",
+            )
+        )
+        if self.block:
+            self.cancellation.wait(timeout=2.0)
+            return _JobRuntimeResult(self.experiment_id, "cancelled")
+        self.sink.emit(
+            RuntimeEvent(
+                experiment_id=self.experiment_id,
+                sequence=2,
+                stage=RuntimeStage.COLLECTING_EVIDENCE,
+                status="running",
+                message="collecting registered evidence",
+                created_at="2026-08-03T03:00:01+00:00",
+            )
+        )
+        return _JobRuntimeResult(self.experiment_id)
+
+
+def _job_payload(**overrides):
+    payload = {
+        "scenario_id": "cpu-stress",
+        "namespace": "online-boutique",
+        "deployment": "paymentservice",
+        "metric": "cpu",
+        "threshold": 80,
+        "mode": "mock",
+        "backend": "python",
+        "protocol_profile": "four-agent-role-veto-v1",
+        "repetitions": 1,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _wait_for_job(client, experiment_id, timeout=2.0):
+    deadline = monotonic() + timeout
+    while monotonic() < deadline:
+        response = client.get(f"/api/experiments/{experiment_id}")
+        if response.status_code == 200 and response.json()["status"] in {
+            "completed",
+            "failed",
+            "blocked",
+            "cancelled",
+            "interrupted",
+        }:
+            return response.json()
+        sleep(0.01)
+    raise AssertionError("job did not become terminal")
+
+
+def test_create_experiment_runs_in_background_and_lists_job(tmp_path):
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        job_runtime_factory=lambda sink, cancellation, experiment_id: _JobRuntime(
+            sink, cancellation, experiment_id
+        ),
+    )
+    test_client = TestClient(test_app)
+
+    response = test_client.post("/api/experiments", json=_job_payload())
+
+    assert response.status_code == 202
+    experiment_id = response.json()["experiment_id"]
+    finished = _wait_for_job(test_client, experiment_id)
+    listed = test_client.get("/api/experiments?limit=10")
+
+    assert finished["status"] == "completed"
+    assert finished["request"]["scenario_id"] == "cpu-stress"
+    assert finished["result"]["successful_attempts"] == 1
+    assert listed.status_code == 200
+    assert listed.json()["jobs"][0]["experiment_id"] == experiment_id
+
+
+def test_create_experiment_rejects_unknown_scenario_before_job_creation(tmp_path):
+    test_app = create_app(job_database_path=tmp_path / "jobs.sqlite3")
+
+    response = TestClient(test_app).post(
+        "/api/experiments",
+        json=_job_payload(scenario_id="unknown-scenario"),
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "unknown scenario"
+    assert TestClient(test_app).get("/api/experiments").json()["jobs"] == []
+
+
+def test_real_experiment_requires_server_gate_and_exact_confirmation(tmp_path, monkeypatch):
+    monkeypatch.setenv("CONFIRM_REAL_RUN", "YES")
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        connection_probes=_all_ready_probes(),
+    )
+
+    response = TestClient(test_app).post(
+        "/api/experiments",
+        json=_job_payload(mode="real"),
+    )
+
+    assert response.status_code == 400
+    assert "EXECUTE REAL EXPERIMENT" in response.json()["detail"]
+
+
+def test_cancel_endpoint_signals_running_job(tmp_path):
+    runtime_started = Event()
+
+    def runtime_factory(sink, cancellation, experiment_id):
+        runtime_started.set()
+        return _JobRuntime(sink, cancellation, experiment_id, block=True)
+
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        job_runtime_factory=runtime_factory,
+    )
+    test_client = TestClient(test_app)
+    created = test_client.post("/api/experiments", json=_job_payload()).json()
+    assert runtime_started.wait(timeout=1.0)
+
+    cancelled = test_client.post(
+        f"/api/experiments/{created['experiment_id']}/cancel"
+    )
+    finished = _wait_for_job(test_client, created["experiment_id"])
+
+    assert cancelled.status_code == 202
+    assert cancelled.json()["cancel_requested"] is True
+    assert finished["status"] == "cancelled"
+
+
+def test_sse_replays_events_after_last_event_id_and_finishes(tmp_path):
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        job_runtime_factory=lambda sink, cancellation, experiment_id: _JobRuntime(
+            sink, cancellation, experiment_id
+        ),
+    )
+    test_client = TestClient(test_app)
+    created = test_client.post("/api/experiments", json=_job_payload()).json()
+    _wait_for_job(test_client, created["experiment_id"])
+
+    response = test_client.get(
+        f"/api/experiments/{created['experiment_id']}/events",
+        headers={"Last-Event-ID": "1"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "id: 2" in response.text
+    assert "collecting registered evidence" in response.text
+    assert "runtime preflight" not in response.text
+    assert "event: job" in response.text
+
+
+def test_unknown_persistent_job_returns_not_found(tmp_path):
+    test_app = create_app(job_database_path=tmp_path / "jobs.sqlite3")
+
+    response = TestClient(test_app).get("/api/experiments/exp-missing")
 
     assert response.status_code == 404
