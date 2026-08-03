@@ -3,11 +3,24 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from aiops_k8s_agents.agent_adapters import build_default_agent_adapter_registry
+from aiops_k8s_agents.agent_adapters import (
+    AgentAdapterRegistry,
+    DeterministicApplicationAdapter,
+    DeterministicCostAdapter,
+    DeterministicHAAdapter,
+    DeterministicInfrastructureAdapter,
+    build_default_agent_adapter_registry,
+)
 from aiops_k8s_agents.chaos_adapter import ChaosMeshAdapter
-from aiops_k8s_agents.experiment_runtime import ExperimentRuntime
+from aiops_k8s_agents.evidence import EvidenceSnapshot, FakeEvidenceProvider
+from aiops_k8s_agents.experiment_runtime import (
+    CoordinatorAdmission,
+    CoordinatorAdmissionValidator,
+    ExperimentRuntime,
+)
 from aiops_k8s_agents.experiment_runtime_models import ExperimentRuntimeRequest
 from aiops_k8s_agents.executor import ExecutionBackend, ExecutionMode
+from aiops_k8s_agents.kubernetes_status import collect_kubernetes_snapshot
 from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
 from aiops_k8s_agents.mutual_supervision_policy import load_mutual_supervision_policy
 from aiops_k8s_agents.prometheus import PrometheusAdapter
@@ -16,13 +29,17 @@ from aiops_k8s_agents.real_evidence import (
     RuntimeConfiguration,
     load_runtime_configuration,
 )
-from aiops_k8s_agents.recovery_monitor import KubernetesSnapshotRecoveryMonitor
+from aiops_k8s_agents.recovery_monitor import (
+    FakeRecoveryMonitor,
+    KubernetesSnapshotRecoveryMonitor,
+)
 from aiops_k8s_agents.research_protocol import load_protocol_profiles
 from aiops_k8s_agents.validator import CommandValidator
 
 
 CommandRunner = Callable[[list[str]], tuple[int, str, str]]
 PrometheusFetcher = Callable[[str, str], dict[str, Any]]
+KubernetesCollector = Callable[..., dict[str, Any]]
 
 _UI_FALLBACK = {
     "pod-kill": {
@@ -66,11 +83,14 @@ def build_experiment_runtime(
     *,
     subprocess_runner: CommandRunner | None = None,
     prometheus_fetcher: PrometheusFetcher | None = None,
+    kubernetes_collector: KubernetesCollector | None = None,
 ) -> ExperimentRuntime:
     """Build the admitted deterministic runtime without performing I/O.
 
-    Injectable runners are deliberately limited to construction tests. Runtime
-    admission still checks the exact production dependency types before run.
+    Mock uses deterministic in-memory evidence and recovery only. Dry-run uses
+    the same non-live evidence boundary while preserving the existing dry-run
+    action executor. Real alone constructs live providers and remains subject
+    to the exact production admission validator.
     """
     configuration = load_runtime_configuration(configuration_path)
     repository_root = Path(__file__).resolve().parents[2]
@@ -106,21 +126,28 @@ def build_experiment_runtime(
             raise ValueError(
                 f"protocol profile is not registered: {request.protocol_profile}"
             ) from exc
-        prometheus = PrometheusAdapter(prometheus_url, fetcher=prometheus_fetcher)
-        evidence = PrometheusKubernetesEvidenceProvider(
-            prometheus=prometheus,
-            metric_queries=configuration.metric_queries,
-            requested_metric=request.metric,
-            max_sample_age_seconds=configuration.max_sample_age_seconds,
-        )
-        recovery_monitor = KubernetesSnapshotRecoveryMonitor(
-            evidence_provider=evidence,
-            max_attempts=max(
-                1,
-                int(configuration.timeouts["recovery_seconds"] / 5),
-            ),
-            interval_seconds=5.0,
-        )
+        if request.mode == ExecutionMode.REAL:
+            prometheus = PrometheusAdapter(prometheus_url, fetcher=prometheus_fetcher)
+            evidence = PrometheusKubernetesEvidenceProvider(
+                prometheus=prometheus,
+                metric_queries=configuration.metric_queries,
+                requested_metric=request.metric,
+                kubernetes_collector=(
+                    kubernetes_collector or collect_kubernetes_snapshot
+                ),
+                max_sample_age_seconds=configuration.max_sample_age_seconds,
+            )
+            recovery_monitor = KubernetesSnapshotRecoveryMonitor(
+                evidence_provider=evidence,
+                max_attempts=max(
+                    1,
+                    int(configuration.timeouts["recovery_seconds"] / 5),
+                ),
+                interval_seconds=5.0,
+            )
+        else:
+            evidence = _deterministic_evidence_provider(request)
+            recovery_monitor = FakeRecoveryMonitor(default_success=True)
         return MutualSupervisionCoordinator(
             validator=validator,
             evidence_provider=evidence,
@@ -137,6 +164,79 @@ def build_experiment_runtime(
         chaos=chaos,
         coordinator_factory=coordinator_factory,
         event_sink=event_sink,
+        admission_validator=_FactoryCoordinatorAdmissionValidator(),
+    )
+
+
+class _FactoryCoordinatorAdmissionValidator:
+    """Route real admission unchanged and admit only exact non-live test doubles."""
+
+    def __init__(self) -> None:
+        self._real = CoordinatorAdmissionValidator()
+
+    def validate(
+        self,
+        coordinator: Any,
+        request: ExperimentRuntimeRequest,
+        configuration: RuntimeConfiguration,
+    ) -> CoordinatorAdmission:
+        if request.mode == ExecutionMode.REAL:
+            return self._real.validate(coordinator, request, configuration)
+        if type(coordinator) is not MutualSupervisionCoordinator:
+            raise ValueError("non-real coordinator is not registered")
+        if coordinator.mode != request.mode or coordinator.backend != request.backend:
+            raise ValueError("non-real coordinator mode/backend does not match request")
+        if type(coordinator.evidence_provider) is not FakeEvidenceProvider:
+            raise ValueError("non-real evidence provider must be deterministic")
+        if type(coordinator.recovery_monitor) is not FakeRecoveryMonitor:
+            raise ValueError("non-real recovery monitor must not access a cluster")
+        if coordinator.protocol.profile_id != request.protocol_profile:
+            raise ValueError("non-real protocol profile does not match request")
+        if type(coordinator.adapter_registry) is not AgentAdapterRegistry:
+            raise ValueError("non-real agent registry is unsupported")
+        expected_adapters = (
+            DeterministicHAAdapter,
+            DeterministicApplicationAdapter,
+            DeterministicInfrastructureAdapter,
+            DeterministicCostAdapter,
+        )
+        if tuple(type(adapter) for adapter in coordinator.adapters.values()) != expected_adapters:
+            raise ValueError("non-real agent stage is unsupported")
+        return CoordinatorAdmission(
+            executor_timeout_seconds=15.0,
+            evidence_timeout_seconds=1.0,
+            stage_timeouts={
+                name: float(configuration.timeouts[name])
+                for name in (
+                    "preflight_seconds",
+                    "fault_ready_seconds",
+                    "recovery_seconds",
+                    "cleanup_seconds",
+                )
+            },
+        )
+
+
+def _deterministic_evidence_provider(
+    request: ExperimentRuntimeRequest,
+) -> FakeEvidenceProvider:
+    availability_fault = request.metric == "availability"
+    value = (
+        0.0
+        if availability_fault
+        else request.threshold + max(abs(request.threshold) * 0.1, 1.0)
+    )
+    return FakeEvidenceProvider(
+        EvidenceSnapshot(
+            namespace=request.namespace,
+            deployment=request.deployment,
+            metric_values={request.metric: value},
+            desired_replicas=1,
+            available_replicas=0 if availability_fault else 1,
+            pod_statuses=("Pending",) if availability_fault else ("Running",),
+            events=(f"{request.mode.value} deterministic factory evidence",),
+            source=f"factory-{request.mode.value}",
+        )
     )
 
 

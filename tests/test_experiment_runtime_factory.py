@@ -5,12 +5,14 @@ import json
 
 import pytest
 
+from aiops_k8s_agents.evidence import FakeEvidenceProvider
 from aiops_k8s_agents.experiment_runtime_factory import (
     build_experiment_runtime,
     runtime_scenario_catalog,
 )
 from aiops_k8s_agents.experiment_runtime_models import ExperimentRuntimeRequest
 from aiops_k8s_agents.real_evidence import load_runtime_configuration
+from aiops_k8s_agents.recovery_monitor import FakeRecoveryMonitor
 
 
 class RecordingEventSink:
@@ -167,3 +169,62 @@ def test_runtime_factory_rejects_unregistered_protocol_before_coordinator_creati
 
     with pytest.raises(ValueError, match="protocol profile is not registered"):
         runtime.coordinator_factory(request)
+
+
+def test_factory_mock_run_never_calls_live_evidence_collectors(tmp_path):
+    calls = []
+
+    def unexpected_prometheus_fetcher(_url, _query):
+        calls.append("prometheus")
+        raise AssertionError("mock mode must not query Prometheus")
+
+    def unexpected_kubernetes_collector(**_kwargs):
+        calls.append("kubernetes")
+        raise AssertionError("mock mode must not collect Kubernetes evidence")
+
+    runtime = build_experiment_runtime(
+        configuration_path=write_runtime_config(tmp_path),
+        prometheus_url="http://127.0.0.1:9091",
+        event_sink=RecordingEventSink(),
+        prometheus_fetcher=unexpected_prometheus_fetcher,
+        kubernetes_collector=unexpected_kubernetes_collector,
+    )
+    request = ExperimentRuntimeRequest(
+        scenario_id="cpu-stress",
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+        mode="mock",
+        backend="python",
+        protocol_profile="four-agent-role-veto-v1",
+    )
+
+    result = runtime.run(request)
+
+    assert result.status == "recovered"
+    assert result.session.mode == "mock"
+    assert calls == []
+
+
+def test_factory_dry_run_uses_deterministic_non_live_evidence_boundary(tmp_path):
+    runtime = build_experiment_runtime(
+        configuration_path=write_runtime_config(tmp_path),
+        prometheus_url="http://127.0.0.1:9091",
+        event_sink=RecordingEventSink(),
+    )
+    request = ExperimentRuntimeRequest(
+        scenario_id="cpu-stress",
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+        mode="dry-run",
+        backend="python",
+        protocol_profile="four-agent-role-veto-v1",
+    )
+
+    coordinator = runtime.coordinator_factory(request)
+
+    assert type(coordinator.evidence_provider) is FakeEvidenceProvider
+    assert type(coordinator.recovery_monitor) is FakeRecoveryMonitor
