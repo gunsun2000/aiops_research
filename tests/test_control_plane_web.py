@@ -10,7 +10,9 @@ client = TestClient(app)
 
 
 def test_platform_capabilities_describe_current_runtime_boundary():
-    response = client.get("/api/platform")
+    response = TestClient(create_app(connection_probes=_all_ready_probes())).get(
+        "/api/platform"
+    )
 
     assert response.status_code == 200
     payload = response.json()

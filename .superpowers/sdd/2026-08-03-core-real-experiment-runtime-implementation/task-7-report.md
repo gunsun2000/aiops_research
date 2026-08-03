@@ -31,4 +31,4 @@ Changed only:
 - `GET /api/platform` is conservative: generic readiness cannot claim real mode ready because scenario-specific preflight is request-dependent.
 - Added deterministic real-mode accepted/rejected, scenario-resource rejection, factory/preflight exception secrecy, and no-mutation tests.
 
-Review-fix verification: `11 passed` focused control-plane tests, `448 passed` full Python suite, and `git diff --check` passed. The review note was moved to this task folder and remains untracked reviewer material.
+Review-fix verification: `11 passed` focused control-plane tests, `449 passed` full Python suite, and `git diff --check` passed. The platform capability test now uses fixed injected probes and performs no ambient kubectl/Prometheus I/O. The review note was moved to this task folder and remains untracked reviewer material.
