@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from datetime import date, datetime, time
 from enum import Enum
 from math import isfinite
 from types import MappingProxyType
@@ -64,7 +65,7 @@ class ExperimentRuntimeRequest:
         object.__setattr__(self, "threshold", float(self.threshold))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        return _json_safe({
             "scenario_id": self.scenario_id,
             "namespace": self.namespace,
             "deployment": self.deployment,
@@ -74,7 +75,7 @@ class ExperimentRuntimeRequest:
             "backend": self.backend.value,
             "protocol_profile": self.protocol_profile,
             "repetitions": self.repetitions,
-        }
+        })
 
 
 @dataclass(frozen=True)
@@ -106,15 +107,15 @@ class RuntimeEvent:
         object.__setattr__(self, "payload", _freeze(self.payload))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        return _json_safe({
             "experiment_id": self.experiment_id,
             "sequence": self.sequence,
             "stage": self.stage.value,
             "status": self.status,
             "message": self.message,
             "created_at": self.created_at,
-            "payload": _thaw(self.payload),
-        }
+            "payload": self.payload,
+        })
 
 
 @dataclass(frozen=True)
@@ -143,14 +144,14 @@ class ExperimentRuntimeResult:
         object.__setattr__(self, "cleanup", _freeze(self.cleanup))
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        return _json_safe({
             "experiment_id": self.experiment_id,
             "status": self.status,
-            "report": _thaw(self.report),
+            "report": self.report,
             "session": self.session.to_dict(),
             "events": [event.to_dict() for event in self.events],
-            "cleanup": _thaw(self.cleanup),
-        }
+            "cleanup": self.cleanup,
+        })
 
 
 def _strip_identifier(name: str, value: Any) -> str:
@@ -179,13 +180,19 @@ def _freeze(value: Any) -> Any:
     return deepcopy(value)
 
 
-def _thaw(value: Any) -> Any:
-    if isinstance(value, Mapping):
-        return {str(key): _thaw(item) for key, item in value.items()}
-    if isinstance(value, tuple | list):
-        return [_thaw(item) for item in value]
-    if isinstance(value, frozenset | set):
-        return [_thaw(item) for item in sorted(value, key=repr)]
+def _json_safe(value: Any) -> Any:
     if isinstance(value, Enum):
-        return value.value
-    return deepcopy(value)
+        return _json_safe(value.value)
+    if isinstance(value, Mapping):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, tuple | list):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, frozenset | set):
+        return [_json_safe(item) for item in sorted(value, key=repr)]
+    if isinstance(value, datetime | date | time):
+        return value.isoformat()
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    raise TypeError(
+        f"value of type {type(value).__name__} is not JSON serializable"
+    )

@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
+from datetime import datetime, timezone
+from enum import Enum
+import json
 from math import inf, nan
+from types import MappingProxyType
 
 import pytest
 
@@ -121,3 +125,49 @@ def test_runtime_result_serializes_session_events_and_mutable_copies():
     serialized["cleanup"]["valid"] = False
     assert result.report["summary"]["ok"] is True
     assert result.cleanup["valid"] is True
+
+
+class _EvidenceKind(Enum):
+    CPU = "cpu"
+
+
+def test_runtime_result_to_dict_is_json_safe_for_nested_runtime_values():
+    observed_at = datetime(2026, 8, 3, 1, 2, 3, tzinfo=timezone.utc)
+    report = MappingProxyType(
+        {
+            "observed_at": observed_at,
+            "evidence": (
+                _EvidenceKind.CPU,
+                MappingProxyType({"timestamps": (observed_at,)}),
+            ),
+        }
+    )
+    event = RuntimeEvent(
+        "exp-1",
+        0,
+        RuntimeStage.COLLECTING_EVIDENCE,
+        "completed",
+        "evidence collected",
+        "2026-08-03T00:00:00+00:00",
+        {"observed_at": observed_at, "values": (1, 2)},
+    )
+    result = ExperimentRuntimeResult(
+        "exp-1",
+        "completed",
+        report,
+        _session(),
+        (event,),
+        MappingProxyType({"finished_at": observed_at}),
+    )
+
+    serialized = result.to_dict()
+    json.dumps(serialized)
+
+    assert serialized["report"]["observed_at"] == "2026-08-03T01:02:03+00:00"
+    assert serialized["report"]["evidence"][0] == "cpu"
+    assert serialized["report"]["evidence"][1]["timestamps"] == [
+        "2026-08-03T01:02:03+00:00"
+    ]
+    assert result.report["observed_at"] == observed_at
+    assert result.report["evidence"][1]["timestamps"] == (observed_at,)
+    assert result.events[0].payload["values"] == (1, 2)
