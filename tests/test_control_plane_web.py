@@ -424,6 +424,40 @@ def test_cancel_endpoint_signals_running_job(tmp_path):
     assert finished["status"] == "cancelled"
 
 
+def test_app_shutdown_cancels_running_background_jobs(tmp_path):
+    runtime_started = Event()
+    cancellation_seen = Event()
+
+    class ShutdownAwareRuntime:
+        def __init__(self, cancellation, experiment_id):
+            self.cancellation = cancellation
+            self.experiment_id = experiment_id
+
+        def run(self, _request):
+            runtime_started.set()
+            if self.cancellation.wait(timeout=5.0):
+                cancellation_seen.set()
+                return _JobRuntimeResult(self.experiment_id, "cancelled")
+            return _JobRuntimeResult(self.experiment_id, "failed")
+
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        job_runtime_factory=lambda _sink, cancellation, experiment_id: (
+            ShutdownAwareRuntime(cancellation, experiment_id)
+        ),
+    )
+
+    with TestClient(test_app) as test_client:
+        created = test_client.post("/api/experiments", json=_job_payload()).json()
+        assert runtime_started.wait(timeout=1.0)
+
+    assert cancellation_seen.is_set()
+    assert (
+        test_app.state.runtime_api.job_store.get(created["experiment_id"]).status.value
+        == "cancelled"
+    )
+
+
 def test_sse_replays_events_after_last_event_id_and_finishes(tmp_path):
     test_app = create_app(
         job_database_path=tmp_path / "jobs.sqlite3",

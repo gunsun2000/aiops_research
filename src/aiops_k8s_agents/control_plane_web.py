@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal, Mapping
@@ -588,11 +589,20 @@ def create_app(
         )
     )
     job_runner = ExperimentJobRunner(job_store, runtime_builder)
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            job_runner.shutdown(wait=True)
+
     app_instance = FastAPI(
         title="AIOps 4-Agent Control Plane",
         version="0.1.0",
         docs_url="/api/docs",
         redoc_url=None,
+        lifespan=lifespan,
     )
     app_instance.state.runtime_api = RuntimeApiState(
         configuration=configuration,

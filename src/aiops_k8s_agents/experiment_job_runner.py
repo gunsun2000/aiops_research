@@ -87,10 +87,26 @@ class ExperimentJobRunner:
         return self.store.events_after(experiment_id, after_sequence)
 
     def shutdown(self, wait: bool = True) -> None:
-        with self._lock:
-            threads = tuple(self._threads.values())
+        with self._condition:
+            active = tuple(
+                (
+                    experiment_id,
+                    self._threads[experiment_id],
+                    cancellation,
+                )
+                for experiment_id, cancellation in self._cancellations.items()
+                if experiment_id in self._threads
+            )
+            for _, _, cancellation in active:
+                cancellation.set()
+            self._condition.notify_all()
+        for experiment_id, _, _ in active:
+            try:
+                self.store.request_cancel(experiment_id)
+            except KeyError:
+                continue
         if wait:
-            for thread in threads:
+            for _, thread, _ in active:
                 thread.join(timeout=5.0)
 
     def _run_job(self, experiment_id: str, cancellation: Event) -> None:

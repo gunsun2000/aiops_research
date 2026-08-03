@@ -181,3 +181,35 @@ def test_runner_startup_marks_stale_jobs_interrupted(tmp_path):
 
     assert store.get("exp-stale").status is ExperimentJobStatus.INTERRUPTED
     runner.shutdown()
+
+
+def test_shutdown_cancels_running_jobs_before_waiting(tmp_path):
+    store = SQLiteExperimentJobStore(tmp_path / "jobs.sqlite3")
+    runtime_started = Event()
+    cancellation_seen = Event()
+
+    class ShutdownAwareRuntime:
+        def __init__(self, cancel, experiment_id):
+            self.cancel = cancel
+            self.experiment_id = experiment_id
+
+        def run(self, _request):
+            runtime_started.set()
+            assert self.cancel.wait(timeout=2.0)
+            cancellation_seen.set()
+            return _Result(self.experiment_id, "cancelled")
+
+    runner = ExperimentJobRunner(
+        store,
+        runtime_factory=lambda _sink, cancel, experiment_id: ShutdownAwareRuntime(
+            cancel, experiment_id
+        ),
+        experiment_id_factory=lambda: "exp-shutdown",
+    )
+    job = runner.submit(_request())
+    assert runtime_started.wait(timeout=1.0)
+
+    runner.shutdown(wait=True)
+
+    assert cancellation_seen.is_set()
+    assert store.get(job.experiment_id).status is ExperimentJobStatus.CANCELLED
