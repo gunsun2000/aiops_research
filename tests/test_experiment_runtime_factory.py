@@ -105,7 +105,17 @@ def test_runtime_factory_selects_registered_autogen_adapters_and_provenance(tmp_
 
     def provider_factory(model):
         requested_models.append(model)
-        return lambda _alert: _autogen_decisions(replicas="3")
+
+        class Provider:
+            transcript_lines = [
+                "AIServiceHASupportAgent: scale-out is required.",
+                "CostOptimizationAgent: bounded cost is approved.",
+            ]
+
+            def __call__(self, _alert):
+                return _autogen_decisions(replicas="3")
+
+        return Provider()
 
     runtime = build_experiment_runtime(
         configuration_path=write_runtime_config(tmp_path),
@@ -137,6 +147,10 @@ def test_runtime_factory_selects_registered_autogen_adapters_and_provenance(tmp_
     assert result.status == "recovered"
     assert result.report["controller"] == "autogen"
     assert result.report["model"] == "fake-research-model"
+    assert result.report["autogen_transcript"] == (
+        "AIServiceHASupportAgent: scale-out is required.",
+        "CostOptimizationAgent: bounded cost is approved.",
+    )
 
 
 @pytest.mark.parametrize(

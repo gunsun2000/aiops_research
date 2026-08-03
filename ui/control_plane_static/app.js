@@ -21,8 +21,7 @@
     real: "Real은 CONFIRM_REAL_RUN 환경 Gate와 확인 문구가 모두 통과한 경우에만 실제 Kubernetes를 제어합니다.",
   };
 
-  const FUTURE_INTEGRATION_NOTE =
-    "AutoGen GroupChat은 다음 통합 단계 · AIOpsLab benchmark는 다음 통합 단계";
+  const FUTURE_INTEGRATION_NOTE = "AIOpsLab benchmark는 다음 통합 단계";
 
   const RESEARCH_DOCUMENTS = [
     {
@@ -65,21 +64,24 @@
     startedAt: null,
     timer: null,
     running: false,
+    connections: {},
   };
 
   const elements = Object.fromEntries([
     "connection-dot", "connection-label", "connection-summary", "experiment-id",
     "job-status", "current-stage", "consensus-status", "safety-status",
     "scenario-list", "mode-control", "controller-select", "profile-select",
+    "controller-model", "model-input", "controller-readiness",
     "repetitions-select", "target-deployment", "target-metric", "mode-boundary",
     "run-experiment", "cancel-experiment", "control-error", "elapsed-time",
     "stage-timeline", "evidence-scenario", "evidence-target", "evidence-metric",
     "evidence-source", "agent-grid", "review-summary", "consensus-summary",
     "action-summary", "event-count", "event-log", "agent-tabs", "selected-agent",
     "agent-decision", "agent-approval", "agent-reward", "agent-statement",
-    "peer-reviews", "allowlist-result", "validator-result", "cleanup-result",
+    "peer-reviews", "controller-provenance", "autogen-transcript-panel",
+    "autogen-transcript", "allowlist-result", "validator-result", "cleanup-result",
     "result-status", "result-recovery", "result-mttr", "result-reward",
-    "result-reviews", "result-artifacts", "research-documents",
+    "result-reviews", "result-artifacts", "research-documents", "autogen-summary",
   ].map((id) => [id, document.getElementById(id)]));
 
   async function api(path, options) {
@@ -147,6 +149,32 @@
     state.selectedMode = mode;
     setPressed(elements["mode-control"], "button", mode);
     elements["mode-boundary"].textContent = MODE_BOUNDARIES[mode];
+  }
+
+  function controllerProfile() {
+    return elements["controller-select"].value === "autogen"
+      ? "four-agent-autogen-v1"
+      : elements["profile-select"].value;
+  }
+
+  function selectController(controller) {
+    if (state.running) return;
+    const autogen = state.connections.autogen || { ready: false, reason: "AutoGen 연결 정보 없음" };
+    if (controller === "autogen" && !autogen.ready) {
+      elements["controller-select"].value = "deterministic";
+      elements["control-error"].textContent = autogen.reason || "AutoGen runtime is not ready";
+      return;
+    }
+    const isAutogen = controller === "autogen";
+    elements["controller-model"].hidden = !isAutogen;
+    elements["profile-select"].disabled = isAutogen;
+    elements["profile-select"].value = isAutogen
+      ? "four-agent-autogen-v1"
+      : "four-agent-role-veto-v1";
+    elements["controller-readiness"].textContent = isAutogen
+      ? (autogen.reason || "AutoGen runtime 준비")
+      : "Deterministic 4-Agent runtime";
+    elements["control-error"].textContent = "";
   }
 
   function selectAgent(agent) {
@@ -222,10 +250,28 @@
     elements["agent-approval"].textContent = decision ? (decision.approved ? "승인" : "거부") : (reviews.length ? reviews[0].verdict : "대기");
     const reward = decision && decision.reward != null ? decision.reward : stats.reward;
     elements["agent-reward"].textContent = reward == null ? "—" : Number(reward).toFixed(3);
+    elements["controller-provenance"].textContent = report
+      ? `${report.controller || "deterministic"}${report.model ? ` · ${report.model}` : ""}`
+      : "deterministic";
     elements["agent-statement"].textContent = decision ? decision.reason : (reviews[0] ? reviews[0].reason : "실제 실행 결과의 Agent 판단 근거만 표시합니다.");
     elements["peer-reviews"].replaceChildren(...(reviews.length ? reviews : [{ reason: "상호검토 기록 대기", verdict: "" }]).map((review) => {
       const item = document.createElement("li");
       item.textContent = `${review.verdict ? `[${review.verdict}] ` : ""}${review.reason}`;
+      return item;
+    }));
+    renderAutoGenTranscript(report);
+  }
+
+  function renderAutoGenTranscript(report) {
+    const isAutogen = report && report.controller === "autogen";
+    elements["autogen-transcript-panel"].hidden = !isAutogen;
+    if (!isAutogen) return;
+    const lines = Array.isArray(report.autogen_transcript)
+      ? report.autogen_transcript
+      : [];
+    elements["autogen-transcript"].replaceChildren(...(lines.length ? lines : ["AutoGen transcript가 기록되지 않았습니다."]).map((line) => {
+      const item = document.createElement("li");
+      item.textContent = line;
       return item;
     }));
   }
@@ -239,6 +285,13 @@
     state.job = job;
     state.experimentId = job.experiment_id;
     state.running = !TERMINAL.has(job.status);
+    if (job.request) {
+      elements["controller-select"].value = job.request.controller || "deterministic";
+      elements["model-input"].value = job.request.model || elements["model-input"].value;
+      elements["profile-select"].value = job.request.protocol_profile || "four-agent-role-veto-v1";
+      elements["controller-model"].hidden = job.request.controller !== "autogen";
+      elements["profile-select"].disabled = job.request.controller === "autogen";
+    }
     elements["experiment-id"].textContent = job.experiment_id;
     elements["job-status"].textContent = jobStatusLabel(job.status);
     elements["current-stage"].textContent = job.current_stage;
@@ -368,8 +421,10 @@
       threshold: item.threshold,
       mode: state.selectedMode,
       backend: "python",
-      protocol_profile: elements["profile-select"].value,
+      protocol_profile: controllerProfile(),
       repetitions: Number(elements["repetitions-select"].value),
+      controller: elements["controller-select"].value,
+      model: elements["model-input"].value.trim(),
     };
     if (state.selectedMode === "real") {
       const confirmation = window.prompt("실제 Kubernetes 장애 주입과 복구를 실행하려면 EXECUTE REAL EXPERIMENT를 입력하세요.");
@@ -435,12 +490,22 @@
   async function loadConnections() {
     try {
       const payload = await api("/api/connections");
-      const values = Object.entries(payload.connections || {});
+      const connections = payload.connections || {};
+      state.connections = connections;
+      const values = Object.entries(connections);
       const required = values.filter(([, item]) => item.required_for_real);
       const ready = required.filter(([, item]) => item.ready).length;
       elements["connection-label"].textContent = `${ready}/${required.length} 실험 연결 준비`;
       elements["connection-summary"].textContent = `Prometheus · Chaos Mesh · Kubernetes ${ready === required.length ? "준비" : "일부 미연결"}`;
       elements["connection-dot"].classList.toggle("ready", ready === required.length);
+      const autogen = connections.autogen || { ready: false, reason: "AutoGen 연결 정보 없음" };
+      const autogenOption = elements["controller-select"].querySelector('option[value="autogen"]');
+      autogenOption.disabled = !autogen.ready;
+      autogenOption.title = autogen.reason || "";
+      elements["autogen-summary"].textContent = autogen.ready
+        ? "AutoGen GroupChat 준비"
+        : `AutoGen 미준비 · ${autogen.reason || "연결 필요"}`;
+      elements["controller-readiness"].textContent = autogen.reason || "AutoGen 연결 상태 확인 완료";
     } catch (_error) {
       elements["connection-label"].textContent = "연결 정보 없음";
     }
@@ -468,6 +533,7 @@
 
   function bindControls() {
     elements["mode-control"].querySelectorAll("button[data-mode]").forEach((button) => button.addEventListener("click", () => selectMode(button.dataset.mode)));
+    elements["controller-select"].addEventListener("change", (event) => selectController(event.target.value));
     elements["agent-grid"].querySelectorAll("button[data-agent]").forEach((button) => button.addEventListener("click", () => selectAgent(button.dataset.agent)));
     elements["agent-tabs"].querySelectorAll("button[data-agent-tab]").forEach((button) => button.addEventListener("click", () => selectAgent(button.dataset.agentTab)));
     elements["run-experiment"].addEventListener("click", runExperiment);

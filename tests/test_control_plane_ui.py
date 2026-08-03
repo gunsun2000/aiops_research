@@ -20,8 +20,8 @@ def test_console_has_one_accessible_research_workspace():
     assert 'id="decision-inspector"' in source
     assert 'id="research-results"' in source
     assert "4-Agent AIOps 연구 운영 콘솔" in source
-    assert "styles.css?v=8" in source
-    assert "app.js?v=8" in source
+    assert "styles.css?v=9" in source
+    assert "app.js?v=9" in source
 
 
 def test_console_offers_all_registered_fault_scenarios_and_safe_modes():
@@ -71,8 +71,23 @@ def test_console_separates_mock_dry_run_and_real_evidence_boundaries():
     assert "명령 검증" in source
     assert "실제 Kubernetes" in source
     assert "CONFIRM_REAL_RUN" in source
-    assert "AutoGen GroupChat은 다음 통합 단계" in source
+    assert "AutoGen GroupChat은 다음 통합 단계" not in source
     assert "AIOpsLab benchmark는 다음 통합 단계" in source
+
+
+def test_console_exposes_ready_gated_autogen_controller_and_model_provenance():
+    html = _source(INDEX_HTML)
+    script = _source(APP_JS)
+
+    assert '<option value="autogen">AutoGen GroupChat</option>' in html
+    assert 'id="model-input"' in html
+    assert 'id="controller-provenance"' in html
+    assert 'id="autogen-transcript"' in html
+    assert 'controller: elements["controller-select"].value' in script
+    assert 'model: elements["model-input"].value.trim()' in script
+    assert 'protocol_profile: controllerProfile()' in script
+    assert 'connections.autogen' in script
+    assert 'report.autogen_transcript' in script
 
 
 def test_console_styles_use_three_area_desktop_layout_and_mobile_reflow():

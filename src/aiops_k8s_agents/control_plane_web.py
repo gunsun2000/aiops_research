@@ -407,16 +407,20 @@ def api_validate_experiment(
         raise HTTPException(status_code=400, detail="threshold does not match the registered scenario")
     if request.protocol_profile.strip() not in state.protocol_profiles:
         raise HTTPException(status_code=400, detail="protocol profile is not registered")
-    expected_profile = {
-        "deterministic": "four-agent-role-veto-v1",
-        "autogen": "four-agent-autogen-v1",
+    profile = state.protocol_profiles[request.protocol_profile.strip()]
+    expected_runtime = {
+        "deterministic": "deterministic",
+        "autogen": "autogen-round-robin",
     }[request.controller]
-    if request.protocol_profile.strip() != expected_profile:
+    active_runtimes = {
+        binding.runtime for binding in profile.agents if binding.enabled
+    }
+    if active_runtimes != {expected_runtime}:
         raise HTTPException(
             status_code=400,
             detail=(
                 "controller does not match protocol profile: "
-                f"{request.controller} requires {expected_profile}"
+                f"{request.controller} requires {expected_runtime} agent bindings"
             ),
         )
     if request.controller == "autogen":

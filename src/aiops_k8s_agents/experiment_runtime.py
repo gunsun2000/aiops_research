@@ -380,6 +380,9 @@ class ExperimentRuntime:
             report["mode"] = request.mode.value
             report["controller"] = request.controller
             report["model"] = request.model
+            transcript = _coordinator_transcript(coordinator)
+            if transcript:
+                report["autogen_transcript"] = transcript
             primary_status = str(report.get("final_status", "failed"))
             for stage, key in (
                 (RuntimeStage.VALIDATING, "safety_validation"),
@@ -524,6 +527,14 @@ class _null_context:
 
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {"valid": False, "stderr": "invalid cleanup result"}
+
+
+def _coordinator_transcript(coordinator: Any) -> list[str]:
+    for adapter in getattr(coordinator, "adapters", {}).values():
+        lines = getattr(adapter, "transcript_lines", ())
+        if lines:
+            return [str(line) for line in lines]
+    return []
 
 
 def _positive_timeout(timeouts: Mapping[str, Any], key: str) -> float:

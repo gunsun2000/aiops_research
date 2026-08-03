@@ -136,14 +136,17 @@ def build_experiment_runtime(
             raise ValueError(
                 f"protocol profile is not registered: {request.protocol_profile}"
             ) from exc
-        expected_profile = {
-            "deterministic": "four-agent-role-veto-v1",
-            "autogen": "four-agent-autogen-v1",
+        expected_runtime = {
+            "deterministic": "deterministic",
+            "autogen": "autogen-round-robin",
         }[request.controller]
-        if request.protocol_profile != expected_profile:
+        active_runtimes = {
+            binding.runtime for binding in protocol.agents if binding.enabled
+        }
+        if active_runtimes != {expected_runtime}:
             raise ValueError(
                 "controller does not match protocol profile: "
-                f"{request.controller} requires {expected_profile}"
+                f"{request.controller} requires {expected_runtime} agent bindings"
             )
         if request.controller == "autogen":
             if not request.model:

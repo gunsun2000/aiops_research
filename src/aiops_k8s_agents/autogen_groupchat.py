@@ -499,6 +499,17 @@ class AutoGenProtocolAdapter:
     def capabilities(self) -> tuple[str, ...]:
         return self.binding.capabilities
 
+    @property
+    def transcript_lines(self) -> tuple[str, ...]:
+        return tuple(
+            str(line)
+            for line in getattr(
+                self.session.decision_provider,
+                "transcript_lines",
+                (),
+            )
+        )
+
     def begin_run(
         self,
         run_id: str,

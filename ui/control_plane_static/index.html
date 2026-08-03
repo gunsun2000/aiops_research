@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Safety-bounded 4-Agent AIOps 연구 운영 콘솔" />
     <title>4-Agent AIOps 연구 운영 콘솔</title>
-    <link rel="stylesheet" href="/static/styles.css?v=8" />
-    <script defer src="/static/app.js?v=8"></script>
+    <link rel="stylesheet" href="/static/styles.css?v=9" />
+    <script defer src="/static/app.js?v=9"></script>
   </head>
   <body>
     <noscript><main class="noscript">이 연구 콘솔을 사용하려면 JavaScript가 필요합니다.</main></noscript>
@@ -63,14 +63,21 @@
           <label class="field-label" for="controller-select">Agent controller</label>
           <select id="controller-select">
             <option value="deterministic">Deterministic 4-Agent</option>
-            <option value="autogen" disabled>AutoGen GroupChat · 다음 통합</option>
+            <option value="autogen">AutoGen GroupChat</option>
           </select>
+
+          <div class="controller-model" id="controller-model" hidden>
+            <label class="field-label" for="model-input">AutoGen model</label>
+            <input id="model-input" type="text" value="gpt-5.5" autocomplete="off" />
+            <p id="controller-readiness">AutoGen 연결 상태 확인 중</p>
+          </div>
 
           <label class="field-label" for="profile-select">연구 프로파일</label>
           <select id="profile-select">
             <option value="four-agent-role-veto-v1">Role-based veto · 2 rounds</option>
             <option value="four-agent-unanimous-v1">Unanimous veto</option>
             <option value="four-agent-weighted-v1">Weighted majority</option>
+            <option value="four-agent-autogen-v1">AutoGen role-based veto</option>
           </select>
 
           <label class="field-label" for="repetitions-select">반복 횟수</label>
@@ -149,9 +156,14 @@
             <dt>판단</dt><dd id="agent-decision">실험 Evidence 수집 후 표시</dd>
             <dt>승인</dt><dd id="agent-approval">대기</dd>
             <dt>Reward</dt><dd id="agent-reward">—</dd>
+            <dt>Controller</dt><dd id="controller-provenance">deterministic</dd>
           </dl>
           <div class="agent-statement"><span>Agent statement</span><p id="agent-statement">실제 실행 결과의 Agent 판단 근거만 표시합니다.</p></div>
           <div class="review-section"><span>Peer reviews</span><ul id="peer-reviews"><li>상호검토 기록 대기</li></ul></div>
+          <details class="transcript-section" id="autogen-transcript-panel" hidden>
+            <summary>AutoGen transcript</summary>
+            <ol id="autogen-transcript"><li>실행 기록 대기</li></ol>
+          </details>
           <div class="safety-section">
             <span>Execution boundary</span>
             <dl>
@@ -178,7 +190,7 @@
         </div>
         <nav class="research-documents" id="research-documents" aria-label="공식 연구 문서"></nav>
         <div class="integration-boundary">
-          <span>AutoGen GroupChat은 다음 통합 단계</span>
+          <span id="autogen-summary">AutoGen 연결 확인 중</span>
           <span>AIOpsLab benchmark는 다음 통합 단계</span>
           <span id="connection-summary">Prometheus · Chaos Mesh · Kubernetes 연결 확인 중</span>
         </div>
