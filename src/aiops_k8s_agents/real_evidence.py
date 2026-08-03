@@ -4,6 +4,7 @@ import json
 import re
 import time
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
@@ -14,6 +15,17 @@ from aiops_k8s_agents.prometheus import PrometheusSample
 
 KubernetesSnapshotCollector = Callable[..., dict[str, Any]]
 _KUBERNETES_NAME = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
+
+
+class _ImmutableMetricValues(dict[str, float]):
+    def _immutable(self, *args: Any, **kwargs: Any) -> None:
+        raise TypeError("metric_values is immutable")
+
+    __setitem__ = __delitem__ = clear = pop = popitem = setdefault = update = _immutable
+
+    def __ior__(self, other: Any) -> _ImmutableMetricValues:
+        self._immutable(other)
+        return self
 
 
 class EvidenceCollectionError(RuntimeError):
@@ -56,6 +68,7 @@ class RuntimeConfiguration:
             raise ValueError("version must not be empty")
         if self.min_replicas < 1 or self.max_replicas < self.min_replicas:
             raise ValueError("replica bounds are invalid")
+        _validate_sample_age(self.max_sample_age_seconds)
         definitions = {
             name.strip().lower().replace("-", "_"): (
                 value if isinstance(value, MetricQueryDefinition)
@@ -69,6 +82,7 @@ class RuntimeConfiguration:
         object.__setattr__(self, "timeouts", MappingProxyType(dict(self.timeouts)))
         object.__setattr__(self, "metric_queries", MappingProxyType(definitions))
         object.__setattr__(self, "scenarios", MappingProxyType(dict(self.scenarios)))
+        object.__setattr__(self, "max_sample_age_seconds", float(self.max_sample_age_seconds))
 
 
 def load_runtime_configuration(path: str | Path) -> RuntimeConfiguration:
@@ -106,6 +120,7 @@ class PrometheusKubernetesEvidenceProvider:
 
     def __post_init__(self) -> None:
         metric = self.requested_metric.strip().lower().replace("-", "_")
+        _validate_sample_age(self.max_sample_age_seconds)
         definitions = {
             name.strip().lower().replace("-", "_"): (
                 value if isinstance(value, MetricQueryDefinition)
@@ -117,6 +132,7 @@ class PrometheusKubernetesEvidenceProvider:
             raise ValueError(f"unregistered metric: {self.requested_metric}")
         object.__setattr__(self, "requested_metric", metric)
         object.__setattr__(self, "metric_queries", MappingProxyType(definitions))
+        object.__setattr__(self, "max_sample_age_seconds", float(self.max_sample_age_seconds))
 
     def collect(self, namespace: str, deployment: str) -> EvidenceSnapshot:
         query = self.metric_queries[self.requested_metric].render(namespace, deployment)
@@ -130,17 +146,28 @@ class PrometheusKubernetesEvidenceProvider:
 
         try:
             snapshot = self.kubernetes_collector(namespace=namespace, deployment=deployment)
+            if not isinstance(snapshot, Mapping):
+                raise ValueError("snapshot must be a mapping")
             deployment_status = snapshot.get("deployment_status") or {}
             pod_status = snapshot.get("pods") or {}
+            if not isinstance(deployment_status, Mapping) or not isinstance(pod_status, Mapping):
+                raise ValueError("snapshot status fields must be mappings")
             if deployment_status.get("ok") is not True or pod_status.get("ok") is not True:
                 details = deployment_status.get("stderr") or pod_status.get("stderr") or "unavailable"
                 raise EvidenceCollectionError(f"Kubernetes collection failed: {details}")
+            pods = pod_status.get("items") or []
+            if not isinstance(pods, list) or any(not isinstance(pod, Mapping) for pod in pods):
+                raise ValueError("pod items must be mappings")
+            desired_replicas = int(deployment_status.get("desired_replicas", 0) or 0)
+            available_replicas = int(deployment_status.get("available_replicas", 0) or 0)
+            restart_count = sum(int(pod.get("restarts", 0) or 0) for pod in pods)
+            pod_statuses = tuple(str(pod.get("phase", "Unknown")) for pod in pods) or ("Unknown",)
+            pod_identities = tuple(str(pod.get("uid") or pod.get("name") or "") for pod in pods)
         except EvidenceCollectionError:
             raise
         except Exception as exc:
             raise EvidenceCollectionError(f"Kubernetes collection failed: {exc}") from exc
 
-        pods = pod_status.get("items") or []
         event = json.dumps(
             {
                 "metric": self.requested_metric,
@@ -154,12 +181,12 @@ class PrometheusKubernetesEvidenceProvider:
         return EvidenceSnapshot(
             namespace=namespace,
             deployment=deployment,
-            metric_values={self.requested_metric: sample.value},
-            desired_replicas=int(deployment_status.get("desired_replicas", 0) or 0),
-            available_replicas=int(deployment_status.get("available_replicas", 0) or 0),
-            restart_count=sum(int(pod.get("restarts", 0) or 0) for pod in pods),
-            pod_statuses=tuple(str(pod.get("phase", "Unknown")) for pod in pods) or ("Unknown",),
-            pod_identities=tuple(str(pod.get("uid") or pod.get("name") or "") for pod in pods),
+            metric_values=_ImmutableMetricValues({self.requested_metric: sample.value}),
+            desired_replicas=desired_replicas,
+            available_replicas=available_replicas,
+            restart_count=restart_count,
+            pod_statuses=pod_statuses,
+            pod_identities=pod_identities,
             events=(event,),
             source="prometheus+kubernetes",
         )
@@ -184,6 +211,13 @@ def _validate_kubernetes_name(kind: str, value: str) -> str:
     if not _KUBERNETES_NAME.fullmatch(value) or len(value) > 63:
         raise ValueError(f"{kind} is not a valid Kubernetes name")
     return value
+
+
+def _validate_sample_age(value: float) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("max_sample_age_seconds must be finite and positive")
+    if not isfinite(value) or value <= 0:
+        raise ValueError("max_sample_age_seconds must be finite and positive")
 
 
 def _sanitize_text(value: str) -> str:

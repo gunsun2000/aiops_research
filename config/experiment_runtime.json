@@ -13,7 +13,7 @@
   "metric_queries": {
     "cpu": "sum(rate(container_cpu_usage_seconds_total{namespace=\"{namespace}\",pod=~\"{deployment}-.*\",container!=\"\",image!=\"\"}[1m])) * 100",
     "memory": "max(container_memory_working_set_bytes{namespace=\"{namespace}\",pod=~\"{deployment}-.*\",container!=\"\",image!=\"\"})",
-    "latency": "max(probe_duration_seconds{target=\"paymentservice\"})",
+    "latency": "max(probe_duration_seconds{target=\"{deployment}\"})",
     "availability": "kube_deployment_status_replicas_available{namespace=\"{namespace}\",deployment=\"{deployment}\"}"
   },
   "scenarios": {
