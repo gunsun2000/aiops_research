@@ -208,6 +208,45 @@ def test_real_evidence_wraps_malformed_kubernetes_payload(snapshot):
         provider.collect("online-boutique", "paymentservice")
 
 
+@pytest.mark.parametrize("count", [-1, 1.5, True])
+@pytest.mark.parametrize("deployment_field", ["desired_replicas", "available_replicas"])
+def test_real_evidence_rejects_invalid_deployment_counts(count, deployment_field):
+    deployment_status = {
+        "ok": True,
+        "desired_replicas": 1,
+        "available_replicas": 1,
+    }
+    deployment_status[deployment_field] = count
+    provider = PrometheusKubernetesEvidenceProvider(
+        prometheus=FakePrometheus({}, [PrometheusSample({}, time.time(), 1.0)]),
+        metric_queries={"cpu": "registered-cpu-query"},
+        requested_metric="cpu",
+        kubernetes_collector=lambda **_kwargs: {
+            "deployment_status": deployment_status,
+            "pods": {"ok": True, "items": []},
+        },
+    )
+
+    with pytest.raises(EvidenceCollectionError, match="Kubernetes"):
+        provider.collect("online-boutique", "paymentservice")
+
+
+@pytest.mark.parametrize("count", [-1, 1.5, True])
+def test_real_evidence_rejects_invalid_restart_counts(count):
+    provider = PrometheusKubernetesEvidenceProvider(
+        prometheus=FakePrometheus({}, [PrometheusSample({}, time.time(), 1.0)]),
+        metric_queries={"cpu": "registered-cpu-query"},
+        requested_metric="cpu",
+        kubernetes_collector=lambda **_kwargs: {
+            "deployment_status": {"ok": True, "desired_replicas": 1, "available_replicas": 1},
+            "pods": {"ok": True, "items": [{"restarts": count}]},
+        },
+    )
+
+    with pytest.raises(EvidenceCollectionError, match="Kubernetes"):
+        provider.collect("online-boutique", "paymentservice")
+
+
 def test_runtime_configuration_loads_registered_defaults():
     configuration = load_runtime_configuration("config/experiment_runtime.json")
 

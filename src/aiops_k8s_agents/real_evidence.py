@@ -158,9 +158,15 @@ class PrometheusKubernetesEvidenceProvider:
             pods = pod_status.get("items") or []
             if not isinstance(pods, list) or any(not isinstance(pod, Mapping) for pod in pods):
                 raise ValueError("pod items must be mappings")
-            desired_replicas = int(deployment_status.get("desired_replicas", 0) or 0)
-            available_replicas = int(deployment_status.get("available_replicas", 0) or 0)
-            restart_count = sum(int(pod.get("restarts", 0) or 0) for pod in pods)
+            desired_replicas = _validate_count(
+                deployment_status.get("desired_replicas", 0), "desired_replicas"
+            )
+            available_replicas = _validate_count(
+                deployment_status.get("available_replicas", 0), "available_replicas"
+            )
+            restart_count = sum(
+                _validate_count(pod.get("restarts", 0), "restarts") for pod in pods
+            )
             pod_statuses = tuple(str(pod.get("phase", "Unknown")) for pod in pods) or ("Unknown",)
             pod_identities = tuple(str(pod.get("uid") or pod.get("name") or "") for pod in pods)
         except EvidenceCollectionError:
@@ -218,6 +224,12 @@ def _validate_sample_age(value: float) -> None:
         raise ValueError("max_sample_age_seconds must be finite and positive")
     if not isfinite(value) or value <= 0:
         raise ValueError("max_sample_age_seconds must be finite and positive")
+
+
+def _validate_count(value: Any, field: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{field} must be a non-negative integer")
+    return value
 
 
 def _sanitize_text(value: str) -> str:
