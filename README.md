@@ -131,12 +131,24 @@ real runtime 검증 절차는 [docs/experiments/platform_real_runtime_guide.md](
 - 완료: SQLite 영속 Job, 백그라운드 실행, SSE replay, 취소, 웹 `mock/dry-run/real` 요청
 - 완료: 3영역 연구 콘솔에서 조건, 4-Agent 상호검토, 안전 검사, 결과를 동일 Job으로 표시
 - 완료: AutoGen GroupChat을 선택 가능한 Controller로 연결하고 model/controller/transcript를 Job에 저장·표시
-- 미통합: AIOpsLab benchmark의 웹 Job 실행
+- 완료: AIOpsLab detection benchmark를 별도 영속 Job, SSE, 취소, Markdown/CSV 산출물로 연결
 
 AutoGen 웹 Job은 `autogen` 의존성과 `OPENAI_API_KEY`가 준비된 경우에만 활성화됩니다.
 의존성이나 credential이 없으면 장애 주입 전에 안전하게 거부합니다. 로컬 자동 시험은
 fake provider로 수행하므로 실제 OpenAI 네트워크 호출이나 real Kubernetes AutoGen 실험의
-근거가 아닙니다. AIOpsLab CLI/스크립트는 유지되지만 아직 웹 Job에 연결되지 않았습니다.
+근거가 아닙니다. AIOpsLab 웹 Job도 로컬 fake executor 시험과 Ubuntu의 실제 외부
+AIOpsLab 실행을 구분합니다. 실제 benchmark 결과는 외부 저장소와 kubeconfig가 준비된
+Ubuntu 서버 실행 및 생성된 report 검토 후에만 연구 근거로 사용합니다.
+
+AIOpsLab 웹 Benchmark를 Ubuntu에서 활성화하려면 Control Plane 시작 전에 서버 소유
+경로를 설정합니다. 이 값들은 브라우저 요청으로 변경할 수 없습니다.
+
+```bash
+export AIOPSLAB_ROOT="$HOME/geonhae/external/AIOpsLab"
+export AIOPSLAB_PYTHON="$HOME/anaconda3/envs/aiopslab/bin/python"
+export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
+aiops-control-plane
+```
 
 ## 핵심 실험
 
@@ -279,7 +291,7 @@ bash scripts/server_recovery_statistics.sh
 - Agent 제거 ablation 실험
 - reward 민감도 분석
 - AutoGen 웹 Job을 Ubuntu의 실제 model client와 real 장애에 연결해 비교 실험 수행
-- AIOpsLab benchmark를 동일한 Job/SSE/산출물 구조에 연결
+- AIOpsLab 웹 Job을 Ubuntu 외부 AIOpsLab 환경에서 반복 검증하고 복구 실험과 교차 분석
 - Prometheus metric, log enrichment, full real-cluster evidence fusion
 
 초기 `CPU 95%` 입력은 smoke test입니다. Chaos Mesh/AIOpsLab 기반 실제 장애

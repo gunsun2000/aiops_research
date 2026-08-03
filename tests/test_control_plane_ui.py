@@ -20,8 +20,8 @@ def test_console_has_one_accessible_research_workspace():
     assert 'id="decision-inspector"' in source
     assert 'id="research-results"' in source
     assert "4-Agent AIOps 연구 운영 콘솔" in source
-    assert "styles.css?v=9" in source
-    assert "app.js?v=9" in source
+    assert "styles.css?v=10" in source
+    assert "app.js?v=10" in source
 
 
 def test_console_offers_all_registered_fault_scenarios_and_safe_modes():
@@ -72,7 +72,7 @@ def test_console_separates_mock_dry_run_and_real_evidence_boundaries():
     assert "실제 Kubernetes" in source
     assert "CONFIRM_REAL_RUN" in source
     assert "AutoGen GroupChat은 다음 통합 단계" not in source
-    assert "AIOpsLab benchmark는 다음 통합 단계" in source
+    assert "AIOpsLab Detection Benchmark" in source
 
 
 def test_console_exposes_ready_gated_autogen_controller_and_model_provenance():
@@ -100,3 +100,26 @@ def test_console_styles_use_three_area_desktop_layout_and_mobile_reflow():
     assert "@media (max-width: 760px)" in source
     assert "overflow-wrap: anywhere" in source
     assert "letter-spacing: 0" in source
+
+
+def test_console_adds_compact_separate_aiopslab_benchmark_job_panel():
+    html = _source(INDEX_HTML)
+    script = _source(APP_JS)
+
+    assert '<details class="benchmark-panel" id="aiopslab-benchmark-panel">' in html
+    assert 'id="aiopslab-benchmark-select"' in html
+    assert 'id="aiopslab-repetitions"' in html
+    assert 'id="aiopslab-run"' in html
+    assert 'id="aiopslab-cancel"' in html
+    assert 'id="aiopslab-accuracy"' in html
+    assert 'id="aiopslab-ttd"' in html
+    assert 'id="aiopslab-reward"' in html
+    assert 'id="aiopslab-event-log"' in html
+    assert "별도 탐지 Benchmark" in html
+
+    assert 'api("/api/benchmarks/aiopslab")' in script
+    assert 'api("/api/benchmarks/aiopslab/jobs?limit=20")' in script
+    assert 'api("/api/benchmarks/aiopslab/jobs",' in script
+    assert "new EventSource(`/api/benchmarks/aiopslab/jobs/${state.aiopslabJobId}/events`)" in script
+    assert "`/api/benchmarks/aiopslab/jobs/${state.aiopslabJobId}/cancel`" in script
+    assert "artifact_urls" in script

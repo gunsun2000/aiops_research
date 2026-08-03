@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Safety-bounded 4-Agent AIOps 연구 운영 콘솔" />
     <title>4-Agent AIOps 연구 운영 콘솔</title>
-    <link rel="stylesheet" href="/static/styles.css?v=9" />
-    <script defer src="/static/app.js?v=9"></script>
+    <link rel="stylesheet" href="/static/styles.css?v=10" />
+    <script defer src="/static/app.js?v=10"></script>
   </head>
   <body>
     <noscript><main class="noscript">이 연구 콘솔을 사용하려면 JavaScript가 필요합니다.</main></noscript>
@@ -191,9 +191,46 @@
         <nav class="research-documents" id="research-documents" aria-label="공식 연구 문서"></nav>
         <div class="integration-boundary">
           <span id="autogen-summary">AutoGen 연결 확인 중</span>
-          <span>AIOpsLab benchmark는 다음 통합 단계</span>
+          <span id="aiopslab-summary">AIOpsLab Detection Benchmark 연결 확인 중</span>
           <span id="connection-summary">Prometheus · Chaos Mesh · Kubernetes 연결 확인 중</span>
         </div>
+
+        <details class="benchmark-panel" id="aiopslab-benchmark-panel">
+          <summary>
+            <span><b>AIOpsLab Detection Benchmark</b><small>별도 탐지 Benchmark · 복구 실험과 분리</small></span>
+            <strong id="aiopslab-runtime-status">연결 확인 중</strong>
+          </summary>
+          <div class="benchmark-body">
+            <div class="benchmark-controls">
+              <label for="aiopslab-benchmark-select">등록 Benchmark</label>
+              <select id="aiopslab-benchmark-select"></select>
+              <label for="aiopslab-repetitions">반복</label>
+              <select id="aiopslab-repetitions">
+                <option value="1">1회</option>
+                <option value="3" selected>3회</option>
+                <option value="12">12회</option>
+              </select>
+              <button type="button" id="aiopslab-run">Benchmark 실행</button>
+              <button type="button" id="aiopslab-cancel" disabled>취소</button>
+            </div>
+            <p class="benchmark-boundary">
+              AIOpsLab Hotel Reservation 장애 탐지 성능을 측정합니다. Chaos Mesh 기반 Kubernetes 복구 실험과 결과를 혼합하지 않습니다.
+            </p>
+            <div class="benchmark-metrics" aria-live="polite">
+              <div><span>Job</span><strong id="aiopslab-job-status">대기</strong></div>
+              <div><span>Accuracy</span><strong id="aiopslab-accuracy">—</strong></div>
+              <div><span>Average TTD</span><strong id="aiopslab-ttd">—</strong></div>
+              <div><span>Average steps</span><strong id="aiopslab-steps">—</strong></div>
+              <div><span>Average reward</span><strong id="aiopslab-reward">—</strong></div>
+            </div>
+            <details class="benchmark-events">
+              <summary>실행 이벤트 <span id="aiopslab-event-count">0 events</span></summary>
+              <ol id="aiopslab-event-log"><li>Benchmark 실행 기록 대기</li></ol>
+            </details>
+            <nav class="benchmark-artifacts" id="aiopslab-artifacts" aria-label="AIOpsLab Benchmark 산출물"></nav>
+            <p class="inline-error" id="aiopslab-error" role="alert"></p>
+          </div>
+        </details>
       </section>
     </div>
   </body>
