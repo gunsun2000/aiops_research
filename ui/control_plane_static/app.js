@@ -21,7 +21,7 @@
     real: "Real은 CONFIRM_REAL_RUN 환경 Gate와 확인 문구가 모두 통과한 경우에만 실제 Kubernetes를 제어합니다.",
   };
 
-  const FUTURE_INTEGRATION_NOTE = "AIOpsLab benchmark는 다음 통합 단계";
+  const AIOPSLAB_BOUNDARY_NOTE = "AIOpsLab Detection Benchmark는 Kubernetes 복구 실험과 별도로 기록됩니다.";
 
   const RESEARCH_DOCUMENTS = [
     {
@@ -65,6 +65,12 @@
     timer: null,
     running: false,
     connections: {},
+    aiopslabCatalog: [],
+    aiopslabRuntimeReady: false,
+    aiopslabJobId: "",
+    aiopslabJob: null,
+    aiopslabEventSource: null,
+    aiopslabEvents: [],
   };
 
   const elements = Object.fromEntries([
@@ -82,6 +88,12 @@
     "autogen-transcript", "allowlist-result", "validator-result", "cleanup-result",
     "result-status", "result-recovery", "result-mttr", "result-reward",
     "result-reviews", "result-artifacts", "research-documents", "autogen-summary",
+    "aiopslab-summary", "aiopslab-benchmark-panel", "aiopslab-runtime-status",
+    "aiopslab-benchmark-select", "aiopslab-repetitions", "aiopslab-run",
+    "aiopslab-cancel", "aiopslab-job-status", "aiopslab-accuracy",
+    "aiopslab-ttd", "aiopslab-steps", "aiopslab-reward",
+    "aiopslab-event-count", "aiopslab-event-log", "aiopslab-artifacts",
+    "aiopslab-error",
   ].map((id) => [id, document.getElementById(id)]));
 
   async function api(path, options) {
@@ -471,6 +483,167 @@
     }));
   }
 
+  function renderAIOpsLabJob(job) {
+    state.aiopslabJob = job;
+    state.aiopslabJobId = job.job_id;
+    const running = !TERMINAL.has(job.status);
+    elements["aiopslab-job-status"].textContent = jobStatusLabel(job.status);
+    elements["aiopslab-run"].disabled = running || !state.aiopslabRuntimeReady;
+    elements["aiopslab-cancel"].disabled = !running;
+    elements["aiopslab-runtime-status"].textContent = running
+      ? `${job.current_stage} · 실행 중`
+      : (state.aiopslabRuntimeReady ? "실행 가능" : "런타임 미준비");
+    const result = job.result || {};
+    elements["aiopslab-accuracy"].textContent = result.accuracy == null
+      ? "—"
+      : `${(Number(result.accuracy) * 100).toFixed(1)}%`;
+    elements["aiopslab-ttd"].textContent = result.average_ttd == null
+      ? "—"
+      : `${Number(result.average_ttd).toFixed(3)}s`;
+    elements["aiopslab-steps"].textContent = result.average_steps == null
+      ? "—"
+      : Number(result.average_steps).toFixed(2);
+    elements["aiopslab-reward"].textContent = result.average_final_reward == null
+      ? "—"
+      : Number(result.average_final_reward).toFixed(3);
+    renderAIOpsLabArtifacts(job.artifact_urls || {});
+    if (job.error) elements["aiopslab-error"].textContent = job.error;
+    if (TERMINAL.has(job.status)) closeAIOpsLabEvents();
+  }
+
+  function renderAIOpsLabArtifacts(artifactUrls) {
+    const labels = {
+      markdown: "요약 Markdown",
+      csv: "결과 CSV",
+    };
+    const links = Object.entries(artifactUrls).map(([name, href]) => {
+      const link = document.createElement("a");
+      link.href = href;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      link.textContent = labels[name] || `Report ${name.replace("report-", "")}`;
+      return link;
+    });
+    elements["aiopslab-artifacts"].replaceChildren(...links);
+  }
+
+  function addAIOpsLabEvent(event) {
+    state.aiopslabEvents.push(event);
+    elements["aiopslab-event-count"].textContent = `${state.aiopslabEvents.length} events`;
+    if (state.aiopslabEvents.length === 1) {
+      elements["aiopslab-event-log"].replaceChildren();
+    }
+    const item = document.createElement("li");
+    const repetition = event.payload && event.payload.repetition
+      ? ` · ${event.payload.repetition}회차`
+      : "";
+    item.textContent = `[${event.stage}] ${event.message}${repetition}`;
+    elements["aiopslab-event-log"].append(item);
+    elements["aiopslab-runtime-status"].textContent = `${event.stage} · 실행 중`;
+  }
+
+  function connectAIOpsLabEvents() {
+    closeAIOpsLabEvents();
+    const stream = new EventSource(`/api/benchmarks/aiopslab/jobs/${state.aiopslabJobId}/events`);
+    state.aiopslabEventSource = stream;
+    stream.addEventListener("benchmark", (event) => addAIOpsLabEvent(JSON.parse(event.data)));
+    stream.addEventListener("job", async (event) => {
+      const job = JSON.parse(event.data);
+      closeAIOpsLabEvents();
+      try {
+        renderAIOpsLabJob(await api(`/api/benchmarks/aiopslab/jobs/${job.job_id}`));
+      } catch (error) {
+        elements["aiopslab-error"].textContent = error.message || String(error);
+      }
+    });
+    stream.onerror = () => {
+      if (!state.aiopslabJob || !TERMINAL.has(state.aiopslabJob.status)) {
+        elements["aiopslab-error"].textContent = "Benchmark 이벤트 연결을 재시도하고 있습니다.";
+      }
+    };
+  }
+
+  function closeAIOpsLabEvents() {
+    if (state.aiopslabEventSource) state.aiopslabEventSource.close();
+    state.aiopslabEventSource = null;
+  }
+
+  async function loadAIOpsLabBenchmarks() {
+    try {
+      const payload = await api("/api/benchmarks/aiopslab");
+      state.aiopslabCatalog = payload.benchmarks || [];
+      state.aiopslabRuntimeReady = Boolean(payload.runtime && payload.runtime.ready);
+      elements["aiopslab-benchmark-select"].replaceChildren(...state.aiopslabCatalog.map((benchmark) => {
+        const option = document.createElement("option");
+        option.value = benchmark.id;
+        option.textContent = `${benchmark.title} · ${benchmark.problem_id}`;
+        return option;
+      }));
+      const reason = payload.runtime && payload.runtime.reasons && payload.runtime.reasons[0];
+      elements["aiopslab-runtime-status"].textContent = state.aiopslabRuntimeReady
+        ? "실행 가능"
+        : `미준비 · ${reason || "서버 환경 확인 필요"}`;
+      elements["aiopslab-summary"].textContent = state.aiopslabRuntimeReady
+        ? "AIOpsLab Detection Benchmark 준비"
+        : "AIOpsLab Detection Benchmark 런타임 미준비";
+      elements["aiopslab-run"].disabled = !state.aiopslabRuntimeReady;
+      elements["aiopslab-run"].title = state.aiopslabRuntimeReady ? "" : (reason || "런타임 미준비");
+    } catch (error) {
+      state.aiopslabRuntimeReady = false;
+      elements["aiopslab-runtime-status"].textContent = "연결 실패";
+      elements["aiopslab-summary"].textContent = "AIOpsLab Detection Benchmark 연결 실패";
+      elements["aiopslab-run"].disabled = true;
+    }
+  }
+
+  async function runAIOpsLabBenchmark() {
+    elements["aiopslab-error"].textContent = "";
+    try {
+      const job = await api("/api/benchmarks/aiopslab/jobs", {
+        method: "POST",
+        body: JSON.stringify({
+          benchmark_id: elements["aiopslab-benchmark-select"].value,
+          repetitions: Number(elements["aiopslab-repetitions"].value),
+        }),
+      });
+      state.aiopslabEvents = [];
+      elements["aiopslab-event-log"].replaceChildren();
+      elements["aiopslab-benchmark-panel"].open = true;
+      renderAIOpsLabJob(job);
+      connectAIOpsLabEvents();
+    } catch (error) {
+      elements["aiopslab-error"].textContent = error.message || String(error);
+    }
+  }
+
+  async function cancelAIOpsLabBenchmark() {
+    if (!state.aiopslabJobId) return;
+    try {
+      const job = await api(`/api/benchmarks/aiopslab/jobs/${state.aiopslabJobId}/cancel`, {
+        method: "POST",
+      });
+      renderAIOpsLabJob(job);
+    } catch (error) {
+      elements["aiopslab-error"].textContent = error.message || String(error);
+    }
+  }
+
+  async function restoreLatestAIOpsLabJob() {
+    try {
+      const payload = await api("/api/benchmarks/aiopslab/jobs?limit=20");
+      const latest = payload.jobs && payload.jobs[0];
+      if (!latest) return;
+      const job = await api(`/api/benchmarks/aiopslab/jobs/${latest.job_id}`);
+      state.aiopslabEvents = [];
+      elements["aiopslab-event-log"].replaceChildren();
+      (job.events || []).forEach((event) => addAIOpsLabEvent(event));
+      renderAIOpsLabJob(job);
+      if (!TERMINAL.has(job.status)) connectAIOpsLabEvents();
+    } catch (_error) {
+      return;
+    }
+  }
+
   async function loadScenarios() {
     try {
       const payload = await api("/api/scenarios");
@@ -538,18 +711,23 @@
     elements["agent-tabs"].querySelectorAll("button[data-agent-tab]").forEach((button) => button.addEventListener("click", () => selectAgent(button.dataset.agentTab)));
     elements["run-experiment"].addEventListener("click", runExperiment);
     elements["cancel-experiment"].addEventListener("click", cancelExperiment);
+    elements["aiopslab-run"].addEventListener("click", runAIOpsLabBenchmark);
+    elements["aiopslab-cancel"].addEventListener("click", cancelAIOpsLabBenchmark);
   }
 
   async function boot() {
     bindControls();
     renderResearchDocuments();
-    elements["result-artifacts"].title = FUTURE_INTEGRATION_NOTE;
+    elements["result-artifacts"].title = AIOPSLAB_BOUNDARY_NOTE;
     renderCondition();
     resetEvidenceView();
-    await Promise.all([loadScenarios(), loadConnections()]);
-    await restoreLatestJob();
+    await Promise.all([loadScenarios(), loadConnections(), loadAIOpsLabBenchmarks()]);
+    await Promise.all([restoreLatestJob(), restoreLatestAIOpsLabJob()]);
   }
 
-  window.addEventListener("beforeunload", closeEvents);
+  window.addEventListener("beforeunload", () => {
+    closeEvents();
+    closeAIOpsLabEvents();
+  });
   boot();
 })();

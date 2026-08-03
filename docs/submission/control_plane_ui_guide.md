@@ -43,12 +43,11 @@
 - AutoGen GroupChat을 선택 가능한 Controller로 실행
 - AutoGen model/controller provenance와 structured transcript 저장·표시
 
-현재 웹 Job에 아직 연결하지 않은 기능:
-
-- AIOpsLab benchmark 실행
-
-AIOpsLab은 기존 CLI/스크립트 경로에는 존재하지만, 콘솔에서는 다음 통합 단계로
-명확히 표시합니다. AutoGen은 의존성과 credential이 준비된 경우에만 선택할 수 있으며,
+AIOpsLab detection benchmark는 복구 실험과 분리된 전용 Job으로 연결되어 있습니다.
+등록된 benchmark ID와 1~12회 반복만 브라우저에서 선택할 수 있고, 외부 저장소,
+Python 실행 파일, kubeconfig 경로는 서버 운영자가 환경변수로 제공합니다. 진행 이벤트는
+SSE로 표시되며 완료 후 정확도, 평균 TTD, 평균 step, 평균 reward와 Markdown/CSV 보고서를
+확인할 수 있습니다. AutoGen은 의존성과 credential이 준비된 경우에만 선택할 수 있으며,
 준비되지 않았으면 장애 주입 전 preflight에서 거부됩니다.
 
 ## 3. 설치와 실행
@@ -61,6 +60,11 @@ python -m pip install -e ".[ui,dev,autogen]"
 export AIOPS_REPO_ROOT="$(pwd)"
 export AIOPS_BIND_ADDRESS="127.0.0.1"
 export PORT=18080
+
+# AIOpsLab Benchmark를 웹에서 실제 실행할 때만 설정
+export AIOPSLAB_ROOT="$HOME/geonhae/external/AIOpsLab"
+export AIOPSLAB_PYTHON="$HOME/anaconda3/envs/aiopslab/bin/python"
+export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
 
 aiops-control-plane
 ```
@@ -152,6 +156,11 @@ allowlist, replica 최소·최대, target lock, Python Validator와 cleanup은 �
 | `GET /api/experiments/{experiment_id}` | Job, 결과, 저장 이벤트 조회 |
 | `GET /api/experiments/{experiment_id}/events` | SSE 이벤트 replay와 live stream |
 | `POST /api/experiments/{experiment_id}/cancel` | 실행 취소 요청 |
+| `GET /api/benchmarks/aiopslab` | 등록 Benchmark와 runtime readiness 조회 |
+| `POST /api/benchmarks/aiopslab/jobs` | AIOpsLab detection Job 생성 |
+| `GET /api/benchmarks/aiopslab/jobs/{job_id}` | Benchmark 결과와 이벤트 조회 |
+| `GET /api/benchmarks/aiopslab/jobs/{job_id}/events` | Benchmark SSE replay와 live stream |
+| `POST /api/benchmarks/aiopslab/jobs/{job_id}/cancel` | Benchmark 취소 요청 |
 
 FastAPI 문서:
 
@@ -168,4 +177,8 @@ http://127.0.0.1:18080/api/docs
 - AutoGen fake-provider 자동 시험은 웹·Job·transcript 연결 검증이며 실제 모델 호출 결과가 아닙니다.
 - AutoGen real 결과는 Ubuntu 서버에서 credential, 선택 모델, Controller provenance,
   transcript와 Kubernetes 산출물까지 확인한 경우에만 실제 비교 실험 근거로 사용합니다.
-- AIOpsLab 결과는 웹 Job 통합 전까지 기존 benchmark 산출물과 별도로 구분합니다.
+- AIOpsLab fake-executor 웹 시험은 Job/SSE/UI 연결 검증이며 실제 benchmark 결과가 아닙니다.
+- AIOpsLab real 결과는 Ubuntu 서버에서 외부 AIOpsLab 저장소, 전용 Python 환경,
+  kubeconfig와 생성 report를 확인한 경우에만 detection benchmark 근거로 사용합니다.
+- AIOpsLab 탐지 지표와 Chaos Mesh 복구 지표는 같은 Control Plane에서 조회하더라도
+  서로 다른 실험 유형으로 저장하고 해석합니다.

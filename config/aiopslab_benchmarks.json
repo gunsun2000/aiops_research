@@ -1,0 +1,15 @@
+{
+  "benchmarks": [
+    {
+      "id": "hotel-reservation-detection-v1",
+      "title": "Hotel Reservation Detection",
+      "problem_id": "misconfig_app_hotel_res-detection-1",
+      "namespace": "test-hotel-reservation",
+      "service": "geo",
+      "metrics_duration_minutes": 10,
+      "max_steps": 8,
+      "timeout_seconds": 1800,
+      "max_repetitions": 12
+    }
+  ]
+}
