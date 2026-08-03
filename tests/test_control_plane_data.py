@@ -182,6 +182,19 @@ def test_scenario_catalog_exposes_all_registered_faults():
     assert all(item["mode"] == "mock" for item in catalog)
 
 
+def test_scenario_catalog_accepts_registered_runtime_configuration(tmp_path: Path):
+    source = Path("config/experiment_runtime.json")
+    config_path = tmp_path / "experiment_runtime.json"
+    config_path.write_text(source.read_text(encoding="utf-8"), encoding="utf-8")
+
+    from aiops_k8s_agents.real_evidence import load_runtime_configuration
+
+    catalog = scenario_catalog(load_runtime_configuration(config_path))
+
+    assert catalog[0]["manifest"] == "k8s/paymentservice-pod-kill.yaml"
+    assert catalog[0]["ui_fallback"] is True
+
+
 def test_scenario_experiment_rejects_unknown_scenario():
     with pytest.raises(ValueError, match="unknown scenario"):
         run_scenario_experiment_mock(

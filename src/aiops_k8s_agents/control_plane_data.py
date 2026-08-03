@@ -19,6 +19,8 @@ from aiops_k8s_agents.experiment_session import (
     InMemoryExperimentSessionStore,
     normalize_experiment_session,
 )
+from aiops_k8s_agents.experiment_runtime_factory import runtime_scenario_catalog
+from aiops_k8s_agents.real_evidence import load_runtime_configuration
 from aiops_k8s_agents.executor import ExecutionBackend, ExecutionMode
 from aiops_k8s_agents.models import AlertEvent, CommandResult
 from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
@@ -303,8 +305,30 @@ def run_mutual_supervision_mock(
     )
 
 
-def scenario_catalog() -> list[dict[str, Any]]:
-    return [dict(definition) for definition in _SCENARIOS.values()]
+def scenario_catalog(configuration: Any | None = None) -> list[dict[str, Any]]:
+    runtime_configuration = configuration or load_runtime_configuration(
+        project_root() / "config" / "experiment_runtime.json"
+    )
+    catalog = runtime_scenario_catalog(runtime_configuration)
+    # Keep the established mock/demo presentation fields stable while the
+    # registered runtime owns scenario identity, target, metric, and manifest.
+    for item in catalog:
+        legacy = _SCENARIOS.get(item["scenario_id"])
+        if legacy is not None:
+            registered_fields = {
+                "scenario_id": item["scenario_id"],
+                "manifest": item["manifest"],
+                "namespace": item["namespace"],
+                "deployment": item["deployment"],
+                "metric": item["metric"],
+                "threshold": item["threshold"],
+                "mode": item["mode"],
+                "ui_fallback": item["ui_fallback"],
+            }
+            item.clear()
+            item.update(legacy)
+            item.update(registered_fields)
+    return catalog
 
 
 def run_scenario_experiment_mock(
