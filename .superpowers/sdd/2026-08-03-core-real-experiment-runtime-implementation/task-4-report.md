@@ -4,6 +4,7 @@
 
 - Implementation commit: `ae4f8f5` (`feat: add bounded chaos mesh adapter`)
 - Review-fix commit: `21eb79d` (`fix: harden chaos mesh lifecycle cleanup`)
+- Review-fix 2 commit: `6cf6333` (`test: cover chaos wait failure cleanup`)
 - Base commit: `e18a21c`
 
 ## Files
@@ -19,11 +20,12 @@
 - `cleanup()` is repeatable and always uses `kubectl delete ... --ignore-not-found`; bounded timeout, OS, and runner failures remain visible through `cleanup_required=True`.
 - Unknown scenarios and unsafe/unregistered manifest paths are rejected without accepting request-supplied arbitrary paths.
 - The registered default scenarios are exercised against the repository-contained `k8s` manifests with a fake `kubectl api-resources` response.
+- The failed-wait lifecycle test now proves apply success -> wait failure -> cleanup/delete, exact structured argv, `--ignore-not-found`, and distinct apply/wait output retention.
 
 ## Tests
 
-- `python -m pytest tests/test_chaos_adapter.py tests/test_real_evidence.py tests/test_experiment_runtime_models.py -q`: `65 passed`
-- `python -m pytest -q`: `407 passed, 1 warning`
+- `python -m pytest tests/test_chaos_adapter.py tests/test_real_evidence.py tests/test_experiment_runtime_models.py -q`: `66 passed`
+- `python -m pytest -q`: `408 passed, 1 warning`
 - `git diff --check`: passed
 
 ## Concerns
