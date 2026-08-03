@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import importlib.util
 import os
 import subprocess
 from contextlib import asynccontextmanager
@@ -92,6 +93,8 @@ class ExperimentValidationRequest(BaseModel):
     backend: Literal["python", "go"] = "python"
     protocol_profile: str = Field(min_length=1)
     repetitions: int = Field(default=1, ge=1)
+    controller: Literal["deterministic", "autogen"] = "deterministic"
+    model: str = ""
 
 
 class ExperimentCreateRequest(ExperimentValidationRequest):
@@ -352,11 +355,22 @@ def api_connections(request: Request) -> dict[str, object]:
         try:
             result = state.connection_probes[name]()
             ready = result if isinstance(result, bool) else result.get("ready", False)
+            details = (
+                {
+                    key: str(result[key])
+                    for key in ("status", "reason")
+                    if key in result
+                }
+                if isinstance(result, Mapping)
+                else {}
+            )
         except Exception:
             ready = False
+            details = {"status": "probe_failed", "reason": "readiness probe failed"}
         connections[name] = {
             "ready": bool(ready),
             "required_for_real": name in required,
+            **details,
         }
     missing = [
         name for name, result in connections.items()
@@ -393,6 +407,33 @@ def api_validate_experiment(
         raise HTTPException(status_code=400, detail="threshold does not match the registered scenario")
     if request.protocol_profile.strip() not in state.protocol_profiles:
         raise HTTPException(status_code=400, detail="protocol profile is not registered")
+    expected_profile = {
+        "deterministic": "four-agent-role-veto-v1",
+        "autogen": "four-agent-autogen-v1",
+    }[request.controller]
+    if request.protocol_profile.strip() != expected_profile:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "controller does not match protocol profile: "
+                f"{request.controller} requires {expected_profile}"
+            ),
+        )
+    if request.controller == "autogen":
+        autogen_connection = api_connections(http_request)["connections"].get(
+            "autogen", {"ready": False}
+        )
+        if not autogen_connection.get("ready"):
+            reason = autogen_connection.get("reason", "runtime prerequisites are missing")
+            raise HTTPException(
+                status_code=400,
+                detail=f"AutoGen runtime is not ready: {reason}",
+            )
+        if not request.model.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="AutoGen controller requires a model",
+            )
 
     try:
         runtime_request = ExperimentRuntimeRequest(
@@ -405,6 +446,8 @@ def api_validate_experiment(
             backend=ExecutionBackend(request.backend),
             protocol_profile=request.protocol_profile,
             repetitions=request.repetitions,
+            controller=request.controller,
+            model=request.model,
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -497,6 +540,8 @@ def _runtime_request(data: Mapping[str, Any]) -> ExperimentRuntimeRequest:
         backend=ExecutionBackend(data["backend"]),
         protocol_profile=data["protocol_profile"],
         repetitions=data["repetitions"],
+        controller=data.get("controller", "deterministic"),
+        model=data.get("model", ""),
     )
 
 
@@ -544,10 +589,40 @@ def _default_connection_probes(root: Path, prometheus_url: str) -> dict[str, Run
         "kubernetes": _default_probe(["kubectl", "get", "--raw=/version"]),
         "prometheus": _prometheus_probe(prometheus_url),
         "chaos_mesh": _default_probe(["kubectl", "api-resources"]),
-        "autogen": lambda: (root / "config" / "protocol_profiles").is_dir(),
+        "autogen": _autogen_probe,
         "aiopslab": lambda: Path(os.environ.get("AIOPSLAB_ROOT", root / "AIOpsLab")).is_dir(),
         "artifact_directory": lambda: (root / "runs").is_dir(),
     }
+
+
+def _autogen_probe() -> Mapping[str, Any]:
+    packages_ready = all(
+        _module_available(name)
+        for name in ("autogen_agentchat", "autogen_ext.models.openai")
+    )
+    credentials_ready = bool(
+        os.environ.get("OPENAI_API_KEY") or os.environ.get("OPENAI_ADMIN_KEY")
+    )
+    if not packages_ready:
+        return {
+            "ready": False,
+            "status": "missing_packages",
+            "reason": "AutoGen OpenAI packages are not installed",
+        }
+    if not credentials_ready:
+        return {
+            "ready": False,
+            "status": "missing_credentials",
+            "reason": "OpenAI credentials are not configured",
+        }
+    return {"ready": True, "status": "ready", "reason": "AutoGen runtime is ready"}
+
+
+def _module_available(name: str) -> bool:
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ModuleNotFoundError, AttributeError):
+        return False
 
 
 def create_app(
@@ -558,6 +633,8 @@ def create_app(
     connection_probes: Mapping[str, RuntimeProbe] | None = None,
     configuration_path: str | Path | None = None,
     prometheus_url: str | None = None,
+    autogen_decision_provider_factory: Callable[[str], Any] | None = None,
+    autogen_model_client_factory: Callable[[str], Any] | None = None,
 ) -> FastAPI:
     root = project_root()
     config_path = Path(configuration_path or root / "config" / "experiment_runtime.json")
@@ -568,6 +645,8 @@ def create_app(
             configuration_path=config_path,
             prometheus_url=prometheus_url or os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9090"),
             event_sink=EmptyEventSink(),
+            autogen_decision_provider_factory=autogen_decision_provider_factory,
+            autogen_model_client_factory=autogen_model_client_factory,
         )
     )
     database_path = Path(
@@ -586,6 +665,8 @@ def create_app(
             event_sink=event_sink,
             experiment_id_factory=lambda: experiment_id,
             cancellation_event=cancellation_event,
+            autogen_decision_provider_factory=autogen_decision_provider_factory,
+            autogen_model_client_factory=autogen_model_client_factory,
         )
     )
     job_runner = ExperimentJobRunner(job_store, runtime_builder)
