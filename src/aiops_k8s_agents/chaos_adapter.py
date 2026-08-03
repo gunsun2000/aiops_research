@@ -55,16 +55,21 @@ class ChaosMeshAdapter:
         *,
         runner: CommandRunner | None = None,
         sleeper: Callable[[float], None] = sleep,
-        manifest_root: str | Path | None = None,
+        repository_root: str | Path | None = None,
         wait_timeout_seconds: int = 60,
+        command_timeout_seconds: int = 15,
     ) -> None:
         if isinstance(wait_timeout_seconds, bool) or wait_timeout_seconds < 1:
             raise ValueError("wait_timeout_seconds must be positive")
+        if isinstance(command_timeout_seconds, bool) or command_timeout_seconds < 1:
+            raise ValueError("command_timeout_seconds must be positive")
         self._runner = runner or self._subprocess_runner
+        self._uses_subprocess_runner = runner is None
         self._sleeper = sleeper
-        self._repository_root = Path(__file__).resolve().parents[2]
-        self._manifest_root = Path(manifest_root or self._repository_root / "k8s").resolve()
+        self._repository_root = Path(repository_root or Path(__file__).resolve().parents[2]).resolve()
+        self._manifest_root = (self._repository_root / "k8s").resolve()
         self._wait_timeout_seconds = wait_timeout_seconds
+        self._command_timeout_seconds = command_timeout_seconds
         self._scenarios = {
             self._scenario_id(key): self._registered_scenario(key, value)
             for key, value in scenarios.items()
@@ -85,7 +90,11 @@ class ChaosMeshAdapter:
             code, stdout, stderr = self._run(["kubectl", "api-resources"])
             if code != 0:
                 return ChaosPreflight(False, stdout, stderr or "kubectl api-resources failed")
-            resources = {line.split()[0].lower() for line in stdout.splitlines() if line.split()}
+            resources = {
+                token.lower()
+                for line in stdout.splitlines()
+                for token in line.split()
+            }
             missing = sorted(kind for kind in required_kinds if kind not in resources)
             if missing:
                 return ChaosPreflight(False, stdout, "missing Chaos Mesh resources: " + ", ".join(missing))
@@ -106,7 +115,12 @@ class ChaosMeshAdapter:
         if apply_code != 0:
             return ChaosApplication(scenario, applied_at, False, apply_out, apply_err, True)
 
-        self._sleeper(0)
+        try:
+            self._sleeper(0)
+        except Exception as exc:
+            return ChaosApplication(
+                scenario, applied_at, False, apply_out, apply_err + str(exc), True
+            )
         wait_code, wait_out, wait_err = self._run(
             [
                 "kubectl", "wait", "--for=condition=AllInjected", "-f",
@@ -174,12 +188,35 @@ class ChaosMeshAdapter:
         return value.strip()
 
     def _run(self, argv: list[str]) -> tuple[int, str, str]:
-        result = self._runner(list(argv))
-        if len(result) != 3:
-            raise ValueError("command runner must return (returncode, stdout, stderr)")
-        return int(result[0]), str(result[1]), str(result[2])
+        timeout = self._command_timeout_seconds
+        if len(argv) > 1 and argv[1] == "wait":
+            timeout += self._wait_timeout_seconds
+        try:
+            if self._uses_subprocess_runner:
+                result = self._subprocess_runner(list(argv), timeout=timeout)
+            else:
+                result = self._runner(list(argv))
+            if len(result) != 3:
+                raise ValueError("command runner must return (returncode, stdout, stderr)")
+            return int(result[0]), str(result[1]), str(result[2])
+        except subprocess.TimeoutExpired as exc:
+            stdout = _command_output(exc.stdout)
+            stderr = _command_output(exc.stderr)
+            return 124, stdout, stderr + f"command timed out after {timeout}s"
+        except OSError as exc:
+            return 126, "", str(exc)
+        except Exception as exc:
+            return 125, "", str(exc)
 
     @staticmethod
-    def _subprocess_runner(argv: list[str]) -> tuple[int, str, str]:
-        completed = subprocess.run(argv, capture_output=True, text=True, check=False)
+    def _subprocess_runner(argv: list[str], *, timeout: int) -> tuple[int, str, str]:
+        completed = subprocess.run(
+            argv, capture_output=True, text=True, check=False, timeout=timeout
+        )
         return completed.returncode, completed.stdout, completed.stderr
+
+
+def _command_output(value: str | bytes | None) -> str:
+    if value is None:
+        return ""
+    return value.decode(errors="replace") if isinstance(value, bytes) else str(value)
