@@ -192,11 +192,15 @@ to `real`, and include the exact body field below:
 This authorization does not bypass request-specific preflight, the target lock,
 allowlists, replica bounds, validation, recovery monitoring, or cleanup.
 
-## 7. Existing CLI real experiment path
+## 7. Recovery comparison real experiment paths
 
-The supported real execution path remains the existing CLI/matrix runner, not a
-web request. First set the required network-delay query for the deployed
-telemetry:
+The existing CLI/matrix runner remains the reproducible server path. The web
+Control Plane now exposes the same bounded comparison as a persistent Job with
+SSE progress, cancellation, restart-safe job state, and downloadable analysis
+artifacts. Both paths require the same Ubuntu cluster prerequisites and neither
+path turns mock output into real evidence.
+
+First set the required network-delay query for the deployed telemetry:
 
 ```bash
 export NETWORK_LATENCY_QUERY='max(probe_duration_seconds{target="paymentservice"})'
@@ -207,6 +211,19 @@ PROMETHEUS_URL="$PROMETHEUS_URL" \
 NETWORK_LATENCY_QUERY="$NETWORK_LATENCY_QUERY" \
 bash scripts/server_recovery_action_pilot.sh
 ```
+
+To use the web comparison, start the server with the additional real gate:
+
+```bash
+export CONFIRM_REAL_RUN=YES
+export NETWORK_LATENCY_QUERY='max(probe_duration_seconds{target="paymentservice"})'
+aiops-control-plane
+```
+
+Open `http://127.0.0.1:${PORT}/`, expand `Recovery Action Comparison`, choose
+`Real`, and enter `EXECUTE REAL COMPARISON`. The UI runs 4 scenarios x 3 bounded
+actions x the selected repetition count. Cancellation takes effect between
+treatments after the active treatment has completed its cleanup boundary.
 
 Expected result for a genuine real run: the command records bounded action
 outcomes under `runs/recovery-action-pilot/<run-id>/`, including stdout/stderr,
@@ -312,8 +329,10 @@ different outcomes and must remain distinct in the report.
 
 Python and Go regression tests use deterministic or injected fakes where stated;
 they are not real-cluster evidence. Persistent Jobs, SSE, cancellation, the gated
-deterministic web path, and the optional AutoGen GroupChat web path are implemented.
-The local AutoGen tests use an injected fake provider and do not prove networked
-model execution. AIOpsLab benchmark Jobs remain a future web integration. A genuine
-AutoGen real result requires Ubuntu-side model credentials, successful GroupChat
-execution, Kubernetes evidence, validation, recovery monitoring, and cleanup.
+deterministic web path, the optional AutoGen GroupChat path, AIOpsLab benchmark
+Jobs, and Recovery Action comparison Jobs are implemented. Local AutoGen,
+AIOpsLab, and comparison tests use injected or synthetic providers and do not
+prove networked model execution, external benchmark execution, or Kubernetes
+recovery. Genuine results require Ubuntu-side credentials and dependencies,
+successful external execution, saved artifacts, and manual verification of the
+Kubernetes, Prometheus, Chaos Mesh, recovery-monitoring, and cleanup evidence.
