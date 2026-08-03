@@ -97,9 +97,9 @@ operation lock, applies Chaos Mesh, or changes Kubernetes.
 
 The existing UI mock endpoints remain available for demonstrations, and the
 existing CLI real experiment paths remain supported. A successful mock test is
-not real-cluster evidence; a dry-run checks command/API compatibility without
-changing resources; only an authorized Ubuntu cluster run can establish real
-experiment evidence.
+not real-cluster evidence; the documented dry-run request checks API admission
+only and does not execute a command path; only an authorized Ubuntu cluster run
+can establish real experiment evidence.
 
 ```bash
 python -m pip install -e ".[ui,dev,autogen]"

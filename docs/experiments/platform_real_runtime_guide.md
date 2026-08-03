@@ -163,37 +163,83 @@ run against the intended Ubuntu Kubernetes/Prometheus/Chaos Mesh environment.
 The output must not be relabeled as real evidence when the mode is changed to
 `mock` or `dry-run`.
 
-## 7. Cleanup and failure evidence
-
-Always retain the run directory before cleanup. For a registered scenario whose
-manifest was applied, cleanup uses the same manifest and ignores an already
-deleted resource:
+The matrix runner uses `config/recovery_action_experiments.json`. Preserve that
+exact configuration with the run before investigating failures:
 
 ```bash
 RUN_DIR="$(ls -dt runs/recovery-action-pilot/* | head -1)"
+cp config/recovery_action_experiments.json \
+  "$RUN_DIR/recovery_action_experiments.json"
+```
+
+## 7. Cleanup and failure evidence
+
+Always retain the run directory before cleanup. Inspect every matrix record with
+`cleanup_valid=false`; do not assume the failed treatment was CPU stress. The
+following commands look up each failed record's registered scenario in the
+matrix configuration, delete that scenario's manifest, reset its deployment to
+the configured baseline replicas, and wait for rollout:
+
+```bash
+RUN_DIR="$(ls -dt runs/recovery-action-pilot/* | head -1)"
+CONFIG="$RUN_DIR/recovery_action_experiments.json"
+OUTCOMES="$RUN_DIR/outcomes.jsonl"
+jq -c 'select(.cleanup_valid == false)' "$OUTCOMES" \
+  > "$RUN_DIR/cleanup-failures.jsonl"
+
+while IFS= read -r record; do
+  scenario="$(jq -r '.scenario' <<<"$record")"
+  IFS=$'\t' read -r manifest namespace deployment < <(
+    jq -r --arg id "$scenario" \
+      '.scenarios[] | select(.id == $id) |
+       [.chaos_manifest, .namespace, .deployment] | @tsv' "$config"
+  )
+  if [[ -z "${manifest:-}" || -z "${namespace:-}" || -z "${deployment:-}" ]]; then
+    echo "No registered cleanup target for scenario: $scenario" >&2
+    exit 1
+  fi
+  kubectl delete -f "$manifest" --ignore-not-found
+  kubectl scale deployment "$deployment" \
+    --replicas="$(jq -r '.baseline_replicas' "$CONFIG")" -n "$namespace"
+  kubectl rollout status "deployment/${deployment}" -n "$namespace" \
+    --timeout="$(jq -r '.recovery_timeout_seconds' "$CONFIG")s"
+  kubectl get deployment "$deployment" -n "$namespace" -o wide
+done < "$RUN_DIR/cleanup-failures.jsonl"
+
 find "$RUN_DIR" -maxdepth 3 -type f -print
-kubectl delete -f k8s/chaos/paymentservice-cpu-stress.yaml \
-  --ignore-not-found
-kubectl get pods -n online-boutique -o wide
 kubectl get events -n online-boutique --sort-by=.lastTimestamp | tail -50
 ```
 
-Expected result: the registered fault resource is absent or reports
-`NotFound`/ignored, and the run artifacts remain available for review. This
-proves cleanup and post-run state collection, not recovery by itself.
+Expected result: every `cleanup_valid=false` record is visited, its manifest is
+absent or reports `NotFound`/ignored, and its deployment is reset to the matrix
+configuration's `baseline_replicas` and reaches rollout-ready status. The saved
+`recovery_action_experiments.json` is the configuration actually used to select
+all four scenarios: pod-kill/paymentservice, cpu-stress/paymentservice,
+memory-stress/checkoutservice, and network-delay/paymentservice. This proves
+cleanup and post-run state collection, not recovery by itself.
 
-On failure, collect bounded diagnostics without deleting the evidence:
+On failure, collect bounded diagnostics for every failed scenario without
+deleting the evidence:
 
 ```bash
-kubectl get deployment paymentservice -n online-boutique -o yaml \
-  > "$RUN_DIR/paymentservice-deployment.yaml"
-kubectl get pods -n online-boutique -l app=paymentservice -o wide \
-  > "$RUN_DIR/paymentservice-pods.txt"
-kubectl describe deployment paymentservice -n online-boutique \
-  > "$RUN_DIR/paymentservice-describe.txt"
-kubectl logs -n online-boutique -l app=paymentservice \
-  --all-containers --tail=200 > "$RUN_DIR/paymentservice-logs.txt" || true
-cp config/experiment_runtime.json "$RUN_DIR/experiment_runtime.json"
+while IFS= read -r record; do
+  scenario="$(jq -r '.scenario' <<<"$record")"
+  IFS=$'\t' read -r _manifest namespace deployment < <(
+    jq -r --arg id "$scenario" \
+      '.scenarios[] | select(.id == $id) |
+       [.chaos_manifest, .namespace, .deployment] | @tsv' "$CONFIG"
+  )
+  kubectl get deployment "$deployment" -n "$namespace" -o yaml \
+    > "$RUN_DIR/${scenario}-deployment.yaml"
+  kubectl get pods -n "$namespace" -l "app=${deployment}" -o wide \
+    > "$RUN_DIR/${scenario}-pods.txt"
+  kubectl describe deployment "$deployment" -n "$namespace" \
+    > "$RUN_DIR/${scenario}-describe.txt"
+  kubectl logs -n "$namespace" -l "app=${deployment}" \
+    --all-containers --tail=200 > "$RUN_DIR/${scenario}-logs.txt" || true
+done < "$RUN_DIR/cleanup-failures.jsonl"
+cp config/recovery_action_experiments.json \
+  "$RUN_DIR/recovery_action_experiments.json"
 ```
 
 Record the exact mode, scenario, namespace, deployment, Prometheus URL, current
