@@ -7,6 +7,10 @@ from threading import Event
 import pytest
 
 from aiops_k8s_agents.evidence import FakeEvidenceProvider
+from aiops_k8s_agents.autogen_groupchat import (
+    AutoGenProtocolAdapter,
+    parse_autogen_decision,
+)
 from aiops_k8s_agents.experiment_runtime_factory import (
     build_experiment_runtime,
     runtime_scenario_catalog,
@@ -94,6 +98,94 @@ def test_runtime_factory_selects_requested_registered_protocol(tmp_path):
     coordinator = runtime.coordinator_factory(request)
 
     assert coordinator.protocol.profile_id == request.protocol_profile
+
+
+def test_runtime_factory_selects_registered_autogen_adapters_and_provenance(tmp_path):
+    requested_models = []
+
+    def provider_factory(model):
+        requested_models.append(model)
+
+        class Provider:
+            transcript_lines = [
+                "AIServiceHASupportAgent: scale-out is required.",
+                "CostOptimizationAgent: bounded cost is approved.",
+            ]
+
+            def __call__(self, _alert):
+                return _autogen_decisions(replicas="3")
+
+        return Provider()
+
+    runtime = build_experiment_runtime(
+        configuration_path=write_runtime_config(tmp_path),
+        prometheus_url="http://127.0.0.1:9091",
+        event_sink=RecordingEventSink(),
+        autogen_decision_provider_factory=provider_factory,
+    )
+    request = ExperimentRuntimeRequest(
+        scenario_id="cpu-stress",
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+        mode="mock",
+        backend="python",
+        protocol_profile="four-agent-autogen-v1",
+        controller="autogen",
+        model="fake-research-model",
+    )
+
+    coordinator = runtime.coordinator_factory(request)
+    result = runtime.run(request)
+
+    assert requested_models == ["fake-research-model", "fake-research-model"]
+    assert all(
+        type(adapter) is AutoGenProtocolAdapter
+        for adapter in coordinator.adapters.values()
+    )
+    assert result.status == "recovered"
+    assert result.report["controller"] == "autogen"
+    assert result.report["model"] == "fake-research-model"
+    assert result.report["autogen_transcript"] == (
+        "AIServiceHASupportAgent: scale-out is required.",
+        "CostOptimizationAgent: bounded cost is approved.",
+    )
+
+
+@pytest.mark.parametrize(
+    ("controller", "profile"),
+    [
+        ("autogen", "four-agent-role-veto-v1"),
+        ("deterministic", "four-agent-autogen-v1"),
+    ],
+)
+def test_runtime_factory_rejects_controller_profile_mismatch(
+    tmp_path, controller, profile
+):
+    runtime = build_experiment_runtime(
+        configuration_path=write_runtime_config(tmp_path),
+        prometheus_url="http://127.0.0.1:9091",
+        event_sink=RecordingEventSink(),
+        autogen_decision_provider_factory=(
+            lambda _model: lambda _alert: _autogen_decisions(replicas="3")
+        ),
+    )
+    request = ExperimentRuntimeRequest(
+        scenario_id="cpu-stress",
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+        mode="mock",
+        backend="python",
+        protocol_profile=profile,
+        controller=controller,
+        model="fake-research-model" if controller == "autogen" else "",
+    )
+
+    with pytest.raises(ValueError, match="controller.*protocol profile"):
+        runtime.coordinator_factory(request)
 
 
 def test_runtime_scenario_catalog_uses_registered_manifest_and_ui_fallback(tmp_path):
@@ -244,3 +336,50 @@ def test_factory_dry_run_uses_deterministic_non_live_evidence_boundary(tmp_path)
 
     assert type(coordinator.evidence_provider) is FakeEvidenceProvider
     assert type(coordinator.recovery_monitor) is FakeRecoveryMonitor
+
+
+def _autogen_decisions(replicas: str):
+    payloads = (
+        (
+            "AIServiceHASupportAgent",
+            "ha_scale_out_required",
+            0.90,
+            "HA evidence requires bounded recovery.",
+        ),
+        (
+            "AIApplicationManagementAgent",
+            "app_scale_deployment",
+            0.85,
+            "Scale the saturated application deployment.",
+        ),
+        (
+            "AISemiconductorInfraOpsAgent",
+            "infra_capacity_approved",
+            0.70,
+            "The proposal fits infrastructure policy.",
+        ),
+        (
+            "CostOptimizationAgent",
+            "cost_budget_approved",
+            0.60,
+            "The proposal fits cost policy.",
+        ),
+    )
+    return [
+        parse_autogen_decision(
+            {
+                "agent": agent,
+                "action": action,
+                "reward": reward,
+                "approved": True,
+                "reason": reason,
+                "parameters": {
+                    "namespace": "online-boutique",
+                    "deployment": "paymentservice",
+                    "replicas": replicas,
+                },
+            },
+            expected_agent=agent,
+        )
+        for agent, action, reward, reason in payloads
+    ]

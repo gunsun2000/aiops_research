@@ -50,6 +50,10 @@ class CoordinatorAdmissionValidator:
         configuration: RuntimeConfiguration,
     ) -> CoordinatorAdmission:
         from aiops_k8s_agents.kubernetes_status import collect_kubernetes_snapshot
+        from aiops_k8s_agents.autogen_groupchat import (
+            AUTOGEN_IMPLEMENTATION_IDS,
+            AutoGenProtocolAdapter,
+        )
         from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
         from aiops_k8s_agents.prometheus import PrometheusAdapter
         from aiops_k8s_agents.real_evidence import PrometheusKubernetesEvidenceProvider
@@ -83,24 +87,43 @@ class CoordinatorAdmissionValidator:
 
         if type(coordinator.adapter_registry) is not AgentAdapterRegistry:
             raise _BlockedRequest("agent registry is unsupported")
-        expected_implementations = {
+        deterministic_implementations = {
             "deterministic-ha",
             "deterministic-application",
             "deterministic-infrastructure",
             "deterministic-cost",
         }
+        expected_implementations = (
+            deterministic_implementations | set(AUTOGEN_IMPLEMENTATION_IDS.values())
+            if request.controller == "autogen"
+            else deterministic_implementations
+        )
         if set(coordinator.adapter_registry.factories) != expected_implementations:
-            raise _BlockedRequest("agent registry is not the registered deterministic registry")
+            raise _BlockedRequest("agent registry is not the registered runtime registry")
         expected_adapters = (
-            DeterministicHAAdapter,
-            DeterministicApplicationAdapter,
-            DeterministicInfrastructureAdapter,
-            DeterministicCostAdapter,
+            (
+                AutoGenProtocolAdapter,
+                AutoGenProtocolAdapter,
+                AutoGenProtocolAdapter,
+                AutoGenProtocolAdapter,
+            )
+            if request.controller == "autogen"
+            else (
+                DeterministicHAAdapter,
+                DeterministicApplicationAdapter,
+                DeterministicInfrastructureAdapter,
+                DeterministicCostAdapter,
+            )
         )
         if tuple(type(adapter) for adapter in coordinator.adapters.values()) != expected_adapters:
             raise _BlockedRequest("agent stage is unsupported or overridden")
-        if coordinator.protocol.profile_id != "four-agent-role-veto-v1":
-            raise _BlockedRequest("protocol profile is not the registered deterministic profile")
+        expected_profile = (
+            "four-agent-autogen-v1"
+            if request.controller == "autogen"
+            else "four-agent-role-veto-v1"
+        )
+        if coordinator.protocol.profile_id != expected_profile:
+            raise _BlockedRequest("protocol profile is not registered for the controller")
 
         stage_timeouts = {
             key: _positive_timeout(configuration.timeouts, key)
@@ -355,6 +378,11 @@ class ExperimentRuntime:
             control.check()
             report["run_id"] = experiment_id
             report["mode"] = request.mode.value
+            report["controller"] = request.controller
+            report["model"] = request.model
+            transcript = _coordinator_transcript(coordinator)
+            if transcript:
+                report["autogen_transcript"] = transcript
             primary_status = str(report.get("final_status", "failed"))
             for stage, key in (
                 (RuntimeStage.VALIDATING, "safety_validation"),
@@ -412,6 +440,8 @@ class ExperimentRuntime:
         report.update({
             "run_id": bridge.experiment_id,
             "mode": request.mode.value,
+            "controller": request.controller,
+            "model": request.model,
             "final_status": status,
             "cleanup": deepcopy(dict(cleanup)),
         })
@@ -470,6 +500,8 @@ class ExperimentRuntime:
         return {
             "run_id": experiment_id,
             "mode": request.mode.value,
+            "controller": request.controller,
+            "model": request.model,
             "final_status": "failed",
             "evidence": {},
             "diagnosis": {},
@@ -495,6 +527,14 @@ class _null_context:
 
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {"valid": False, "stderr": "invalid cleanup result"}
+
+
+def _coordinator_transcript(coordinator: Any) -> list[str]:
+    for adapter in getattr(coordinator, "adapters", {}).values():
+        lines = getattr(adapter, "transcript_lines", ())
+        if lines:
+            return [str(line) for line in lines]
+    return []
 
 
 def _positive_timeout(timeouts: Mapping[str, Any], key: str) -> float:

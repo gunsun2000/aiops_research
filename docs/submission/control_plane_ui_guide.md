@@ -40,14 +40,16 @@
 - 새로고침 후 최근 Job과 이벤트 복원
 - 서버 재시작 시 미완료 Job을 `interrupted`로 안전 종료
 - deterministic 4-Agent 상호감시와 Python Validator 결과 표시
+- AutoGen GroupChat을 선택 가능한 Controller로 실행
+- AutoGen model/controller provenance와 structured transcript 저장·표시
 
 현재 웹 Job에 아직 연결하지 않은 기능:
 
-- AutoGen GroupChat 실행
 - AIOpsLab benchmark 실행
 
-두 기능은 기존 CLI/스크립트 경로에는 존재하지만, 콘솔에서는 다음 통합 단계로
-명확히 표시합니다.
+AIOpsLab은 기존 CLI/스크립트 경로에는 존재하지만, 콘솔에서는 다음 통합 단계로
+명확히 표시합니다. AutoGen은 의존성과 credential이 준비된 경우에만 선택할 수 있으며,
+준비되지 않았으면 장애 주입 전 preflight에서 거부됩니다.
 
 ## 3. 설치와 실행
 
@@ -62,6 +64,17 @@ export PORT=18080
 
 aiops-control-plane
 ```
+
+AutoGen Controller를 사용하려면 서버를 시작하기 전에 credential을 설정합니다.
+
+```bash
+export OPENAI_API_KEY="<your-api-key>"
+aiops-control-plane
+```
+
+UI에서 `AutoGen GroupChat`을 선택하면 `four-agent-autogen-v1` 프로파일과 모델 입력이
+연결됩니다. 모델 응답은 자유형 shell 명령으로 실행되지 않고 구조화된 Agent 판단으로
+변환된 뒤 기존 Validator, allowlist, replica 제한과 cleanup 경계를 그대로 통과합니다.
 
 브라우저:
 
@@ -152,4 +165,7 @@ http://127.0.0.1:18080/api/docs
 - `dry-run` 성공은 명령과 API 허용성 검증이며 실제 복구 성공이 아닙니다.
 - `real` 결과는 Ubuntu 서버에서 Prometheus, Chaos Mesh, Kubernetes 연결과
   cleanup 산출물까지 확인한 경우에만 실제 실험 근거로 사용합니다.
-- AutoGen과 AIOpsLab 결과는 웹 Job 통합 전까지 기존 실행 결과와 별도로 구분합니다.
+- AutoGen fake-provider 자동 시험은 웹·Job·transcript 연결 검증이며 실제 모델 호출 결과가 아닙니다.
+- AutoGen real 결과는 Ubuntu 서버에서 credential, 선택 모델, Controller provenance,
+  transcript와 Kubernetes 산출물까지 확인한 경우에만 실제 비교 실험 근거로 사용합니다.
+- AIOpsLab 결과는 웹 Job 통합 전까지 기존 benchmark 산출물과 별도로 구분합니다.

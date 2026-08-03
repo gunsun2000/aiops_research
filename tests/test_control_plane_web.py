@@ -7,6 +7,7 @@ from time import monotonic, sleep
 from fastapi.testclient import TestClient
 
 from aiops_k8s_agents.control_plane_web import app, create_app
+from aiops_k8s_agents.autogen_groupchat import parse_autogen_decision
 from aiops_k8s_agents.experiment_runtime import RuntimePreflightResult
 from aiops_k8s_agents.experiment_runtime_models import RuntimeEvent, RuntimeStage
 
@@ -73,6 +74,26 @@ def test_connections_use_injected_readiness_checks_without_runtime_io(tmp_path):
     assert payload["missing_prerequisites"] == ["prometheus"]
 
 
+def test_connections_expose_safe_autogen_readiness_reason():
+    probes = _all_ready_probes()
+    probes["autogen"] = lambda: {
+        "ready": False,
+        "status": "missing_credentials",
+        "reason": "OpenAI credentials are not configured",
+    }
+
+    payload = TestClient(create_app(connection_probes=probes)).get(
+        "/api/connections"
+    ).json()
+
+    assert payload["connections"]["autogen"] == {
+        "ready": False,
+        "required_for_real": False,
+        "status": "missing_credentials",
+        "reason": "OpenAI credentials are not configured",
+    }
+
+
 def test_validate_experiment_is_preflight_only_for_mock_mode():
     class RuntimeMustNotRun:
         def run(self, _request):
@@ -100,6 +121,47 @@ def test_validate_experiment_is_preflight_only_for_mock_mode():
     assert payload["controller"] == "mutual_supervision"
     assert payload["safety_bounds"]["min_replicas"] == 1
     assert payload["safety_bounds"]["max_replicas"] == 5
+
+
+def test_validate_autogen_requires_ready_connection():
+    probes = _all_ready_probes()
+    probes["autogen"] = lambda: {
+        "ready": False,
+        "status": "missing_credentials",
+        "reason": "OpenAI credentials are not configured",
+    }
+    test_app = create_app(connection_probes=probes)
+
+    response = TestClient(test_app).post(
+        "/api/experiments/validate",
+        json=_job_payload(
+            controller="autogen",
+            model="fake-research-model",
+            protocol_profile="four-agent-autogen-v1",
+        ),
+    )
+
+    assert response.status_code == 400
+    assert "AutoGen runtime is not ready" in response.json()["detail"]
+
+
+def test_validate_autogen_resolves_controller_model_and_profile():
+    response = TestClient(
+        create_app(connection_probes=_all_ready_probes())
+    ).post(
+        "/api/experiments/validate",
+        json=_job_payload(
+            controller="autogen",
+            model=" fake-research-model ",
+            protocol_profile="four-agent-autogen-v1",
+        ),
+    )
+
+    assert response.status_code == 200
+    resolved = response.json()["resolved"]
+    assert resolved["controller"] == "autogen"
+    assert resolved["model"] == "fake-research-model"
+    assert resolved["protocol_profile"] == "four-agent-autogen-v1"
 
 
 def _all_ready_probes():
@@ -347,6 +409,53 @@ def _wait_for_job(client, experiment_id, timeout=2.0):
     raise AssertionError("job did not become terminal")
 
 
+def _autogen_decisions(replicas="3"):
+    payloads = (
+        (
+            "AIServiceHASupportAgent",
+            "ha_scale_out_required",
+            0.90,
+            "HA evidence requires bounded recovery.",
+        ),
+        (
+            "AIApplicationManagementAgent",
+            "app_scale_deployment",
+            0.85,
+            "Scale the saturated application deployment.",
+        ),
+        (
+            "AISemiconductorInfraOpsAgent",
+            "infra_capacity_approved",
+            0.70,
+            "The proposal fits infrastructure policy.",
+        ),
+        (
+            "CostOptimizationAgent",
+            "cost_budget_approved",
+            0.60,
+            "The proposal fits cost policy.",
+        ),
+    )
+    return [
+        parse_autogen_decision(
+            {
+                "agent": agent,
+                "action": action,
+                "reward": reward,
+                "approved": True,
+                "reason": reason,
+                "parameters": {
+                    "namespace": "online-boutique",
+                    "deployment": "paymentservice",
+                    "replicas": replicas,
+                },
+            },
+            expected_agent=agent,
+        )
+        for agent, action, reward, reason in payloads
+    ]
+
+
 def test_create_experiment_runs_in_background_and_lists_job(tmp_path):
     test_app = create_app(
         job_database_path=tmp_path / "jobs.sqlite3",
@@ -368,6 +477,39 @@ def test_create_experiment_runs_in_background_and_lists_job(tmp_path):
     assert finished["result"]["successful_attempts"] == 1
     assert listed.status_code == 200
     assert listed.json()["jobs"][0]["experiment_id"] == experiment_id
+
+
+def test_create_autogen_experiment_runs_registered_bounded_runtime(tmp_path):
+    requested_models = []
+
+    def provider_factory(model):
+        requested_models.append(model)
+        return lambda _alert: _autogen_decisions()
+
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        connection_probes=_all_ready_probes(),
+        autogen_decision_provider_factory=provider_factory,
+    )
+    test_client = TestClient(test_app)
+
+    created = test_client.post(
+        "/api/experiments",
+        json=_job_payload(
+            controller="autogen",
+            model="fake-research-model",
+            protocol_profile="four-agent-autogen-v1",
+        ),
+    )
+
+    assert created.status_code == 202
+    finished = _wait_for_job(test_client, created.json()["experiment_id"])
+    report = finished["result"]["attempts"][0]["report"]
+    assert finished["status"] == "completed"
+    assert finished["request"]["controller"] == "autogen"
+    assert report["controller"] == "autogen"
+    assert report["model"] == "fake-research-model"
+    assert requested_models == ["fake-research-model"]
 
 
 def test_create_experiment_rejects_unknown_scenario_before_job_creation(tmp_path):

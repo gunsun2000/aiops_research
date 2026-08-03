@@ -49,6 +49,8 @@ class ExperimentRuntimeRequest:
     backend: ExecutionBackend
     protocol_profile: str
     repetitions: int = 1
+    controller: str = "deterministic"
+    model: str = ""
 
     def __post_init__(self) -> None:
         for name in (
@@ -64,6 +66,13 @@ class ExperimentRuntimeRequest:
         object.__setattr__(self, "metric", metric.lower().replace("-", "_"))
         object.__setattr__(self, "mode", _enum_value(ExecutionMode, self.mode))
         object.__setattr__(self, "backend", _enum_value(ExecutionBackend, self.backend))
+        controller = _strip_identifier("controller", self.controller).lower()
+        if controller not in {"deterministic", "autogen"}:
+            raise ValueError(f"invalid controller: {self.controller!r}")
+        object.__setattr__(self, "controller", controller)
+        if not isinstance(self.model, str):
+            raise TypeError("model must be a string")
+        object.__setattr__(self, "model", self.model.strip())
 
         if isinstance(self.repetitions, bool) or not isinstance(self.repetitions, int):
             raise ValueError("repetitions must be an integer >= 1")
@@ -86,6 +95,8 @@ class ExperimentRuntimeRequest:
             "backend": self.backend.value,
             "protocol_profile": self.protocol_profile,
             "repetitions": self.repetitions,
+            "controller": self.controller,
+            "model": self.model,
         })
 
 

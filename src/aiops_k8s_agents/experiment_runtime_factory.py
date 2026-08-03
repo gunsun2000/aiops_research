@@ -12,6 +12,11 @@ from aiops_k8s_agents.agent_adapters import (
     build_default_agent_adapter_registry,
 )
 from aiops_k8s_agents.chaos_adapter import ChaosMeshAdapter
+from aiops_k8s_agents.autogen_groupchat import (
+    AutoGenProtocolAdapter,
+    build_autogen_agent_adapter_registry,
+    create_openai_model_client,
+)
 from aiops_k8s_agents.evidence import EvidenceSnapshot, FakeEvidenceProvider
 from aiops_k8s_agents.experiment_runtime import (
     CoordinatorAdmission,
@@ -87,8 +92,10 @@ def build_experiment_runtime(
     kubernetes_collector: KubernetesCollector | None = None,
     experiment_id_factory: Callable[[], str] | None = None,
     cancellation_event: Any | None = None,
+    autogen_decision_provider_factory: Callable[[str], Any] | None = None,
+    autogen_model_client_factory: Callable[[str], Any] | None = None,
 ) -> ExperimentRuntime:
-    """Build the admitted deterministic runtime without performing I/O.
+    """Build an admitted deterministic or AutoGen runtime without performing I/O.
 
     Mock uses deterministic in-memory evidence and recovery only. Dry-run uses
     the same non-live evidence boundary while preserving the existing dry-run
@@ -129,6 +136,34 @@ def build_experiment_runtime(
             raise ValueError(
                 f"protocol profile is not registered: {request.protocol_profile}"
             ) from exc
+        expected_runtime = {
+            "deterministic": "deterministic",
+            "autogen": "autogen-round-robin",
+        }[request.controller]
+        active_runtimes = {
+            binding.runtime for binding in protocol.agents if binding.enabled
+        }
+        if active_runtimes != {expected_runtime}:
+            raise ValueError(
+                "controller does not match protocol profile: "
+                f"{request.controller} requires {expected_runtime} agent bindings"
+            )
+        if request.controller == "autogen":
+            if not request.model:
+                raise ValueError("AutoGen controller requires a model")
+            if autogen_decision_provider_factory is not None:
+                adapter_registry = build_autogen_agent_adapter_registry(
+                    decision_provider=autogen_decision_provider_factory(request.model)
+                )
+            else:
+                model_client_factory = (
+                    autogen_model_client_factory or create_openai_model_client
+                )
+                adapter_registry = build_autogen_agent_adapter_registry(
+                    model_client=model_client_factory(request.model)
+                )
+        else:
+            adapter_registry = build_default_agent_adapter_registry()
         if request.mode == ExecutionMode.REAL:
             prometheus = PrometheusAdapter(prometheus_url, fetcher=prometheus_fetcher)
             evidence = PrometheusKubernetesEvidenceProvider(
@@ -157,7 +192,7 @@ def build_experiment_runtime(
             recovery_monitor=recovery_monitor,
             policy=policy,
             protocol=protocol,
-            adapter_registry=build_default_agent_adapter_registry(),
+            adapter_registry=adapter_registry,
             mode=ExecutionMode(request.mode),
             backend=ExecutionBackend(request.backend),
         )
@@ -200,10 +235,19 @@ class _FactoryCoordinatorAdmissionValidator:
         if type(coordinator.adapter_registry) is not AgentAdapterRegistry:
             raise ValueError("non-real agent registry is unsupported")
         expected_adapters = (
-            DeterministicHAAdapter,
-            DeterministicApplicationAdapter,
-            DeterministicInfrastructureAdapter,
-            DeterministicCostAdapter,
+            (
+                AutoGenProtocolAdapter,
+                AutoGenProtocolAdapter,
+                AutoGenProtocolAdapter,
+                AutoGenProtocolAdapter,
+            )
+            if request.controller == "autogen"
+            else (
+                DeterministicHAAdapter,
+                DeterministicApplicationAdapter,
+                DeterministicInfrastructureAdapter,
+                DeterministicCostAdapter,
+            )
         )
         if tuple(type(adapter) for adapter in coordinator.adapters.values()) != expected_adapters:
             raise ValueError("non-real agent stage is unsupported")

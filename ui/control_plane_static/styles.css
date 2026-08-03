@@ -22,9 +22,9 @@
 * { box-sizing: border-box; }
 html { min-width: 320px; background: var(--page); }
 body { margin: 0; min-width: 320px; overflow-x: hidden; background: var(--page); }
-button, select { font: inherit; letter-spacing: 0; }
+button, select, input { font: inherit; letter-spacing: 0; }
 button { cursor: pointer; }
-button:focus-visible, select:focus-visible, summary:focus-visible { outline: 3px solid rgba(20, 59, 96, .24); outline-offset: 2px; }
+button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid rgba(20, 59, 96, .24); outline-offset: 2px; }
 h1, h2, p { margin: 0; }
 h1 { font-size: 1.35rem; font-weight: 700; }
 h2 { font-size: 1.03rem; font-weight: 700; }
@@ -86,6 +86,10 @@ legend, .field-label { display: block; margin: 0 0 7px; color: var(--muted); fon
 .segmented-control button[aria-pressed="true"] { color: #fff; background: var(--navy); }
 .field-label { margin-top: 15px; }
 select { width: 100%; min-height: 36px; padding: 7px 8px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; }
+.controller-model { margin-top: 10px; padding: 10px; background: var(--surface-soft); border-left: 3px solid var(--navy); }
+.controller-model .field-label { margin-top: 0; }
+.controller-model input { width: 100%; min-height: 36px; padding: 7px 8px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 5px; }
+.controller-model p { margin-top: 6px; color: var(--muted); font-size: .72rem; }
 .target-summary { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line); }
 .target-summary span { color: var(--muted); }
 .boundary-note { margin-top: 14px; padding: 10px; color: var(--muted); background: var(--green-soft); border-left: 3px solid var(--green); }
@@ -132,11 +136,15 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 .decision-facts, .safety-section dl { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 9px 12px; margin: 0; padding-bottom: 13px; border-bottom: 1px solid var(--line); }
 .decision-facts dt, .safety-section dt { color: var(--muted); }
 .decision-facts dd, .safety-section dd { margin: 0; text-align: right; font-weight: 700; }
-.agent-statement, .review-section, .safety-section { margin-top: 14px; }
+.agent-statement, .review-section, .transcript-section, .safety-section { margin-top: 14px; }
 .agent-statement > span, .review-section > span, .safety-section > span { color: var(--muted); font-size: .72rem; font-weight: 700; text-transform: uppercase; }
 .agent-statement p { margin-top: 7px; padding: 10px; background: var(--surface-soft); border-left: 3px solid var(--navy); }
 .review-section ul { margin: 8px 0 0; padding-left: 17px; }
 .review-section li { margin: 6px 0; }
+.transcript-section { border-top: 1px solid var(--line); }
+.transcript-section summary { padding: 10px 0 6px; color: var(--muted); font-size: .72rem; font-weight: 700; text-transform: uppercase; cursor: pointer; }
+.transcript-section ol { max-height: 180px; margin: 0; padding: 0 0 0 20px; overflow-y: auto; }
+.transcript-section li { margin: 7px 0; font-size: .78rem; }
 .safety-section dl { margin-top: 8px; padding-bottom: 0; border-bottom: 0; }
 
 .research-results { padding: 14px 18px; background: var(--surface); border-top: 1px solid var(--line); }
