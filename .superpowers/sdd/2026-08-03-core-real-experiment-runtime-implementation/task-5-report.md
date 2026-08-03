@@ -47,8 +47,7 @@
 
 - `python -m pytest tests/test_experiment_runtime.py -q`: `28 passed`
 - `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py tests/test_real_evidence.py -q`: `66 passed`
-- `python -m pytest -q --ignore=tests/test_experiment_runtime_factory.py`: `447 passed, 1 warning`
-- `python -m pytest -q`: `453 passed, 2 failed, 1 warning`; both failures are in pre-existing, out-of-scope uncommitted factory changes.
+- `python -m pytest -q`: `455 passed, 1 warning`
 - `git diff --check`: passed
 
 ## Concerns
@@ -56,4 +55,3 @@
 - Tests use deterministic fakes and do not claim live Kubernetes, Prometheus, Chaos Mesh, or model/API-key validation.
 - Coordinator execution is intentionally synchronous after capability validation; boundedness and cancellation are an explicit coordinator contract, not a claim that Python threads can be forcibly stopped. Unsupported coordinators are rejected before injection, while the supported coordinator checks runtime control before evidence/recovery stages.
 - The existing CLI behavior was not modified; runtime construction and web integration remain later plan tasks.
-- `src/aiops_k8s_agents/experiment_runtime_factory.py` and `tests/test_experiment_runtime_factory.py` had pre-existing uncommitted changes and were not touched or committed by final review fix A. Their two current full-suite failures concern factory mock/dry-run construction, outside this fix's authorized scope.
