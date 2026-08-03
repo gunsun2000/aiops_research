@@ -65,7 +65,7 @@ deprecated and `httpx2` is recommended. It did not fail the tests.
 
 The documentation commit is recorded here after commit creation:
 
-`8c0fd9e062736af296108d9e3d0394f75b71165f`
+`f7b1836` (`docs: explain real experiment runtime`)
 
 ## Remaining validation boundary
 
