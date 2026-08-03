@@ -1,836 +1,455 @@
 (function () {
   "use strict";
 
-  const root = document.getElementById("root");
+  const REGISTERED_SCENARIOS = {
+    "cpu-stress": { label: "CPU Stress", namespace: "online-boutique", deployment: "paymentservice", metric: "cpu", threshold: 80 },
+    "memory-stress": { label: "Memory Stress", namespace: "online-boutique", deployment: "checkoutservice", metric: "memory", threshold: 80 },
+    "network-delay": { label: "Network Delay", namespace: "online-boutique", deployment: "paymentservice", metric: "latency", threshold: 0.1 },
+    "pod-kill": { label: "Pod Kill", namespace: "online-boutique", deployment: "paymentservice", metric: "availability", threshold: 1 },
+  };
 
-  const FALLBACK_SCENARIOS = [
-    {
-      scenario_id: "cpu-stress",
-      label: "CPU Stress",
-      namespace: "online-boutique",
-      deployment: "paymentservice",
-      metric: "cpu",
-      value: 95,
-      threshold: 80,
-      event: "StressChaos · CPU workers=2",
-      source: "Prometheus + K8s",
-      summary: "CPU 포화 상태에서 역할별 판단과 bounded recovery Action을 검증합니다.",
-      chart: [18, 22, 31, 69, 91, 84, 94, 86],
-    },
-    {
-      scenario_id: "memory-stress",
-      label: "Memory Stress",
-      namespace: "online-boutique",
-      deployment: "checkoutservice",
-      metric: "memory",
-      value: 95.7,
-      threshold: 80,
-      event: "StressChaos · Memory 80MB",
-      source: "Prometheus + K8s",
-      summary: "메모리 포화와 OOM 위험에 대한 복구 판단을 검증합니다.",
-      chart: [24, 30, 38, 61, 88, 96, 91, 72],
-    },
-    {
-      scenario_id: "network-delay",
-      label: "Network Delay",
-      namespace: "online-boutique",
-      deployment: "paymentservice",
-      metric: "latency",
-      value: 0.234,
-      threshold: 0.1,
-      event: "NetworkChaos · delay 200ms",
-      source: "Blackbox + K8s",
-      summary: "서비스 지연 Evidence에 대한 원인 진단과 복구 후 평가를 검증합니다.",
-      chart: [18, 20, 22, 34, 71, 92, 48, 24],
-    },
-    {
-      scenario_id: "pod-kill",
-      label: "Pod Kill",
-      namespace: "online-boutique",
-      deployment: "paymentservice",
-      metric: "availability",
-      value: 0,
-      threshold: 1,
-      event: "PodChaos · one pod",
-      source: "Kubernetes snapshot",
-      summary: "Pod 종료 후 Kubernetes 자체 복구와 Agent 추가 조치를 비교합니다.",
-      chart: [100, 100, 100, 0, 38, 72, 100, 100],
-    },
+  const AGENTS = {
+    AIServiceHASupportAgent: { code: "HA", pending: "가용성 진단 대기" },
+    AIApplicationManagementAgent: { code: "APP", pending: "복구 제안 대기" },
+    AISemiconductorInfraOpsAgent: { code: "INF", pending: "자원 검토 대기" },
+    CostOptimizationAgent: { code: "CST", pending: "비용 검토 대기" },
+  };
+
+  const MODE_BOUNDARIES = {
+    mock: "Mock은 합성 Evidence를 사용하며 Kubernetes를 변경하지 않습니다.",
+    "dry-run": "Dry-run은 실제 대상에 대한 명령 검증을 수행하지만 Kubernetes 상태를 변경하지 않습니다.",
+    real: "Real은 CONFIRM_REAL_RUN 환경 Gate와 확인 문구가 모두 통과한 경우에만 실제 Kubernetes를 제어합니다.",
+  };
+
+  const FUTURE_INTEGRATION_NOTE =
+    "AutoGen GroupChat은 다음 통합 단계 · AIOpsLab benchmark는 다음 통합 단계";
+
+  const STAGE_ORDER = [
+    "preflight",
+    "injecting_fault",
+    "collecting_evidence",
+    "agent_reasoning",
+    "validating",
+    "executing",
+    "observing_recovery",
   ];
 
-  const AGENT_META = {
-    AIServiceHASupportAgent: {
-      code: "HA",
-      short: "HA Agent",
-      label: "AI서비스 HA 지원 에이전트",
-      phase: "진단",
-      scope: "availability",
-      tone: "blue",
-      role: "장애 원인과 가용성 위험을 진단하고 복구 필요성을 판단합니다.",
-    },
-    AIApplicationManagementAgent: {
-      code: "APP",
-      short: "Application",
-      label: "AI응용관리 자동화 에이전트",
-      phase: "제안",
-      scope: "action_validity",
-      tone: "clay",
-      role: "진단 결과를 bounded Kubernetes 복구 Action으로 변환합니다.",
-    },
-    AISemiconductorInfraOpsAgent: {
-      code: "INF",
-      short: "Infrastructure",
-      label: "AI인프라 운용 에이전트",
-      phase: "검토",
-      scope: "resource_safety",
-      tone: "clay",
-      role: "Replica와 자원 용량이 인프라 안전 정책을 만족하는지 검토합니다.",
-    },
-    CostOptimizationAgent: {
-      code: "CST",
-      short: "Cost",
-      label: "비용 최적화 지원 에이전트",
-      phase: "검토",
-      scope: "budget",
-      tone: "clay",
-      role: "복구 Action이 과잉 대응이나 비용 한도 초과인지 검토합니다.",
-    },
-  };
-
-  const DEFAULT_ACTIONS = {
-    "cpu-stress": { kind: "scale_out", replicas: 3 },
-    "memory-stress": { kind: "rollout_restart", replicas: null },
-    "network-delay": { kind: "rollout_restart", replicas: null },
-    "pod-kill": { kind: "observe_only", replicas: null },
-  };
-
-  const DEFAULT_DIAGNOSIS = {
-    "cpu-stress": { cause: "cpu_saturation", severity: "critical", confidence: 0.88 },
-    "memory-stress": { cause: "memory_pressure", severity: "critical", confidence: 0.9 },
-    "network-delay": { cause: "network_latency", severity: "high", confidence: 0.86 },
-    "pod-kill": { cause: "low_availability", severity: "high", confidence: 0.92 },
-  };
-
-  const RESEARCH_DOCUMENTS = [
-    {
-      label: "4-Agent 연구 보고서",
-      path: "docs/deliverables/AIOps_4Agent_Research_Report.docx",
-      sourcePath: "docs/core_submission_summary.md",
-    },
-    {
-      label: "실험 운영 가이드",
-      path: "docs/deliverables/AIOps_Experiment_Operations_Guide.docx",
-      sourcePath: "docs/submission/execution_code_guide.md",
-    },
-    {
-      label: "Agent 정책 명세서",
-      path: "docs/deliverables/AIOps_Agent_Policy_Specification.docx",
-      sourcePath: "docs/design/agent_action_reward_policy.md",
-    },
-  ];
-
+  const TERMINAL = new Set(["completed", "failed", "blocked", "cancelled", "interrupted"]);
   const state = {
-    overview: null,
-    agents: [],
-    scenarios: FALLBACK_SCENARIOS,
-    latestRun: null,
-    currentSession: null,
-    experimentHistory: [],
+    scenarios: { ...REGISTERED_SCENARIOS },
     selectedScenario: "cpu-stress",
+    selectedMode: "mock",
     selectedAgent: "AIServiceHASupportAgent",
-    backend: "python",
-    repetitions: 3,
+    experimentId: "",
+    job: null,
+    events: [],
+    eventSource: null,
+    startedAt: null,
+    timer: null,
     running: false,
-    lastError: "",
   };
 
-  function h(tag, attrs, children) {
-    const element = document.createElement(tag);
-    Object.entries(attrs || {}).forEach(([key, value]) => {
-      if (value == null || value === false) return;
-      if (key === "className") {
-        element.className = value;
-      } else if (key === "text") {
-        element.textContent = value;
-      } else if (key.startsWith("on") && typeof value === "function") {
-        element.addEventListener(key.slice(2).toLowerCase(), value);
-      } else if (key === "disabled") {
-        element.disabled = Boolean(value);
-      } else if (key === "selected") {
-        element.selected = Boolean(value);
-      } else {
-        element.setAttribute(key, value === true ? "" : String(value));
-      }
+  const elements = Object.fromEntries([
+    "connection-dot", "connection-label", "connection-summary", "experiment-id",
+    "job-status", "current-stage", "consensus-status", "safety-status",
+    "scenario-list", "mode-control", "controller-select", "profile-select",
+    "repetitions-select", "target-deployment", "target-metric", "mode-boundary",
+    "run-experiment", "cancel-experiment", "control-error", "elapsed-time",
+    "stage-timeline", "evidence-scenario", "evidence-target", "evidence-metric",
+    "evidence-source", "agent-grid", "review-summary", "consensus-summary",
+    "action-summary", "event-count", "event-log", "agent-tabs", "selected-agent",
+    "agent-decision", "agent-approval", "agent-reward", "agent-statement",
+    "peer-reviews", "allowlist-result", "validator-result", "cleanup-result",
+    "result-status", "result-recovery", "result-mttr", "result-reward",
+    "result-reviews", "result-artifacts",
+  ].map((id) => [id, document.getElementById(id)]));
+
+  async function api(path, options) {
+    const response = await fetch(path, {
+      headers: { "Content-Type": "application/json", ...(options && options.headers) },
+      ...options,
     });
-    (children || []).filter(Boolean).forEach((child) => {
-      element.append(child instanceof Node ? child : document.createTextNode(String(child)));
-    });
-    return element;
+    const contentType = response.headers.get("content-type") || "";
+    const payload = contentType.includes("application/json") ? await response.json() : null;
+    if (!response.ok) {
+      throw new Error(payload && payload.detail ? payload.detail : `요청 실패 (${response.status})`);
+    }
+    return payload;
   }
 
-  function svg(tag, attrs, children) {
-    const element = document.createElementNS("http://www.w3.org/2000/svg", tag);
-    Object.entries(attrs || {}).forEach(([key, value]) => {
-      element.setAttribute(key, String(value));
-    });
-    (children || []).filter(Boolean).forEach((child) => element.append(child));
-    return element;
+  function scenario() {
+    return state.scenarios[state.selectedScenario] || REGISTERED_SCENARIOS["cpu-stress"];
   }
 
-  function selectedScenario() {
-    return state.scenarios.find((item) => item.scenario_id === state.selectedScenario)
-      || FALLBACK_SCENARIOS[0];
-  }
-
-  function stagePayload(session, key) {
-    return session && session.stages && session.stages[key]
-      ? session.stages[key].payload || {}
-      : {};
-  }
-
-  function sessionForSelection() {
-    const session = state.currentSession;
-    return session
-      && session.condition
-      && session.condition.scenario === state.selectedScenario
-      ? session
-      : null;
-  }
-
-  function diagnosisFor(scenario, session) {
-    return stagePayload(session, "diagnosis").diagnosis
-      || DEFAULT_DIAGNOSIS[scenario.scenario_id];
-  }
-
-  function actionFor(scenario, session) {
-    return stagePayload(session, "consensus").selected_action
-      || DEFAULT_ACTIONS[scenario.scenario_id];
-  }
-
-  function evidenceFor(scenario, session) {
-    const payload = stagePayload(session, "evidence");
+  function normalizeScenario(item) {
+    const id = item.scenario_id || item.id;
+    const fallback = REGISTERED_SCENARIOS[id] || {};
     return {
-      metric_values: payload.metric_values || { [scenario.metric]: scenario.value },
-      desired_replicas: payload.desired_replicas == null ? 1 : payload.desired_replicas,
-      available_replicas: payload.available_replicas == null ? 1 : payload.available_replicas,
-      events: payload.events || [scenario.event],
-      source: payload.source || scenario.source,
+      label: item.label || fallback.label || id,
+      namespace: item.namespace || fallback.namespace,
+      deployment: item.deployment || fallback.deployment,
+      metric: item.metric || fallback.metric,
+      threshold: item.threshold == null ? fallback.threshold : item.threshold,
     };
   }
 
-  function reviewsFor(session) {
-    return stagePayload(session, "consensus").peer_reviews || [];
+  function setPressed(container, selector, selected) {
+    container.querySelectorAll(selector).forEach((button) => {
+      const value = button.dataset.scenario || button.dataset.mode || button.dataset.agent || button.dataset.agentTab;
+      button.setAttribute("aria-pressed", String(value === selected));
+    });
   }
 
-  function decisionsFor(session) {
-    return stagePayload(session, "diagnosis").initial_decisions || [];
+  function renderScenarioButtons() {
+    elements["scenario-list"].replaceChildren(...Object.entries(state.scenarios).map(([id, item]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.scenario = id;
+      button.setAttribute("aria-pressed", String(id === state.selectedScenario));
+      const title = document.createElement("strong");
+      title.textContent = item.label;
+      const metadata = document.createElement("span");
+      metadata.textContent = `${item.deployment} · ${item.metric}`;
+      button.append(title, metadata);
+      button.addEventListener("click", () => selectScenario(id));
+      return button;
+    }));
   }
 
-  function contributionFor(agentName, session) {
-    return stagePayload(session, "result").agent_contributions?.[agentName] || {};
+  function selectScenario(id) {
+    if (state.running || !state.scenarios[id]) return;
+    state.selectedScenario = id;
+    setPressed(elements["scenario-list"], "button", id);
+    renderCondition();
+    resetEvidenceView();
   }
 
-  function render() {
-    const scenario = selectedScenario();
-    const session = sessionForSelection();
-    root.replaceChildren(
-      h("main", { className: "experiment-console" }, [
-        consoleHeader(session),
-        metricStrip(scenario, session),
-        h("div", { className: "experiment-workspace" }, [
-          scenarioRail(scenario, session),
-          liveCanvas(scenario, session),
-        ]),
-        decisionInspector(scenario, session),
-        experimentTimeline(session),
-        researchDocuments(),
-        consoleFooter(session),
-      ])
-    );
+  function selectMode(mode) {
+    if (state.running) return;
+    state.selectedMode = mode;
+    setPressed(elements["mode-control"], "button", mode);
+    elements["mode-boundary"].textContent = MODE_BOUNDARIES[mode];
   }
 
-  function consoleHeader(session) {
-    const experimentId = session
-      ? session.experiment_id.replace(/^run-/, "EXP-").slice(0, 20).toUpperCase()
-      : "EXP-READY";
-    return h("header", { className: "console-header" }, [
-      h("div", { className: "identity-lockup" }, [
-        h("span", { className: "product-mark", text: "AI" }),
-        h("div", {}, [
-          h("p", { className: "eyebrow", text: "AI-MCMP · 연구 운영" }),
-          h("h1", { text: "4-Agent AIOps 실험 콘솔" }),
-          h("p", {
-            className: "header-description",
-            text: "상호감시형 Agent 판단과 Kubernetes 복구를 하나의 실험 흐름으로 추적합니다.",
-          }),
-        ]),
-      ]),
-      h("div", { className: "header-actions" }, [
-        h("div", { className: "runtime-status" }, [
-          h("span", { className: "status-dot" }),
-          h("strong", { text: "READY" }),
-          h("span", { text: experimentId }),
-          h("span", { className: "mode-pill", text: "MOCK SAFE" }),
-        ]),
-        h("button", {
-          className: "run-button",
-          type: "button",
-          disabled: state.running,
-          onClick: runScenario,
-          text: state.running ? "실험 실행 중…" : "▷ 실험 실행",
-        }),
-      ]),
-    ]);
+  function selectAgent(agent) {
+    state.selectedAgent = agent;
+    setPressed(elements["agent-grid"], "button", agent);
+    setPressed(elements["agent-tabs"], "button", agent);
+    renderInspector();
   }
 
-  function metricStrip(scenario, session) {
-    const diagnosis = diagnosisFor(scenario, session);
-    const consensus = stagePayload(session, "consensus");
-    const safety = stagePayload(session, "safety");
-    const result = stagePayload(session, "result");
-    const metric = evidenceFor(scenario, session).metric_values[scenario.metric];
-
-    return h("section", { className: "metric-strip", "aria-label": "실험 핵심 상태" }, [
-      metricCard("장애 지표", metricHeadline(scenario, metric), `임계치 ${thresholdLabel(scenario)}`),
-      metricCard(
-        "Agent 합의",
-        session && consensus.negotiation?.consensus === "approved" ? "4 / 4" : "대기",
-        session ? `${reviewsFor(session).length}개 역할 검토 완료` : "역할별 검토 대기",
-      ),
-      metricCard(
-        "안전 경계",
-        safety.valid === true ? "VALID" : "준비",
-        "allowlist · replica 1–5",
-      ),
-      metricCard(
-        "복구 상태",
-        result.recovery_monitoring?.recovery_success === true ? "복구 완료" : "대기",
-        session ? statusLabel(session.status) : `${diagnosis.severity} 진단 준비`,
-      ),
-    ]);
+  function renderCondition() {
+    const item = scenario();
+    elements["target-deployment"].textContent = `${item.namespace} / ${item.deployment}`;
+    elements["target-metric"].textContent = `${item.metric} · threshold ${item.threshold}`;
+    elements["evidence-scenario"].textContent = item.label;
+    elements["evidence-target"].textContent = `${item.namespace}/${item.deployment}`;
   }
 
-  function metricCard(label, value, note) {
-    return h("article", { className: "metric-card" }, [
-      h("span", { text: label }),
-      h("strong", { text: value }),
-      h("small", { text: note }),
-    ]);
+  function resetEvidenceView() {
+    elements["evidence-metric"].textContent = "실험 Evidence 수집 후 표시";
+    elements["evidence-source"].textContent = state.selectedMode === "real" ? "Prometheus + Kubernetes" : "FakeEvidenceProvider";
+    elements["review-summary"].textContent = "역할별 의견 수집 대기";
+    elements["consensus-summary"].textContent = "대기";
+    elements["action-summary"].textContent = "선택 전";
+    elements["consensus-status"].textContent = "Evidence 대기";
+    elements["safety-status"].textContent = "검증 대기";
+    renderAgentCards(null);
+    renderInspector();
   }
 
-  function scenarioRail(scenario, session) {
-    return h("aside", { className: "scenario-rail" }, [
-      h("div", { className: "panel-heading" }, [
-        h("div", {}, [
-          h("p", { className: "eyebrow", text: "EXPERIMENT" }),
-          h("h2", { text: "장애 시나리오" }),
-        ]),
-        h("span", { className: "flask-icon", text: "⌁" }),
-      ]),
-      h(
-        "div",
-        { className: "scenario-list", role: "group", "aria-label": "장애 시나리오 선택" },
-        state.scenarios.map((item) =>
-          h("button", {
-            className: `scenario-choice${item.scenario_id === scenario.scenario_id ? " is-selected" : ""}`,
-            type: "button",
-            "data-scenario": item.scenario_id,
-            "aria-pressed": item.scenario_id === scenario.scenario_id ? "true" : "false",
-            onClick: () => selectScenario(item.scenario_id),
-            text: normalizedScenario(item).label,
-          })
-        ),
-      ),
-      h("div", { className: "scenario-metadata" }, [
-        metadataRow("대상", scenario.deployment),
-        metadataRow("Namespace", scenario.namespace),
-        metadataRow("반복", `${state.repetitions}회`),
-        metadataRow(
-          "프로파일",
-          session ? session.protocol_profile.profile_id : "role-veto-v1",
-        ),
-        metadataRow("실행 모드", session ? session.mode : "mock"),
-      ]),
-      h("label", { className: "backend-field" }, [
-        h("span", { text: "안전 검증" }),
-        h("select", {
-          "aria-label": "Guard backend",
-          onChange: (event) => {
-            state.backend = event.target.value;
-            render();
-          },
-        }, [
-          h("option", {
-            value: "python",
-            selected: state.backend === "python",
-            text: "Python Validator",
-          }),
-          h("option", {
-            value: "go",
-            selected: state.backend === "go",
-            text: "Python + Go Guard",
-          }),
-        ]),
-      ]),
-      state.lastError
-        ? h("p", { className: "inline-error", text: state.lastError })
-        : null,
-    ]);
+  function runtimeReport() {
+    const attempts = state.job && state.job.result && state.job.result.attempts;
+    if (!Array.isArray(attempts) || attempts.length === 0) return null;
+    return attempts[attempts.length - 1].report || null;
   }
 
-  function liveCanvas(scenario, session) {
-    const evidence = evidenceFor(scenario, session);
-    const action = actionFor(scenario, session);
-    const safety = stagePayload(session, "safety");
-    const consensus = stagePayload(session, "consensus");
-
-    return h("section", { className: "live-canvas" }, [
-      h("div", { className: "canvas-heading" }, [
-        h("div", {}, [
-          h("p", { className: "eyebrow", text: "LIVE EXPERIMENT CANVAS" }),
-          h("h2", { text: "운영 판단과 복구 흐름" }),
-        ]),
-        h("span", {
-          className: `stage-badge${state.running ? " is-running" : ""}`,
-          text: state.running ? "분석 중" : session ? "실험 완료" : "관측 준비",
-        }),
-      ]),
-      evidenceStrip(scenario, evidence),
-      h(
-        "div",
-        { className: "agent-flow-grid", "aria-label": "4-Agent 상호검토" },
-        Object.keys(AGENT_META).map((agentName) =>
-          agentFlowCard(agentName, scenario, session)
-        ),
-      ),
-      h("div", { className: "decision-flow" }, [
-        flowBlock("상호검토", session ? `${reviewsFor(session).length}개 역할 의견 수집` : "4개 역할 의견 수집"),
-        h("span", { className: "flow-arrow", text: "→" }),
-        flowBlock(
-          "최종 Action",
-          actionLabel(action),
-          consensus.negotiation?.consensus === "approved" ? "합의 승인" : "합의 준비",
-        ),
-        h("span", { className: "flow-arrow", text: "→" }),
-        flowBlock(
-          "이중 안전 검증",
-          session ? session.guard_backend : state.backend,
-          safety.valid === true ? "정책 통과" : "검증 대기",
-        ),
-      ]),
-      metricChart(scenario),
-    ]);
+  function initialDecision(agent, report) {
+    if (!report || !Array.isArray(report.initial_decisions)) return null;
+    return report.initial_decisions.find((item) => item.agent === agent) || null;
   }
 
-  function evidenceStrip(scenario, evidence) {
-    const metricValue = evidence.metric_values[scenario.metric];
-    return h("div", { className: "evidence-strip" }, [
-      evidenceItem("Metric", `${scenario.metric} ${metricDisplay(scenario, metricValue)}`),
-      evidenceItem(
-        "Replica",
-        `${evidence.desired_replicas} desired / ${evidence.available_replicas} ready`,
-      ),
-      evidenceItem("Event", scenario.event),
-      evidenceItem("Source", evidence.source === "fake" ? "FakeEvidenceProvider" : evidence.source),
-    ]);
+  function reviewsBy(agent, report) {
+    if (!report || !Array.isArray(report.peer_reviews)) return [];
+    return report.peer_reviews.filter((item) => item.reviewer === agent);
   }
 
-  function evidenceItem(label, value) {
-    return h("div", { className: "evidence-item" }, [
-      h("span", { text: label }),
-      h("strong", { text: value }),
-    ]);
+  function contribution(agent, report) {
+    return report && report.agent_contributions ? report.agent_contributions[agent] || {} : {};
   }
 
-  function agentFlowCard(agentName, scenario, session) {
-    const meta = AGENT_META[agentName];
-    const selected = state.selectedAgent === agentName;
-    const summary = agentSummary(agentName, scenario, session);
-    return h("button", {
-      className: `agent-node tone-${meta.tone}${selected ? " is-selected" : ""}`,
-      type: "button",
-      onClick: () => selectAgent(agentName),
-      "aria-pressed": selected ? "true" : "false",
-    }, [
-      h("span", { className: "agent-node-top" }, [
-        h("strong", { text: meta.short }),
-        h("small", { text: meta.phase }),
-      ]),
-      h("span", { className: "agent-node-summary", text: summary }),
-    ]);
-  }
-
-  function agentSummary(agentName, scenario, session) {
-    const action = actionFor(scenario, session);
-    const diagnosis = diagnosisFor(scenario, session);
-    if (agentName === "AIServiceHASupportAgent") {
-      return `${diagnosis.severity} · ${diagnosis.cause}`;
-    }
-    if (agentName === "AIApplicationManagementAgent") {
-      return actionLabel(action);
-    }
-    if (agentName === "AISemiconductorInfraOpsAgent") {
-      return action.kind === "scale_out"
-        ? `Replica ${action.replicas || 3} 수용 가능`
-        : "자원 안전성 승인";
-    }
-    return action.kind === "scale_out" ? "비용 범위 내 승인" : "과잉 대응 없음";
-  }
-
-  function flowBlock(label, value, note) {
-    return h("div", { className: "flow-block" }, [
-      h("span", { text: label }),
-      h("strong", { text: value }),
-      note ? h("small", { text: note }) : null,
-    ]);
-  }
-
-  function metricChart(scenario) {
-    const values = scenario.chart || FALLBACK_SCENARIOS[0].chart;
-    const width = 720;
-    const height = 92;
-    const pad = 4;
-    const max = Math.max(...values, scenario.threshold, 1);
-    const points = values.map((value, index) => {
-      const x = pad + (index / (values.length - 1)) * (width - pad * 2);
-      const y = height - pad - (value / max) * (height - pad * 2);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    }).join(" ");
-    const thresholdY = height - pad - (scenario.threshold / max) * (height - pad * 2);
-
-    return h("div", { className: "metric-chart" }, [
-      h("div", { className: "chart-heading" }, [
-        h("span", { text: `${scenario.label} · 최근 관측 흐름` }),
-        h("strong", { text: metricHeadline(scenario, scenario.value) }),
-      ]),
-      svg("svg", { viewBox: `0 0 ${width} ${height}`, role: "img", "aria-label": `${scenario.label} metric chart` }, [
-        svg("line", {
-          x1: pad,
-          y1: thresholdY.toFixed(1),
-          x2: width - pad,
-          y2: thresholdY.toFixed(1),
-          class: "threshold-line",
-        }),
-        svg("polyline", {
-          points,
-          class: "metric-line",
-          fill: "none",
-        }),
-      ]),
-    ]);
-  }
-
-  function decisionInspector(scenario, session) {
-    const agentName = state.selectedAgent;
-    const meta = AGENT_META[agentName];
-    const diagnosis = diagnosisFor(scenario, session);
-    const action = actionFor(scenario, session);
-    const contribution = contributionFor(agentName, session);
-    const safety = stagePayload(session, "safety");
-    const matchingReviews = reviewsFor(session).filter((review) =>
-      review.reviewer === agentName || review.target_agent === agentName
-    );
-
-    return h("section", { className: "decision-inspector" }, [
-      h("div", { className: "inspector-heading" }, [
-        h("div", {}, [
-          h("p", { className: "eyebrow", text: "DECISION INSPECTOR" }),
-          h("h2", { text: `${meta.short} 판단` }),
-        ]),
-        h("span", { className: "focus-icon", text: "⌗" }),
-      ]),
-      h("div", { className: "inspector-layout" }, [
-        h("div", { className: "inspector-summary" }, [
-          inspectorRow("진단 Cause", agentName === "AIServiceHASupportAgent" ? diagnosis.cause : meta.scope),
-          inspectorRow("Severity", diagnosis.severity),
-          inspectorRow("Confidence", formatDecimal(diagnosis.confidence || 0.88)),
-          inspectorRow("Veto scope", meta.scope),
-          inspectorRow("Reward", `+${formatDecimal(contribution.reward || defaultReward(agentName))}`),
-        ]),
-        h("div", { className: "inspector-detail" }, [
-          inspectorSection("AGENT STATEMENT", agentStatement(agentName, scenario, action, diagnosis)),
-          inspectorSection(
-            "PEER REVIEWS",
-            matchingReviews.length
-              ? matchingReviews.map((review) =>
-                `${shortAgent(review.reviewer)} → ${shortAgent(review.target_agent)} · ${review.verdict}`
-              ).join("\n")
-              : defaultPeerReviews(agentName, scenario, action).join("\n"),
-          ),
-          inspectorSection(
-            "EXECUTION BOUNDARY",
-            [
-              `Allowlist  ${scenario.namespace}/${scenario.deployment}`,
-              "Replica limit  1–5",
-              `Guard  ${session ? session.guard_backend : state.backend}`,
-              `Validation  ${safety.valid === true ? "통과" : "대기"}`,
-            ].join("\n"),
-          ),
-        ]),
-      ]),
-      session
-        ? h("div", { className: "command-preview" }, [
-          h("span", { text: "검증된 명령" }),
-          h("code", { text: safety.command || "observe_only" }),
-        ])
-        : null,
-    ]);
-  }
-
-  function inspectorRow(label, value) {
-    return h("div", { className: "inspector-row" }, [
-      h("span", { text: label }),
-      h("strong", { text: String(value) }),
-    ]);
-  }
-
-  function inspectorSection(label, text) {
-    return h("section", { className: "inspector-section" }, [
-      h("span", { text: label }),
-      h("p", { text }),
-    ]);
-  }
-
-  function experimentTimeline(session) {
-    const stages = [
-      ["01", "조건", "시나리오·정책 고정", "condition"],
-      ["02", "Evidence", "Metric·K8s 상태", "evidence"],
-      ["03", "Agent 판단", "역할별 진단·제안", "diagnosis"],
-      ["04", "상호검토", "거부권·재협상", "consensus"],
-      ["05", "안전 검증", "Validator·Guard", "safety"],
-      ["06", "실행", "Bounded Action", "execution"],
-      ["07", "복구 평가", "결과·Reward", "result"],
-    ];
-    return h("section", { className: "experiment-timeline" }, [
-      h("div", { className: "timeline-heading" }, [
-        h("p", { className: "eyebrow", text: "EXPERIMENT SESSION" }),
-        h("strong", { text: session ? session.experiment_id : "실행 전 연구 프로토콜" }),
-      ]),
-      h("div", { className: "timeline-steps" }, stages.map(([index, label, note, key]) => {
-        const status = session?.stages?.[key]?.status || "pending";
-        return h("div", { className: `timeline-step is-${status}` }, [
-          h("span", { text: index }),
-          h("div", {}, [
-            h("strong", { text: label }),
-            h("small", { text: note }),
-          ]),
-        ]);
-      })),
-    ]);
-  }
-
-  function consoleFooter(session) {
-    return h("footer", { className: "console-footer" }, [
-      h("span", {
-        text: "웹 콘솔은 FakeEvidenceProvider 기반 mock 연구 경로입니다. 실제 Kubernetes real 제어는 CLI 안전 절차로 분리됩니다.",
-      }),
-      h("span", {
-        text: session ? `Guard: ${session.guard_backend}` : "Python Validator + 선택적 Go Guard",
-      }),
-    ]);
-  }
-
-  function researchDocuments() {
-    return h("section", { className: "research-documents" }, [
-      h("div", { className: "document-heading" }, [
-        h("div", {}, [
-          h("p", { className: "eyebrow", text: "RESEARCH ARTIFACTS" }),
-          h("strong", { text: "연구 문서" }),
-        ]),
-        h("span", { text: "실험 근거와 정책 명세" }),
-      ]),
-      h("div", { className: "document-links" }, RESEARCH_DOCUMENTS.map((document) =>
-        h("a", {
-          href: `/api/artifacts/${document.path}`,
-          target: "_blank",
-          rel: "noopener",
-          title: document.sourcePath,
-        }, [
-          h("span", { className: "document-type", text: "DOCX" }),
-          h("strong", { text: document.label }),
-          h("small", { text: document.sourcePath }),
-        ])
-      )),
-    ]);
-  }
-
-  function normalizedScenario(item) {
-    const fallback = FALLBACK_SCENARIOS.find((scenario) => scenario.scenario_id === item.scenario_id) || {};
-    return { ...fallback, ...item, summary: fallback.summary || item.summary };
-  }
-
-  function selectScenario(scenarioId) {
-    if (
-      state.currentSession
-      && state.currentSession.condition
-      && state.currentSession.condition.scenario !== scenarioId
-    ) {
-      state.currentSession = null;
-    }
-    state.selectedScenario = scenarioId;
-    state.selectedAgent = "AIServiceHASupportAgent";
-    state.lastError = "";
-    render();
-  }
-
-  function selectAgent(agentName) {
-    state.selectedAgent = agentName;
-    render();
-  }
-
-  async function runScenario() {
-    state.running = true;
-    state.lastError = "";
-    render();
-    try {
-      const response = await fetch("/api/experiments/mock", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          scenario_id: state.selectedScenario,
-          backend: state.backend,
-        }),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        throw new Error(payload.detail || "실험 실행 요청이 거부되었습니다.");
+  function renderAgentCards(report) {
+    elements["agent-grid"].querySelectorAll("button[data-agent]").forEach((button) => {
+      const agent = button.dataset.agent;
+      const decision = initialDecision(agent, report);
+      const reviews = reviewsBy(agent, report);
+      const status = button.querySelector("small");
+      if (decision) {
+        status.textContent = decision.proposed_action ? actionLabel(decision.proposed_action) : decision.reason;
+      } else if (reviews.length) {
+        status.textContent = `${reviews.length}개 검토 · ${reviews[0].verdict}`;
+      } else {
+        status.textContent = AGENTS[agent].pending;
       }
-      state.currentSession = payload;
-      state.experimentHistory = [
-        payload,
-        ...state.experimentHistory.filter((item) => item.experiment_id !== payload.experiment_id),
-      ].slice(0, 8);
-    } catch (error) {
-      state.lastError = String(error.message || error);
-    } finally {
-      state.running = false;
-      render();
-    }
+    });
   }
 
-  async function boot() {
-    try {
-      const [overviewResponse, agentsResponse, scenariosResponse, latestResponse] = await Promise.all([
-        fetch("/api/overview"),
-        fetch("/api/agents"),
-        fetch("/api/scenarios"),
-        fetch("/api/runs/latest"),
-      ]);
-      state.overview = overviewResponse.ok ? await overviewResponse.json() : null;
-      state.agents = agentsResponse.ok ? (await agentsResponse.json()).agents || [] : [];
-      const scenarioPayload = scenariosResponse.ok ? await scenariosResponse.json() : {};
-      state.scenarios = scenarioPayload.scenarios?.length
-        ? scenarioPayload.scenarios.map(normalizedScenario)
-        : FALLBACK_SCENARIOS;
-      state.latestRun = latestResponse.ok ? await latestResponse.json() : null;
-    } catch (error) {
-      state.lastError = `Control Plane API 연결 실패: ${String(error.message || error)}`;
-    }
-    render();
-  }
-
-  function metadataRow(label, value) {
-    return h("div", { className: "metadata-row" }, [
-      h("span", { text: label }),
-      h("strong", { text: String(value) }),
-    ]);
-  }
-
-  function metricHeadline(scenario, value) {
-    if (scenario.metric === "latency") return `${Math.round(Number(value) * 1000)} ms`;
-    if (scenario.metric === "availability") return `${value} / ${scenario.threshold}`;
-    return `${Number(value).toFixed(1)}% ${scenario.metric.toUpperCase()}`;
-  }
-
-  function metricDisplay(scenario, value) {
-    if (scenario.metric === "latency") return `${Math.round(Number(value) * 1000)}ms`;
-    if (scenario.metric === "availability") return String(value);
-    return `${Number(value).toFixed(1)}%`;
-  }
-
-  function thresholdLabel(scenario) {
-    if (scenario.metric === "latency") return `${Math.round(scenario.threshold * 1000)}ms`;
-    if (scenario.metric === "availability") return String(scenario.threshold);
-    return `${scenario.threshold}%`;
+  function renderInspector() {
+    const report = runtimeReport();
+    const decision = initialDecision(state.selectedAgent, report);
+    const reviews = reviewsBy(state.selectedAgent, report);
+    const stats = contribution(state.selectedAgent, report);
+    elements["selected-agent"].textContent = state.selectedAgent;
+    elements["agent-decision"].textContent = decision ? (decision.decision_type || "판단 완료") : (reviews.length ? "Peer review" : "실험 Evidence 수집 후 표시");
+    elements["agent-approval"].textContent = decision ? (decision.approved ? "승인" : "거부") : (reviews.length ? reviews[0].verdict : "대기");
+    const reward = decision && decision.reward != null ? decision.reward : stats.reward;
+    elements["agent-reward"].textContent = reward == null ? "—" : Number(reward).toFixed(3);
+    elements["agent-statement"].textContent = decision ? decision.reason : (reviews[0] ? reviews[0].reason : "실제 실행 결과의 Agent 판단 근거만 표시합니다.");
+    elements["peer-reviews"].replaceChildren(...(reviews.length ? reviews : [{ reason: "상호검토 기록 대기", verdict: "" }]).map((review) => {
+      const item = document.createElement("li");
+      item.textContent = `${review.verdict ? `[${review.verdict}] ` : ""}${review.reason}`;
+      return item;
+    }));
   }
 
   function actionLabel(action) {
-    if (!action || !action.kind) return "observe_only";
-    return action.kind === "scale_out"
-      ? `scale_out → ${action.replicas || 3}`
-      : action.kind;
+    if (!action || !action.kind) return "선택 전";
+    return action.replicas == null ? action.kind : `${action.kind} → ${action.replicas}`;
   }
 
-  function statusLabel(status) {
-    const labels = {
-      recovered: "복구 성공",
-      recovered_after_replan: "재계획 후 복구",
-      no_action_required: "조치 불필요",
-      safe_failure: "안전 중단",
-      safe_stopped: "안전 중단",
+  function renderJob(job) {
+    state.job = job;
+    state.experimentId = job.experiment_id;
+    state.running = !TERMINAL.has(job.status);
+    elements["experiment-id"].textContent = job.experiment_id;
+    elements["job-status"].textContent = jobStatusLabel(job.status);
+    elements["current-stage"].textContent = job.current_stage;
+    elements["run-experiment"].disabled = state.running;
+    elements["cancel-experiment"].disabled = !state.running;
+    const report = runtimeReport();
+    renderAgentCards(report);
+    renderInspector();
+    renderReport(report);
+    updateStage(job.current_stage, TERMINAL.has(job.status) && job.status !== "completed");
+    if (TERMINAL.has(job.status)) stopTimer();
+  }
+
+  function renderReport(report) {
+    if (!report) return;
+    const evidence = report.evidence || {};
+    const metrics = evidence.metric_values || {};
+    const metricEntries = Object.entries(metrics);
+    elements["evidence-metric"].textContent = metricEntries.length ? metricEntries.map(([key, value]) => `${key} ${formatValue(value)}`).join(" · ") : "수집 결과 없음";
+    elements["evidence-source"].textContent = evidence.source || "unknown";
+    const reviews = Array.isArray(report.peer_reviews) ? report.peer_reviews : [];
+    elements["review-summary"].textContent = `${reviews.length}개 역할별 검토`;
+    const negotiation = report.negotiation || {};
+    elements["consensus-summary"].textContent = negotiation.consensus || "미합의";
+    elements["consensus-status"].textContent = negotiation.consensus === "approved" ? "합의 완료" : "합의 확인 필요";
+    elements["action-summary"].textContent = actionLabel(report.selected_action);
+    const safety = report.safety_validation || {};
+    elements["allowlist-result"].textContent = safety.valid === true ? "통과" : "차단/대기";
+    elements["validator-result"].textContent = safety.valid === true ? "VALID" : "대기";
+    elements["safety-status"].textContent = safety.valid === true ? "안전 검증 통과" : "검증 미완료";
+    const cleanup = report.cleanup || {};
+    elements["cleanup-result"].textContent = cleanup.valid === false ? "실패 · 검토 필요" : "완료/불필요";
+    const recovery = report.recovery_monitoring || {};
+    elements["result-status"].textContent = report.final_status || "완료";
+    elements["result-recovery"].textContent = recovery.recovery_success === true ? "성공" : (recovery.recovery_success === false ? "실패" : "—");
+    elements["result-mttr"].textContent = recovery.recovery_seconds == null ? "—" : `${recovery.recovery_seconds}s`;
+    const contributions = Object.values(report.agent_contributions || {});
+    const reward = contributions.reduce((sum, item) => sum + Number(item.reward || 0), 0);
+    elements["result-reward"].textContent = contributions.length ? reward.toFixed(3) : "—";
+    elements["result-reviews"].textContent = String(reviews.length);
+    const artifacts = Object.keys(report.artifacts || {});
+    elements["result-artifacts"].textContent = artifacts.length ? `${artifacts.length}개` : "Job DB 저장";
+  }
+
+  function formatValue(value) {
+    if (typeof value === "number") return Number.isInteger(value) ? String(value) : value.toFixed(3);
+    return String(value);
+  }
+
+  function jobStatusLabel(status) {
+    return ({ queued: "대기", running: "실행 중", cancelling: "취소 중", completed: "완료", failed: "실패", blocked: "안전 차단", cancelled: "취소됨", interrupted: "서버 재시작으로 중단" })[status] || status;
+  }
+
+  function updateStage(stage, failed) {
+    let index = STAGE_ORDER.indexOf(stage);
+    if (stage === "cleanup" || stage === "completed") index = STAGE_ORDER.length - 1;
+    elements["stage-timeline"].querySelectorAll("li").forEach((item, itemIndex) => {
+      item.classList.toggle("done", itemIndex < index);
+      item.classList.toggle("active", itemIndex === index && !failed);
+      item.classList.toggle("failed", itemIndex === index && failed);
+    });
+  }
+
+  function addRuntimeEvent(event) {
+    state.events.push(event);
+    elements["event-count"].textContent = `${state.events.length} events`;
+    if (state.events.length === 1) elements["event-log"].replaceChildren();
+    const item = document.createElement("li");
+    const time = document.createElement("time");
+    time.textContent = new Date(event.created_at).toLocaleTimeString("ko-KR", { hour12: false });
+    const message = document.createElement("span");
+    message.textContent = `[${event.stage}] ${event.message}`;
+    item.append(time, message);
+    elements["event-log"].append(item);
+    updateStage(event.stage, event.status === "failed");
+    elements["current-stage"].textContent = event.stage;
+  }
+
+  function connectEvents() {
+    closeEvents();
+    const stream = new EventSource(`/api/experiments/${state.experimentId}/events`);
+    state.eventSource = stream;
+    stream.addEventListener("runtime", (event) => addRuntimeEvent(JSON.parse(event.data)));
+    stream.addEventListener("job", async (event) => {
+      const job = JSON.parse(event.data);
+      closeEvents();
+      try {
+        renderJob(await api(`/api/experiments/${job.experiment_id}`));
+      } catch (error) {
+        showError(error);
+      }
+    });
+    stream.onerror = () => {
+      if (!state.job || !TERMINAL.has(state.job.status)) elements["control-error"].textContent = "실시간 이벤트 연결을 재시도하고 있습니다.";
     };
-    return labels[status] || status || "대기";
   }
 
-  function formatDecimal(value) {
-    return Number(value || 0).toFixed(2);
+  function closeEvents() {
+    if (state.eventSource) state.eventSource.close();
+    state.eventSource = null;
   }
 
-  function defaultReward(agentName) {
-    return {
-      AIServiceHASupportAgent: 0.9,
-      AIApplicationManagementAgent: 0.85,
-      AISemiconductorInfraOpsAgent: 0.7,
-      CostOptimizationAgent: 0.6,
-    }[agentName];
-  }
-
-  function shortAgent(agentName) {
-    return AGENT_META[agentName]?.code || agentName;
-  }
-
-  function agentStatement(agentName, scenario, action, diagnosis) {
-    if (agentName === "AIServiceHASupportAgent") {
-      return `${scenario.label} Evidence에서 ${diagnosis.cause} 위험을 확인했습니다. 복구 필요성을 ${diagnosis.severity}로 판단합니다.`;
-    }
-    if (agentName === "AIApplicationManagementAgent") {
-      return `진단 결과에 따라 ${actionLabel(action)} Action을 제안합니다. 허용된 실행 범위 안에서만 전달합니다.`;
-    }
-    if (agentName === "AISemiconductorInfraOpsAgent") {
-      return action.kind === "scale_out"
-        ? `Replica ${action.replicas || 3}은 정책 범위 1–5 안이며 인프라 용량 제약을 충족합니다.`
-        : "제안된 Action은 Replica와 자원 안전성 정책을 위반하지 않습니다.";
-    }
-    return action.kind === "scale_out"
-      ? "Replica 증가는 비용 한도 안에 있으며 과잉 대응으로 판단되지 않습니다."
-      : "추가 자원 비용이 발생하지 않아 비용 정책 범위 안에서 승인합니다.";
-  }
-
-  function defaultPeerReviews(agentName, scenario, action) {
-    const lines = {
-      AIServiceHASupportAgent: [
-        `APP  ${actionLabel(action)} 제안`,
-        "INFRA  자원 안전성 검토",
-        "COST  비용 정책 검토",
-      ],
-      AIApplicationManagementAgent: [
-        `HA  ${scenario.label} 진단 근거 확인`,
-        "INFRA  실행 가능성 승인",
-        "COST  과잉 대응 여부 확인",
-      ],
-      AISemiconductorInfraOpsAgent: [
-        `APP  ${actionLabel(action)} 수용성 요청`,
-        "HA  복구 목표 일치 확인",
-        "COST  자원 증가 한도 확인",
-      ],
-      CostOptimizationAgent: [
-        `APP  ${actionLabel(action)} 비용 검토 요청`,
-        "INFRA  용량 정책 충족",
-        "HA  가용성 우선순위 확인",
-      ],
+  function startTimer(createdAt) {
+    stopTimer();
+    state.startedAt = createdAt ? new Date(createdAt) : new Date();
+    const tick = () => {
+      const seconds = Math.max(0, Math.floor((Date.now() - state.startedAt.getTime()) / 1000));
+      elements["elapsed-time"].textContent = `${String(Math.floor(seconds / 60)).padStart(2, "0")}:${String(seconds % 60).padStart(2, "0")}`;
     };
-    return lines[agentName] || [];
+    tick();
+    state.timer = window.setInterval(tick, 1000);
   }
 
+  function stopTimer() {
+    if (state.timer) window.clearInterval(state.timer);
+    state.timer = null;
+  }
+
+  async function runExperiment() {
+    elements["control-error"].textContent = "";
+    const item = scenario();
+    const payload = {
+      scenario_id: state.selectedScenario,
+      namespace: item.namespace,
+      deployment: item.deployment,
+      metric: item.metric,
+      threshold: item.threshold,
+      mode: state.selectedMode,
+      backend: "python",
+      protocol_profile: elements["profile-select"].value,
+      repetitions: Number(elements["repetitions-select"].value),
+    };
+    if (state.selectedMode === "real") {
+      const confirmation = window.prompt("실제 Kubernetes 장애 주입과 복구를 실행하려면 EXECUTE REAL EXPERIMENT를 입력하세요.");
+      if (confirmation !== "EXECUTE REAL EXPERIMENT") return;
+      Object.assign(payload, { real_confirmation: "EXECUTE REAL EXPERIMENT" });
+    }
+    try {
+      const job = await api("/api/experiments", { method: "POST", body: JSON.stringify(payload) });
+      state.events = [];
+      renderJob(job);
+      startTimer(job.created_at);
+      connectEvents();
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function cancelExperiment() {
+    if (!state.experimentId) return;
+    try {
+      const job = await api(`/api/experiments/${state.experimentId}/cancel`, { method: "POST" });
+      renderJob(job);
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  function showError(error) {
+    elements["control-error"].textContent = error instanceof Error ? error.message : String(error);
+  }
+
+  async function loadScenarios() {
+    try {
+      const payload = await api("/api/scenarios");
+      const resolved = {};
+      (payload.scenarios || []).forEach((item) => {
+        const id = item.scenario_id || item.id;
+        if (id) resolved[id] = normalizeScenario(item);
+      });
+      if (Object.keys(resolved).length) state.scenarios = resolved;
+    } catch (_error) {
+      state.scenarios = { ...REGISTERED_SCENARIOS };
+    }
+    renderScenarioButtons();
+    renderCondition();
+  }
+
+  async function loadConnections() {
+    try {
+      const payload = await api("/api/connections");
+      const values = Object.entries(payload.connections || {});
+      const required = values.filter(([, item]) => item.required_for_real);
+      const ready = required.filter(([, item]) => item.ready).length;
+      elements["connection-label"].textContent = `${ready}/${required.length} 실험 연결 준비`;
+      elements["connection-summary"].textContent = `Prometheus · Chaos Mesh · Kubernetes ${ready === required.length ? "준비" : "일부 미연결"}`;
+      elements["connection-dot"].classList.toggle("ready", ready === required.length);
+    } catch (_error) {
+      elements["connection-label"].textContent = "연결 정보 없음";
+    }
+  }
+
+  async function restoreLatestJob() {
+    try {
+      const payload = await api("/api/experiments?limit=20");
+      const latest = payload.jobs && payload.jobs[0];
+      if (!latest) return;
+      const job = await api(`/api/experiments/${latest.experiment_id}`);
+      renderJob(job);
+      const restoredEvents = job.events || [];
+      state.events = [];
+      elements["event-log"].replaceChildren();
+      restoredEvents.forEach((event) => addRuntimeEvent(event));
+      if (!TERMINAL.has(job.status)) {
+        startTimer(job.started_at || job.created_at);
+        connectEvents();
+      }
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  function bindControls() {
+    elements["mode-control"].querySelectorAll("button[data-mode]").forEach((button) => button.addEventListener("click", () => selectMode(button.dataset.mode)));
+    elements["agent-grid"].querySelectorAll("button[data-agent]").forEach((button) => button.addEventListener("click", () => selectAgent(button.dataset.agent)));
+    elements["agent-tabs"].querySelectorAll("button[data-agent-tab]").forEach((button) => button.addEventListener("click", () => selectAgent(button.dataset.agentTab)));
+    elements["run-experiment"].addEventListener("click", runExperiment);
+    elements["cancel-experiment"].addEventListener("click", cancelExperiment);
+  }
+
+  async function boot() {
+    bindControls();
+    elements["result-artifacts"].title = FUTURE_INTEGRATION_NOTE;
+    renderCondition();
+    resetEvidenceView();
+    await Promise.all([loadScenarios(), loadConnections()]);
+    await restoreLatestJob();
+  }
+
+  window.addEventListener("beforeunload", closeEvents);
   boot();
 })();

@@ -3,20 +3,185 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta
-      name="description"
-      content="Safety-Bounded 4-Agent AIOps 연구 실험 콘솔"
-    />
-    <title>4-Agent AIOps 실험 콘솔</title>
-    <link rel="stylesheet" href="/static/styles.css?v=7" />
-    <script defer src="/static/app.js?v=7"></script>
+    <meta name="description" content="Safety-bounded 4-Agent AIOps 연구 운영 콘솔" />
+    <title>4-Agent AIOps 연구 운영 콘솔</title>
+    <link rel="stylesheet" href="/static/styles.css?v=8" />
+    <script defer src="/static/app.js?v=8"></script>
   </head>
   <body>
-    <noscript>
-      <main class="noscript">
-        JavaScript가 비활성화되어 AIOps 실험 콘솔을 표시할 수 없습니다.
+    <noscript><main class="noscript">이 연구 콘솔을 사용하려면 JavaScript가 필요합니다.</main></noscript>
+    <div class="console-shell">
+      <header class="console-header">
+        <div class="identity">
+          <span class="identity-mark" aria-hidden="true">AI</span>
+          <div>
+            <p class="eyebrow">AI-MCMP · MASTER RESEARCH OPERATIONS</p>
+            <h1>4-Agent AIOps 연구 운영 콘솔</h1>
+            <p>상호감시, 안전 검증, Kubernetes 복구 실험을 하나의 ExperimentSession으로 추적합니다.</p>
+          </div>
+        </div>
+        <div class="header-status" aria-live="polite">
+          <span class="connection-dot" id="connection-dot"></span>
+          <span id="connection-label">연결 확인 중</span>
+          <span class="experiment-id" id="experiment-id">새 실험</span>
+        </div>
+      </header>
+
+      <section class="status-strip" aria-label="실험 상태">
+        <div><span>실행 상태</span><strong id="job-status">대기</strong></div>
+        <div><span>현재 단계</span><strong id="current-stage">queued</strong></div>
+        <div><span>Agent 합의</span><strong id="consensus-status">Evidence 대기</strong></div>
+        <div><span>안전·복구</span><strong id="safety-status">검증 대기</strong></div>
+      </section>
+
+      <main class="research-workspace">
+        <aside class="experiment-controls" id="experiment-controls" aria-labelledby="conditions-title">
+          <div class="section-heading">
+            <div><p class="eyebrow">CONDITIONS</p><h2 id="conditions-title">실험 조건</h2></div>
+            <span class="section-code">01</span>
+          </div>
+
+          <fieldset class="scenario-fieldset">
+            <legend>장애 시나리오</legend>
+            <div class="scenario-list" id="scenario-list">
+              <button type="button" data-scenario="cpu-stress" aria-pressed="true"><strong>CPU Stress</strong><span>paymentservice · cpu</span></button>
+              <button type="button" data-scenario="memory-stress" aria-pressed="false"><strong>Memory Stress</strong><span>checkoutservice · memory</span></button>
+              <button type="button" data-scenario="network-delay" aria-pressed="false"><strong>Network Delay</strong><span>paymentservice · latency</span></button>
+              <button type="button" data-scenario="pod-kill" aria-pressed="false"><strong>Pod Kill</strong><span>paymentservice · availability</span></button>
+            </div>
+          </fieldset>
+
+          <fieldset class="mode-fieldset">
+            <legend>실행 모드</legend>
+            <div class="segmented-control" id="mode-control">
+              <button type="button" data-mode="mock" aria-pressed="true">Mock</button>
+              <button type="button" data-mode="dry-run" aria-pressed="false">Dry-run</button>
+              <button type="button" data-mode="real" aria-pressed="false">Real</button>
+            </div>
+          </fieldset>
+
+          <label class="field-label" for="controller-select">Agent controller</label>
+          <select id="controller-select">
+            <option value="deterministic">Deterministic 4-Agent</option>
+            <option value="autogen" disabled>AutoGen GroupChat · 다음 통합</option>
+          </select>
+
+          <label class="field-label" for="profile-select">연구 프로파일</label>
+          <select id="profile-select">
+            <option value="four-agent-role-veto-v1">Role-based veto · 2 rounds</option>
+            <option value="four-agent-unanimous-v1">Unanimous veto</option>
+            <option value="four-agent-weighted-v1">Weighted majority</option>
+          </select>
+
+          <label class="field-label" for="repetitions-select">반복 횟수</label>
+          <select id="repetitions-select"><option value="1">1회</option><option value="3" selected>3회</option><option value="10">10회</option></select>
+
+          <div class="target-summary">
+            <span>대상</span><strong id="target-deployment">online-boutique / paymentservice</strong>
+            <span>관측</span><strong id="target-metric">cpu · threshold 80</strong>
+          </div>
+
+          <p class="boundary-note" id="mode-boundary">Mock은 합성 Evidence를 사용하며 Kubernetes를 변경하지 않습니다.</p>
+          <div class="control-actions">
+            <button type="button" class="primary-action" id="run-experiment">실험 실행</button>
+            <button type="button" class="secondary-action" id="cancel-experiment" disabled>취소</button>
+          </div>
+          <p class="inline-error" id="control-error" role="alert"></p>
+        </aside>
+
+        <section class="live-workflow" id="live-workflow" aria-labelledby="workflow-title">
+          <div class="section-heading workflow-heading">
+            <div><p class="eyebrow">LIVE 4-AGENT WORKFLOW</p><h2 id="workflow-title">상호감시와 복구 흐름</h2></div>
+            <span class="elapsed" id="elapsed-time">00:00</span>
+          </div>
+
+          <ol class="stage-timeline" id="stage-timeline">
+            <li data-stage="preflight" class="active"><span>1</span>Preflight</li>
+            <li data-stage="injecting_fault"><span>2</span>장애 주입</li>
+            <li data-stage="collecting_evidence"><span>3</span>Evidence</li>
+            <li data-stage="agent_reasoning"><span>4</span>Agent 판단</li>
+            <li data-stage="validating"><span>5</span>안전 검증</li>
+            <li data-stage="executing"><span>6</span>복구 실행</li>
+            <li data-stage="observing_recovery"><span>7</span>복구 평가</li>
+          </ol>
+
+          <div class="evidence-band">
+            <div><span>Scenario</span><strong id="evidence-scenario">CPU Stress</strong></div>
+            <div><span>Target</span><strong id="evidence-target">online-boutique/paymentservice</strong></div>
+            <div><span>Metric</span><strong id="evidence-metric">실험 Evidence 수집 후 표시</strong></div>
+            <div><span>Source</span><strong id="evidence-source">FakeEvidenceProvider</strong></div>
+          </div>
+
+          <div class="agent-grid" id="agent-grid" aria-label="4-Agent 상호감시">
+            <button type="button" data-agent="AIServiceHASupportAgent" aria-pressed="true"><span>HA</span><strong>HA Agent</strong><small>가용성 진단 대기</small></button>
+            <button type="button" data-agent="AIApplicationManagementAgent" aria-pressed="false"><span>APP</span><strong>Application</strong><small>복구 제안 대기</small></button>
+            <button type="button" data-agent="AISemiconductorInfraOpsAgent" aria-pressed="false"><span>INF</span><strong>Infrastructure</strong><small>자원 검토 대기</small></button>
+            <button type="button" data-agent="CostOptimizationAgent" aria-pressed="false"><span>CST</span><strong>Cost</strong><small>비용 검토 대기</small></button>
+          </div>
+
+          <div class="consensus-band">
+            <div><span>상호검토</span><strong id="review-summary">역할별 의견 수집 대기</strong></div>
+            <span aria-hidden="true">→</span>
+            <div><span>합의</span><strong id="consensus-summary">대기</strong></div>
+            <span aria-hidden="true">→</span>
+            <div><span>최종 Action</span><strong id="action-summary">선택 전</strong></div>
+          </div>
+
+          <details class="event-panel" open>
+            <summary>타임라인과 이벤트 로그 <span id="event-count">0 events</span></summary>
+            <ol id="event-log"><li><time>대기</time><span>실험을 실행하면 서버 이벤트가 순서대로 기록됩니다.</span></li></ol>
+          </details>
+        </section>
+
+        <aside class="decision-inspector" id="decision-inspector" aria-labelledby="inspector-title">
+          <div class="section-heading">
+            <div><p class="eyebrow">DECISION / SAFETY INSPECTOR</p><h2 id="inspector-title">의사결정 및 안전 검사</h2></div>
+            <span class="section-code">03</span>
+          </div>
+          <div class="agent-tabs" id="agent-tabs">
+            <button type="button" data-agent-tab="AIServiceHASupportAgent" aria-pressed="true">HA</button>
+            <button type="button" data-agent-tab="AIApplicationManagementAgent" aria-pressed="false">APP</button>
+            <button type="button" data-agent-tab="AISemiconductorInfraOpsAgent" aria-pressed="false">INF</button>
+            <button type="button" data-agent-tab="CostOptimizationAgent" aria-pressed="false">COST</button>
+          </div>
+          <dl class="decision-facts">
+            <dt>선택 Agent</dt><dd id="selected-agent">AIServiceHASupportAgent</dd>
+            <dt>판단</dt><dd id="agent-decision">실험 Evidence 수집 후 표시</dd>
+            <dt>승인</dt><dd id="agent-approval">대기</dd>
+            <dt>Reward</dt><dd id="agent-reward">—</dd>
+          </dl>
+          <div class="agent-statement"><span>Agent statement</span><p id="agent-statement">실제 실행 결과의 Agent 판단 근거만 표시합니다.</p></div>
+          <div class="review-section"><span>Peer reviews</span><ul id="peer-reviews"><li>상호검토 기록 대기</li></ul></div>
+          <div class="safety-section">
+            <span>Execution boundary</span>
+            <dl>
+              <dt>Allowlist</dt><dd id="allowlist-result">대기</dd>
+              <dt>Replica limit</dt><dd>1–5</dd>
+              <dt>Validator</dt><dd id="validator-result">대기</dd>
+              <dt>Cleanup</dt><dd id="cleanup-result">등록됨</dd>
+            </dl>
+          </div>
+        </aside>
       </main>
-    </noscript>
-    <div id="root"></div>
+
+      <section class="research-results" id="research-results" aria-labelledby="results-title">
+        <div class="section-heading">
+          <div><p class="eyebrow">RESULTS / ARTIFACTS</p><h2 id="results-title">결과와 연구 산출물</h2></div>
+          <span id="result-status">실행 대기</span>
+        </div>
+        <div class="result-grid">
+          <div><span>Recovery</span><strong id="result-recovery">—</strong></div>
+          <div><span>MTTR</span><strong id="result-mttr">—</strong></div>
+          <div><span>Reward</span><strong id="result-reward">—</strong></div>
+          <div><span>Agent reviews</span><strong id="result-reviews">0</strong></div>
+          <div><span>Artifacts</span><strong id="result-artifacts">실행 후 생성</strong></div>
+        </div>
+        <div class="integration-boundary">
+          <span>AutoGen GroupChat은 다음 통합 단계</span>
+          <span>AIOpsLab benchmark는 다음 통합 단계</span>
+          <span id="connection-summary">Prometheus · Chaos Mesh · Kubernetes 연결 확인 중</span>
+        </div>
+      </section>
+    </div>
   </body>
 </html>
