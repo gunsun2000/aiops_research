@@ -1,0 +1,57 @@
+# Task 5 Report: Experiment Runtime Orchestration
+
+## Commit
+
+- Implementation commit: `b06068c` (`feat: orchestrate bounded real experiments`)
+- Review-fix commit: `04e7913` (`fix: enforce experiment runtime safety invariants`)
+- Review-fix 2 commit: `f5d2b66` (`fix: bound coordinator execution by registered deadline`)
+- Review-fix 3 commit: `b2f4b71` (`fix: reject unsupported coordinator capabilities`)
+- Review-fix 4 commit: `46c92aa` (`fix: derive coordinator admission from registered stages`)
+- Final review fix A commit: `e3e6918` (`fix: bind runtime requests to registered scenarios`)
+- Base commit: `79b4ec5`
+
+## Files
+
+- `src/aiops_k8s_agents/experiment_runtime.py`
+- `src/aiops_k8s_agents/experiment_runtime_models.py`
+- `src/aiops_k8s_agents/executor.py`
+- `src/aiops_k8s_agents/experiment_session.py`
+- `src/aiops_k8s_agents/kubernetes_status.py`
+- `src/aiops_k8s_agents/mutual_supervision.py`
+- `tests/test_experiment_runtime.py`
+- `tests/test_experiment_session.py`
+
+## Implemented
+
+- Added the bounded `ExperimentRuntime` lifecycle: target validation, runtime preflight, real-mode operation locking, registered Chaos Mesh injection, coordinator execution, recovery-stage events, cleanup, and immutable session normalization.
+- Preserved mock-mode boundaries: mock runs do not call Chaos Mesh or acquire an external operation lock.
+- Added `RuntimeResearchEventBridge` for coordinator stream translation, artifact finalization, immutable event snapshots, and one runtime `experiment_id` across research events, reports, and session stages.
+- Cleanup runs after coordinator failures, timeout/interruption signals, and injection failures when an application exists; cleanup failures retain the primary error and set `cleanup_error`, `cleanup_status=cleanup_failed`, and `human_review_required`.
+- Added cancellation handling before external operations and terminal status normalization for `cancelled`, `interrupted`, `blocked`, and `cleanup_failed`.
+
+## Review Fixes
+
+- Runtime-owned `TargetOperationLock` now spans real preflight, injection, evidence, coordinator reasoning, and cleanup; the coordinator skips its nested action lock when runtime ownership is active.
+- Coordinator mode and optional backend are validated against the request before any external operation; both real/mock mismatch directions are covered.
+- Added a deadline from `RuntimeConfiguration.timeouts["experiment"]`, cancellation/deadline checkpoints around injection, evidence, coordinator execution, and recovery execution, plus coordinator runtime-control checkpoints.
+- Coordinator event stores defer finalization to one runtime-owned terminal write after cleanup. The persisted report includes terminal status, cleanup data, runtime event sequence, and the same experiment id as the returned result.
+- Added an injectable `ExperimentSessionStore`; every terminal path persists exactly one normalized immutable session.
+- Added the required positive `experiment_seconds` production setting and validation; runtime deadlines now use this registered key rather than an optional timeout-map entry.
+- Added a cancellable coordinator worker boundary that signals runtime control on expiry, joins the worker before cleanup, and prevents recovery from continuing in background after timeout.
+- Replaced self-attested capability admission with `CoordinatorAdmissionValidator`, which derives a concrete admission from the actual `MutualSupervisionCoordinator`, exact registered evidence/recovery/agent stages, protocol profile, and positive finite stage timeouts before fault injection.
+- Admission rejects subclasses, overridden/custom coordinator stages, blocking or unsupported evidence/agent/executor dependencies, and self-claiming non-cooperative coordinators before Chaos Mesh work. Capability fields default false and are not trusted by production admission.
+- Added finite subprocess I/O timeouts for executor and Kubernetes snapshot operations, plus runtime-control checks after each supported coordinator stage. Coordinator execution remains synchronous; no Python thread cancellation or unbounded join is used.
+- Runtime request admission now requires exact namespace, deployment, metric, and threshold equality with the selected registered scenario before coordinator construction, lock acquisition, Chaos preflight, or fault injection. Incomplete scenario bindings are blocked conservatively.
+
+## Tests
+
+- `python -m pytest tests/test_experiment_runtime.py -q`: `28 passed`
+- `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py tests/test_real_evidence.py -q`: `66 passed`
+- `python -m pytest -q`: `455 passed, 1 warning`
+- `git diff --check`: passed
+
+## Concerns
+
+- Tests use deterministic fakes and do not claim live Kubernetes, Prometheus, Chaos Mesh, or model/API-key validation.
+- Coordinator execution is intentionally synchronous after capability validation; boundedness and cancellation are an explicit coordinator contract, not a claim that Python threads can be forcibly stopped. Unsupported coordinators are rejected before injection, while the supported coordinator checks runtime control before evidence/recovery stages.
+- The existing CLI behavior was not modified; runtime construction and web integration remain later plan tasks.

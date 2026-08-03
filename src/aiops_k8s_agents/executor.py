@@ -36,14 +36,20 @@ class ExecutionBackend(str, Enum):
     GO = "go"
 
 
-def subprocess_runner(argv: list[str]) -> tuple[int, str, str]:
+def subprocess_runner(
+    argv: list[str],
+    timeout_seconds: float = 15.0,
+) -> tuple[int, str, str]:
     try:
         completed = subprocess.run(
             argv,
             check=False,
             capture_output=True,
             text=True,
+            timeout=timeout_seconds,
         )
+    except subprocess.TimeoutExpired as exc:
+        return 124, "", f"command timed out after {timeout_seconds}s: {exc}"
     except FileNotFoundError as exc:
         return 127, "", str(exc)
     return completed.returncode, completed.stdout.strip(), completed.stderr.strip()

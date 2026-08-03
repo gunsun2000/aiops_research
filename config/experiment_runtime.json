@@ -1,0 +1,54 @@
+{
+  "version": "1.0.0",
+  "allowed_namespaces": ["online-boutique"],
+  "allowed_deployments": ["paymentservice", "checkoutservice"],
+  "min_replicas": 1,
+  "max_replicas": 5,
+  "experiment_seconds": 300,
+  "timeouts": {
+    "preflight_seconds": 15,
+    "fault_ready_seconds": 60,
+    "recovery_seconds": 120,
+    "cleanup_seconds": 60
+  },
+  "metric_queries": {
+    "cpu": "sum(rate(container_cpu_usage_seconds_total{namespace=\"{namespace}\",pod=~\"{deployment}-.*\",container!=\"\",image!=\"\"}[1m])) * 100",
+    "memory": "max(container_memory_working_set_bytes{namespace=\"{namespace}\",pod=~\"{deployment}-.*\",container!=\"\",image!=\"\"})",
+    "latency": "max(probe_duration_seconds{target=\"{deployment}\"})",
+    "availability": "kube_deployment_status_replicas_available{namespace=\"{namespace}\",deployment=\"{deployment}\"}"
+  },
+  "scenarios": {
+    "pod-kill": {
+      "id": "pod-kill",
+      "namespace": "online-boutique",
+      "deployment": "paymentservice",
+      "metric": "availability",
+      "threshold": 1.0,
+      "manifest": "k8s/paymentservice-pod-kill.yaml"
+    },
+    "cpu-stress": {
+      "id": "cpu-stress",
+      "namespace": "online-boutique",
+      "deployment": "paymentservice",
+      "metric": "cpu",
+      "threshold": 80.0,
+      "manifest": "k8s/chaos/paymentservice-cpu-stress.yaml"
+    },
+    "memory-stress": {
+      "id": "memory-stress",
+      "namespace": "online-boutique",
+      "deployment": "checkoutservice",
+      "metric": "memory",
+      "threshold": 80.0,
+      "manifest": "k8s/chaos/checkoutservice-memory-stress.yaml"
+    },
+    "network-delay": {
+      "id": "network-delay",
+      "namespace": "online-boutique",
+      "deployment": "paymentservice",
+      "metric": "latency",
+      "threshold": 0.1,
+      "manifest": "k8s/chaos/paymentservice-network-delay.yaml"
+    }
+  }
+}

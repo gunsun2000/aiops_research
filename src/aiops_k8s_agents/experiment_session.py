@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from threading import RLock
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 
 class ExperimentStage(str, Enum):
@@ -48,6 +48,12 @@ class ExperimentSession:
             "human_review_required": self.human_review_required,
             "artifacts": _thaw(self.artifacts),
         }
+
+
+class ExperimentSessionStore(Protocol):
+    def put(self, session: ExperimentSession) -> ExperimentSession: ...
+
+    def get(self, experiment_id: str) -> ExperimentSession | None: ...
 
 
 class InMemoryExperimentSessionStore:
@@ -230,6 +236,8 @@ def _result_status(
         return "completed" if recovered is True else "failed"
     if final_status in {"no_action_required", "recovered", "recovered_after_replan"}:
         return "completed"
+    if final_status in {"cancelled", "interrupted", "blocked", "cleanup_failed"}:
+        return final_status
     if final_status in {
         "safe_failure",
         "runtime_unavailable",
