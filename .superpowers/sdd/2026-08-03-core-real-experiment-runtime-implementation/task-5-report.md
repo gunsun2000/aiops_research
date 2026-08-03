@@ -7,6 +7,7 @@
 - Review-fix 2 commit: `f5d2b66` (`fix: bound coordinator execution by registered deadline`)
 - Review-fix 3 commit: `b2f4b71` (`fix: reject unsupported coordinator capabilities`)
 - Review-fix 4 commit: `46c92aa` (`fix: derive coordinator admission from registered stages`)
+- Final review fix A commit: `e3e6918` (`fix: bind runtime requests to registered scenarios`)
 - Base commit: `79b4ec5`
 
 ## Files
@@ -40,12 +41,14 @@
 - Replaced self-attested capability admission with `CoordinatorAdmissionValidator`, which derives a concrete admission from the actual `MutualSupervisionCoordinator`, exact registered evidence/recovery/agent stages, protocol profile, and positive finite stage timeouts before fault injection.
 - Admission rejects subclasses, overridden/custom coordinator stages, blocking or unsupported evidence/agent/executor dependencies, and self-claiming non-cooperative coordinators before Chaos Mesh work. Capability fields default false and are not trusted by production admission.
 - Added finite subprocess I/O timeouts for executor and Kubernetes snapshot operations, plus runtime-control checks after each supported coordinator stage. Coordinator execution remains synchronous; no Python thread cancellation or unbounded join is used.
+- Runtime request admission now requires exact namespace, deployment, metric, and threshold equality with the selected registered scenario before coordinator construction, lock acquisition, Chaos preflight, or fault injection. Incomplete scenario bindings are blocked conservatively.
 
 ## Tests
 
-- `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py -q`: `27 passed`
-- `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py tests/test_real_evidence.py -q`: `62 passed`
-- `python -m pytest -q`: `433 passed, 1 warning`
+- `python -m pytest tests/test_experiment_runtime.py -q`: `28 passed`
+- `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py tests/test_real_evidence.py -q`: `66 passed`
+- `python -m pytest -q --ignore=tests/test_experiment_runtime_factory.py`: `447 passed, 1 warning`
+- `python -m pytest -q`: `453 passed, 2 failed, 1 warning`; both failures are in pre-existing, out-of-scope uncommitted factory changes.
 - `git diff --check`: passed
 
 ## Concerns
@@ -53,3 +56,4 @@
 - Tests use deterministic fakes and do not claim live Kubernetes, Prometheus, Chaos Mesh, or model/API-key validation.
 - Coordinator execution is intentionally synchronous after capability validation; boundedness and cancellation are an explicit coordinator contract, not a claim that Python threads can be forcibly stopped. Unsupported coordinators are rejected before injection, while the supported coordinator checks runtime control before evidence/recovery stages.
 - The existing CLI behavior was not modified; runtime construction and web integration remain later plan tasks.
+- `src/aiops_k8s_agents/experiment_runtime_factory.py` and `tests/test_experiment_runtime_factory.py` had pre-existing uncommitted changes and were not touched or committed by final review fix A. Their two current full-suite failures concern factory mock/dry-run construction, outside this fix's authorized scope.
