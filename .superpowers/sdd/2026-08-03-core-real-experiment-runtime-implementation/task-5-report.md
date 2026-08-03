@@ -5,6 +5,7 @@
 - Implementation commit: `b06068c` (`feat: orchestrate bounded real experiments`)
 - Review-fix commit: `04e7913` (`fix: enforce experiment runtime safety invariants`)
 - Review-fix 2 commit: `f5d2b66` (`fix: bound coordinator execution by registered deadline`)
+- Review-fix 3 commit: `b2f4b71` (`fix: reject unsupported coordinator capabilities`)
 - Base commit: `79b4ec5`
 
 ## Files
@@ -32,16 +33,18 @@
 - Added an injectable `ExperimentSessionStore`; every terminal path persists exactly one normalized immutable session.
 - Added the required positive `experiment_seconds` production setting and validation; runtime deadlines now use this registered key rather than an optional timeout-map entry.
 - Added a cancellable coordinator worker boundary that signals runtime control on expiry, joins the worker before cleanup, and prevents recovery from continuing in background after timeout.
+- Replaced the worker boundary with an explicit `CoordinatorRuntimeCapabilities` contract validated before fault injection. Unsupported/non-cooperative coordinators are rejected before Chaos Mesh work; no Python thread cancellation or unbounded join is claimed or used.
+- The production `MutualSupervisionCoordinator` advertises the bounded, cancellable, finite-stage-I/O, deadline-aware contract and continues to enforce runtime control at evidence and recovery boundaries.
 
 ## Tests
 
-- `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py -q`: `24 passed`
+- `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py -q`: `27 passed`
 - `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py tests/test_real_evidence.py -q`: `58 passed`
-- `python -m pytest`: `429 passed, 1 warning`
+- `python -m pytest`: `430 passed, 1 warning`
 - `git diff --check`: passed
 
 ## Concerns
 
 - Tests use deterministic fakes and do not claim live Kubernetes, Prometheus, Chaos Mesh, or model/API-key validation.
-- The bounded worker joins before cleanup, so it never returns while coordinator work remains active. Coordinator implementations must honor the injected runtime-control capability at stage boundaries to terminate promptly after cancellation; the existing coordinator now checks around evidence and recovery execution.
+- Coordinator execution is intentionally synchronous after capability validation; boundedness and cancellation are an explicit coordinator contract, not a claim that Python threads can be forcibly stopped. Unsupported coordinators are rejected before injection, while the supported coordinator checks runtime control before evidence/recovery stages.
 - The existing CLI behavior was not modified; runtime construction and web integration remain later plan tasks.
