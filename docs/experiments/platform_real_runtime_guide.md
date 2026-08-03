@@ -180,6 +180,14 @@ following commands look up each failed record's registered scenario in the
 matrix configuration, delete that scenario's manifest, reset its deployment to
 the configured baseline replicas, and wait for rollout:
 
+Prerequisite for this cleanup block: install `jq` and verify it is available:
+
+```bash
+command -v jq
+jq --version
+# If absent on Ubuntu: sudo apt-get update && sudo apt-get install -y jq
+```
+
 ```bash
 RUN_DIR="$(ls -dt runs/recovery-action-pilot/* | head -1)"
 CONFIG="$RUN_DIR/recovery_action_experiments.json"
@@ -192,7 +200,7 @@ while IFS= read -r record; do
   IFS=$'\t' read -r manifest namespace deployment < <(
     jq -r --arg id "$scenario" \
       '.scenarios[] | select(.id == $id) |
-       [.chaos_manifest, .namespace, .deployment] | @tsv' "$config"
+       [.chaos_manifest, .namespace, .deployment] | @tsv' "$CONFIG"
   )
   if [[ -z "${manifest:-}" || -z "${namespace:-}" || -z "${deployment:-}" ]]; then
     echo "No registered cleanup target for scenario: $scenario" >&2
