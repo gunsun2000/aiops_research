@@ -159,6 +159,41 @@ def test_chaos_adapter_returns_cleanup_required_after_wait_timeout(tmp_path):
     assert calls[1][:2] == ["kubectl", "wait"]
 
 
+def test_chaos_adapter_cleans_up_after_wait_failure_and_preserves_lifecycle_outputs(tmp_path):
+    manifest = _manifest(tmp_path)
+    calls = []
+
+    def runner(argv):
+        calls.append(argv)
+        if argv[1] == "wait":
+            return 1, "wait-stdout", "wait-stderr"
+        if argv[1] == "delete":
+            return 0, "delete-stdout", "delete-stderr"
+        return 0, "apply-stdout", "apply-stderr"
+
+    adapter = ChaosMeshAdapter(
+        scenarios={"cpu-stress": manifest}, runner=runner, repository_root=tmp_path
+    )
+    application = adapter.inject("cpu-stress")
+    cleanup = adapter.cleanup(application)
+
+    assert application.valid is False
+    assert application.cleanup_required is True
+    assert "apply-stdout" in application.stdout
+    assert "wait-stdout" in application.stdout
+    assert "apply-stderr" in application.stderr
+    assert "wait-stderr" in application.stderr
+    assert cleanup.valid is True
+    assert calls == [
+        ["kubectl", "apply", "-f", str(manifest)],
+        [
+            "kubectl", "wait", "--for=condition=AllInjected", "-f",
+            str(manifest), "--timeout=60s",
+        ],
+        ["kubectl", "delete", "-f", str(manifest), "--ignore-not-found"],
+    ]
+
+
 def test_chaos_adapter_preserves_apply_failure_output_and_cleanup_requirement(tmp_path):
     manifest = _manifest(tmp_path)
 
