@@ -3,6 +3,7 @@
 ## Commit
 
 - Implementation commit: `ae4f8f5` (`feat: add bounded chaos mesh adapter`)
+- Review-fix commit: `21eb79d` (`fix: harden chaos mesh lifecycle cleanup`)
 - Base commit: `e18a21c`
 
 ## Files
@@ -12,20 +13,22 @@
 
 ## Implemented
 
-- Registered scenario manifests are resolved and constrained beneath the configured repository `k8s` root.
+- Registered scenario manifests are resolved and constrained beneath the fixed `<repository_root>/k8s` root; callers cannot select an arbitrary manifest root.
 - `preflight()` checks manifest existence, supported Chaos Mesh kinds, and `kubectl api-resources` availability.
-- `inject()` uses structured argv for `kubectl apply`, waits for `AllInjected`, records timestamps and command output, and exposes `cleanup_required` after an apply attempt.
-- `cleanup()` is repeatable and always uses `kubectl delete ... --ignore-not-found`; failed deletion remains visible through `cleanup_required=True`.
+- `inject()` uses structured argv for `kubectl apply`, waits for `AllInjected`, applies bounded subprocess timeouts, records timestamps and command output, and returns `cleanup_required=True` after every apply attempt, including wait exceptions and timeouts.
+- `cleanup()` is repeatable and always uses `kubectl delete ... --ignore-not-found`; bounded timeout, OS, and runner failures remain visible through `cleanup_required=True`.
 - Unknown scenarios and unsafe/unregistered manifest paths are rejected without accepting request-supplied arbitrary paths.
+- The registered default scenarios are exercised against the repository-contained `k8s` manifests with a fake `kubectl api-resources` response.
 
 ## Tests
 
-- `python -m pytest tests/test_chaos_adapter.py tests/test_real_evidence.py tests/test_experiment_runtime_models.py -q`: `58 passed`
-- `python -m pytest -q`: `400 passed, 1 warning`
+- `python -m pytest tests/test_chaos_adapter.py tests/test_real_evidence.py tests/test_experiment_runtime_models.py -q`: `65 passed`
+- `python -m pytest -q`: `407 passed, 1 warning`
 - `git diff --check`: passed
 
 ## Concerns
 
 - Tests use deterministic fake command runners and do not claim a live Kubernetes or Chaos Mesh cluster validation.
 - The adapter waits for the Chaos Mesh `AllInjected` condition; later orchestration should treat a failed wait as an invalid application while still invoking cleanup.
+- The default subprocess path bounds preflight/apply/delete commands at 15 seconds and wait at the wait timeout plus 15 seconds; injected fake runners remain deterministic test seams.
 - The adapter intentionally does not mutate or parse manifest content beyond a conservative `kind` check; manifest policy validation remains outside this Task 4 contract.
