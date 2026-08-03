@@ -7,6 +7,7 @@ from aiops_k8s_agents.prometheus import (
     PrometheusAdapterError,
     PrometheusMetricConfig,
     prometheus_result_to_alert_event,
+    prometheus_result_to_samples,
 )
 
 
@@ -104,6 +105,27 @@ def test_query_vector_preserves_labels_timestamp_and_value():
     assert samples[0].value == 3.25
 
 
+def test_query_vector_labels_are_immutable():
+    adapter = PrometheusAdapter(
+        "http://prometheus",
+        fetcher=lambda _url, _query: {
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [{
+                    "metric": {"pod": "payment-1"},
+                    "value": [1780000000.5, "3.25"],
+                }],
+            },
+        },
+    )
+
+    sample = adapter.query_vector("up")[0]
+
+    with pytest.raises(TypeError):
+        sample.labels["pod"] = "mutated"
+
+
 def test_query_vector_rejects_non_vector_result():
     adapter = PrometheusAdapter(
         "http://prometheus",
@@ -139,6 +161,94 @@ def test_ready_returns_false_when_query_fails():
     adapter = PrometheusAdapter("http://prometheus", fetcher=failing_fetcher)
 
     assert adapter.ready() is False
+
+
+def test_ready_queries_vector_one_and_rejects_empty_vector():
+    queries = []
+
+    def empty_vector_fetcher(_url, query):
+        queries.append(query)
+        return {
+            "status": "success",
+            "data": {"resultType": "vector", "result": []},
+        }
+
+    adapter = PrometheusAdapter("http://prometheus", fetcher=empty_vector_fetcher)
+
+    assert adapter.ready() is False
+    assert queries == ["vector(1)"]
+
+
+@pytest.mark.parametrize(
+    ("response", "error_match"),
+    [
+        ({"status": "error", "data": {}}, "success"),
+        ({"status": "success", "data": {"resultType": "vector"}}, "result list"),
+        (
+            {"status": "success", "data": {"resultType": "vector", "result": {}}},
+            "result list",
+        ),
+        (
+            {
+                "status": "success",
+                "data": {"resultType": "vector", "result": [{"value": [1, "2"]}]},
+            },
+            "string labels",
+        ),
+        (
+            {
+                "status": "success",
+                "data": {
+                    "resultType": "vector",
+                    "result": [{"metric": {}, "value": [1]}],
+                },
+            },
+            "timestamp and value",
+        ),
+        (
+            {
+                "status": "success",
+                "data": {
+                    "resultType": "vector",
+                    "result": [{"metric": {}, "value": ["not-a-number", "2"]}],
+                },
+            },
+            "numeric",
+        ),
+        (
+            {
+                "status": "success",
+                "data": {
+                    "resultType": "vector",
+                    "result": [{"metric": {}, "value": ["NaN", "2"]}],
+                },
+            },
+            "finite",
+        ),
+        (
+            {
+                "status": "success",
+                "data": {
+                    "resultType": "vector",
+                    "result": [{"metric": {}, "value": [1, "Infinity"]}],
+                },
+            },
+            "finite",
+        ),
+    ],
+)
+def test_query_vector_rejects_invalid_responses(response, error_match):
+    with pytest.raises(PrometheusAdapterError, match=error_match):
+        prometheus_result_to_samples(response)
+
+
+def test_query_vector_returns_empty_tuple_for_valid_empty_vector():
+    response = {
+        "status": "success",
+        "data": {"resultType": "vector", "result": []},
+    }
+
+    assert prometheus_result_to_samples(response) == ()
 
 
 def test_prometheus_cli_reads_mock_response_file(tmp_path, capsys):

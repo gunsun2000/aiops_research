@@ -6,6 +6,7 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from collections.abc import Mapping
+from types import MappingProxyType
 from typing import Any, Callable
 
 from aiops_k8s_agents.models import AlertEvent
@@ -28,7 +29,7 @@ class PrometheusMetricConfig:
 
 @dataclass(frozen=True)
 class PrometheusSample:
-    labels: dict[str, str]
+    labels: Mapping[str, str]
     timestamp: float
     value: float
 
@@ -152,7 +153,7 @@ def _extract_sample(result: Any) -> PrometheusSample:
     if not math.isfinite(timestamp) or not math.isfinite(sample_value):
         raise PrometheusAdapterError("Prometheus vector sample values must be finite")
 
-    return PrometheusSample(dict(labels), timestamp, sample_value)
+    return PrometheusSample(MappingProxyType(dict(labels)), timestamp, sample_value)
 
 
 def _query_url(base_url: str, query: str) -> str:
