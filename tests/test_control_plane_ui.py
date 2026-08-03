@@ -20,8 +20,8 @@ def test_console_has_one_accessible_research_workspace():
     assert 'id="decision-inspector"' in source
     assert 'id="research-results"' in source
     assert "4-Agent AIOps 연구 운영 콘솔" in source
-    assert "styles.css?v=10" in source
-    assert "app.js?v=10" in source
+    assert "styles.css?v=13" in source
+    assert "app.js?v=13" in source
 
 
 def test_console_offers_all_registered_fault_scenarios_and_safe_modes():
@@ -123,3 +123,25 @@ def test_console_adds_compact_separate_aiopslab_benchmark_job_panel():
     assert "new EventSource(`/api/benchmarks/aiopslab/jobs/${state.aiopslabJobId}/events`)" in script
     assert "`/api/benchmarks/aiopslab/jobs/${state.aiopslabJobId}/cancel`" in script
     assert "artifact_urls" in script
+
+
+def test_console_runs_recovery_action_comparison_and_renders_graphs():
+    html = _source(INDEX_HTML)
+    script = _source(APP_JS)
+
+    assert 'id="recovery-comparison-panel"' in html
+    assert 'id="comparison-mode"' in html
+    assert 'id="comparison-repetitions"' in html
+    assert 'id="comparison-run"' in html
+    assert 'id="comparison-cancel"' in html
+    assert 'id="comparison-progress"' in html
+    assert 'id="comparison-success-chart"' in html
+    assert 'id="comparison-recovery-chart"' in html
+    assert "합성 비교 데이터" in html
+
+    assert 'api("/api/comparisons/recovery")' in script
+    assert 'api("/api/comparisons/recovery/jobs?limit=20")' in script
+    assert 'api("/api/comparisons/recovery/jobs",' in script
+    assert "new EventSource(`/api/comparisons/recovery/jobs/${state.comparisonJobId}/events`)" in script
+    assert "`/api/comparisons/recovery/jobs/${state.comparisonJobId}/cancel`" in script
+    assert "EXECUTE REAL COMPARISON" in script

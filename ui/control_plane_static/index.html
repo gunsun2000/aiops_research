@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="Safety-bounded 4-Agent AIOps 연구 운영 콘솔" />
     <title>4-Agent AIOps 연구 운영 콘솔</title>
-    <link rel="stylesheet" href="/static/styles.css?v=10" />
-    <script defer src="/static/app.js?v=10"></script>
+    <link rel="stylesheet" href="/static/styles.css?v=13" />
+    <script defer src="/static/app.js?v=13"></script>
   </head>
   <body>
     <noscript><main class="noscript">이 연구 콘솔을 사용하려면 JavaScript가 필요합니다.</main></noscript>
@@ -194,6 +194,54 @@
           <span id="aiopslab-summary">AIOpsLab Detection Benchmark 연결 확인 중</span>
           <span id="connection-summary">Prometheus · Chaos Mesh · Kubernetes 연결 확인 중</span>
         </div>
+
+        <details class="benchmark-panel comparison-panel" id="recovery-comparison-panel">
+          <summary>
+            <span><b>Recovery Action Comparison</b><small>4개 장애 × 3개 Action × 반복 실험</small></span>
+            <strong id="comparison-runtime-status">연결 확인 중</strong>
+          </summary>
+          <div class="benchmark-body">
+            <div class="benchmark-controls">
+              <label for="comparison-mode">근거 모드</label>
+              <select id="comparison-mode">
+                <option value="mock" selected>Mock · 합성 비교 데이터</option>
+                <option value="real">Real · Ubuntu 실제 클러스터</option>
+              </select>
+              <label for="comparison-repetitions">반복</label>
+              <select id="comparison-repetitions">
+                <option value="1">1회 · 12 treatments</option>
+                <option value="3" selected>3회 · 36 treatments</option>
+              </select>
+              <label for="comparison-guard">안전 검증</label>
+              <select id="comparison-guard">
+                <option value="python" selected>Python Validator</option>
+                <option value="go">Python + Go Guard</option>
+              </select>
+              <button type="button" id="comparison-run">비교 실험 실행</button>
+              <button type="button" id="comparison-cancel" disabled>취소</button>
+            </div>
+            <p class="benchmark-boundary" id="comparison-boundary">
+              Mock은 UI와 분석 파이프라인 검증용 합성 비교 데이터입니다. 논문 근거는 Ubuntu Real 실행 결과만 사용합니다.
+            </p>
+            <div class="benchmark-metrics" aria-live="polite">
+              <div><span>Job</span><strong id="comparison-job-status">대기</strong></div>
+              <div><span>Progress</span><strong id="comparison-progress">0 / 0</strong></div>
+              <div><span>Success rate</span><strong id="comparison-success-rate">—</strong></div>
+              <div><span>Mean recovery</span><strong id="comparison-mean-recovery">—</strong></div>
+              <div><span>Evidence</span><strong id="comparison-evidence">—</strong></div>
+            </div>
+            <div class="comparison-charts" aria-label="복구 비교 그래프">
+              <figure><img id="comparison-success-chart" alt="장애와 Action별 복구 성공률" /><figcaption>장애·Action별 성공률</figcaption></figure>
+              <figure><img id="comparison-recovery-chart" alt="장애와 Action별 평균 복구 시간" /><figcaption>장애·Action별 평균 복구 시간</figcaption></figure>
+            </div>
+            <details class="benchmark-events">
+              <summary>실행 이벤트 <span id="comparison-event-count">0 events</span></summary>
+              <ol id="comparison-event-log"><li>비교 실험 실행 기록 대기</li></ol>
+            </details>
+            <nav class="benchmark-artifacts" id="comparison-artifacts" aria-label="Recovery 비교 실험 산출물"></nav>
+            <p class="inline-error" id="comparison-error" role="alert"></p>
+          </div>
+        </details>
 
         <details class="benchmark-panel" id="aiopslab-benchmark-panel">
           <summary>

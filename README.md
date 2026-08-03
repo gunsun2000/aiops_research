@@ -132,6 +132,7 @@ real runtime 검증 절차는 [docs/experiments/platform_real_runtime_guide.md](
 - 완료: 3영역 연구 콘솔에서 조건, 4-Agent 상호검토, 안전 검사, 결과를 동일 Job으로 표시
 - 완료: AutoGen GroupChat을 선택 가능한 Controller로 연결하고 model/controller/transcript를 Job에 저장·표시
 - 완료: AIOpsLab detection benchmark를 별도 영속 Job, SSE, 취소, Markdown/CSV 산출물로 연결
+- 완료: Recovery Action 비교를 별도 영속 Job으로 실행하고 장애·Action·Reward 정책별 JSONL/CSV/Markdown/PNG/SVG를 자동 생성
 
 AutoGen 웹 Job은 `autogen` 의존성과 `OPENAI_API_KEY`가 준비된 경우에만 활성화됩니다.
 의존성이나 credential이 없으면 장애 주입 전에 안전하게 거부합니다. 로컬 자동 시험은
@@ -149,6 +150,22 @@ export AIOPSLAB_PYTHON="$HOME/anaconda3/envs/aiopslab/bin/python"
 export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
 aiops-control-plane
 ```
+
+Recovery Action 비교는 웹의 `Recovery Action Comparison`에서 실행합니다.
+`Mock`은 4개 장애 × 3개 Action의 분석·그래프 연결을 확인하는 합성 데이터이며,
+실제 연구 근거가 아닙니다. Ubuntu `Real`은 다음 환경을 서버에서 준비한 뒤
+`EXECUTE REAL COMPARISON` 확인 문구를 입력해야 시작됩니다.
+
+```bash
+export CONFIRM_REAL_RUN=YES
+export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
+export PROMETHEUS_URL="http://127.0.0.1:9091"
+export NETWORK_LATENCY_QUERY='max(probe_duration_seconds{target="paymentservice"})'
+aiops-control-plane
+```
+
+Real 비교는 4개 장애 × 3개 Action × 반복 횟수이며, 취소 요청은 현재
+treatment의 cleanup이 끝난 안전한 경계에서 적용됩니다.
 
 ## 핵심 실험
 

@@ -161,6 +161,11 @@ allowlist, replica 최소·최대, target lock, Python Validator와 cleanup은 �
 | `GET /api/benchmarks/aiopslab/jobs/{job_id}` | Benchmark 결과와 이벤트 조회 |
 | `GET /api/benchmarks/aiopslab/jobs/{job_id}/events` | Benchmark SSE replay와 live stream |
 | `POST /api/benchmarks/aiopslab/jobs/{job_id}/cancel` | Benchmark 취소 요청 |
+| `GET /api/comparisons/recovery` | Recovery 비교 matrix와 Mock/Real 준비 상태 조회 |
+| `POST /api/comparisons/recovery/jobs` | 4개 장애 × 3개 Action 비교 Job 생성 |
+| `GET /api/comparisons/recovery/jobs/{job_id}` | 비교 결과, 정량 통계와 artifact URL 조회 |
+| `GET /api/comparisons/recovery/jobs/{job_id}/events` | 비교 실험 SSE 진행·replay |
+| `POST /api/comparisons/recovery/jobs/{job_id}/cancel` | 현재 treatment cleanup 후 취소 요청 |
 
 FastAPI 문서:
 
@@ -182,3 +187,8 @@ http://127.0.0.1:18080/api/docs
   kubeconfig와 생성 report를 확인한 경우에만 detection benchmark 근거로 사용합니다.
 - AIOpsLab 탐지 지표와 Chaos Mesh 복구 지표는 같은 Control Plane에서 조회하더라도
   서로 다른 실험 유형으로 저장하고 해석합니다.
+- Recovery Action Comparison의 `Mock`은 화면·통계·그래프 파이프라인 검증용
+  합성 데이터이며 실제 성공률이나 MTTR 근거가 아닙니다.
+- Recovery Action Comparison의 `Real`은 Ubuntu에서 Chaos Mesh 장애를 실제로
+  주입하고 Prometheus와 Kubernetes 결과를 측정합니다. `CONFIRM_REAL_RUN=YES`,
+  kubeconfig, Prometheus, latency query와 `EXECUTE REAL COMPARISON` 확인이 필요합니다.

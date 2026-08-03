@@ -22,6 +22,7 @@
   };
 
   const AIOPSLAB_BOUNDARY_NOTE = "AIOpsLab Detection Benchmark는 Kubernetes 복구 실험과 별도로 기록됩니다.";
+  const COMPARISON_BOUNDARY_NOTE = "Mock 비교는 합성 데이터이며 Ubuntu Real 비교만 실제 클러스터 연구 근거입니다.";
 
   const RESEARCH_DOCUMENTS = [
     {
@@ -71,6 +72,11 @@
     aiopslabJob: null,
     aiopslabEventSource: null,
     aiopslabEvents: [],
+    comparisonRuntime: {},
+    comparisonJobId: "",
+    comparisonJob: null,
+    comparisonEventSource: null,
+    comparisonEvents: [],
   };
 
   const elements = Object.fromEntries([
@@ -94,6 +100,13 @@
     "aiopslab-ttd", "aiopslab-steps", "aiopslab-reward",
     "aiopslab-event-count", "aiopslab-event-log", "aiopslab-artifacts",
     "aiopslab-error",
+    "recovery-comparison-panel", "comparison-runtime-status", "comparison-mode",
+    "comparison-repetitions", "comparison-guard", "comparison-run",
+    "comparison-cancel", "comparison-boundary", "comparison-job-status",
+    "comparison-progress", "comparison-success-rate", "comparison-mean-recovery",
+    "comparison-evidence", "comparison-success-chart", "comparison-recovery-chart",
+    "comparison-event-count", "comparison-event-log", "comparison-artifacts",
+    "comparison-error",
   ].map((id) => [id, document.getElementById(id)]));
 
   async function api(path, options) {
@@ -644,6 +657,200 @@
     }
   }
 
+  function renderComparisonJob(job) {
+    state.comparisonJob = job;
+    state.comparisonJobId = job.job_id;
+    const running = !TERMINAL.has(job.status);
+    const result = job.result || {};
+    const statistics = result.statistics || {};
+    const overall = statistics.overall || {};
+    const total = Number(result.total_treatments || (job.request.repetitions * 12) || 0);
+    const progressEvents = state.comparisonEvents
+      .map((event) => Number(event.payload && event.payload.completed_treatments || 0));
+    const completed = TERMINAL.has(job.status)
+      ? Number(result.total_treatments || 0)
+      : Math.max(0, ...progressEvents);
+    elements["comparison-job-status"].textContent = jobStatusLabel(job.status);
+    elements["comparison-progress"].textContent = `${completed} / ${total}`;
+    elements["comparison-success-rate"].textContent = overall.success_rate == null
+      ? "—"
+      : `${(Number(overall.success_rate) * 100).toFixed(1)}%`;
+    elements["comparison-mean-recovery"].textContent = overall.mean_recovery_seconds == null
+      ? "—"
+      : `${Number(overall.mean_recovery_seconds).toFixed(2)}s`;
+    elements["comparison-evidence"].textContent = result.evidence_type === "real_cluster"
+      ? "Real cluster"
+      : (result.evidence_type === "synthetic_mock" ? "합성 Mock" : "—");
+    elements["comparison-run"].disabled = running;
+    elements["comparison-cancel"].disabled = !running;
+    elements["comparison-runtime-status"].textContent = running
+      ? `${job.current_stage} · ${completed}/${total}`
+      : jobStatusLabel(job.status);
+    renderComparisonArtifacts(job.artifact_urls || {});
+    renderComparisonCharts(job.artifact_urls || {}, job.updated_at);
+    if (job.error) elements["comparison-error"].textContent = job.error;
+    if (TERMINAL.has(job.status)) closeComparisonEvents();
+  }
+
+  function renderComparisonCharts(artifactUrls, version) {
+    const charts = [
+      ["comparison-success-chart", artifactUrls.success_rate_png],
+      ["comparison-recovery-chart", artifactUrls.recovery_seconds_png],
+    ];
+    charts.forEach(([id, href]) => {
+      if (href) elements[id].src = `${href}?v=${encodeURIComponent(version || "latest")}`;
+      else elements[id].removeAttribute("src");
+    });
+  }
+
+  function renderComparisonArtifacts(artifactUrls) {
+    const labels = {
+      outcomes_jsonl: "Outcomes JSONL",
+      reward_markdown: "Reward 정책표",
+      reward_csv: "Reward CSV",
+      quantitative_markdown: "정량 요약",
+      scenario_action_csv: "Scenario·Action CSV",
+      policy_reward_csv: "정책 통계 CSV",
+      success_rate_png: "성공률 PNG",
+      recovery_seconds_png: "복구 시간 PNG",
+      reward_policy_png: "Reward PNG",
+    };
+    const links = Object.entries(artifactUrls)
+      .filter(([name]) => labels[name])
+      .map(([name, href]) => {
+        const link = document.createElement("a");
+        link.href = href;
+        link.target = "_blank";
+        link.rel = "noreferrer";
+        link.textContent = labels[name];
+        return link;
+      });
+    elements["comparison-artifacts"].replaceChildren(...links);
+  }
+
+  function addComparisonEvent(event) {
+    state.comparisonEvents.push(event);
+    elements["comparison-event-count"].textContent = `${state.comparisonEvents.length} events`;
+    if (state.comparisonEvents.length === 1) elements["comparison-event-log"].replaceChildren();
+    const item = document.createElement("li");
+    const payload = event.payload || {};
+    const progress = payload.total_treatments
+      ? ` · ${payload.completed_treatments || 0}/${payload.total_treatments}`
+      : "";
+    item.textContent = `[${event.stage}] ${event.message}${progress}`;
+    elements["comparison-event-log"].append(item);
+    if (payload.total_treatments) {
+      elements["comparison-progress"].textContent = `${payload.completed_treatments || 0} / ${payload.total_treatments}`;
+      elements["comparison-runtime-status"].textContent = `${event.stage} · ${payload.completed_treatments || 0}/${payload.total_treatments}`;
+    }
+  }
+
+  function connectComparisonEvents() {
+    closeComparisonEvents();
+    const stream = new EventSource(`/api/comparisons/recovery/jobs/${state.comparisonJobId}/events`);
+    state.comparisonEventSource = stream;
+    stream.addEventListener("comparison", (event) => addComparisonEvent(JSON.parse(event.data)));
+    stream.addEventListener("job", async (event) => {
+      const job = JSON.parse(event.data);
+      closeComparisonEvents();
+      try {
+        renderComparisonJob(await api(`/api/comparisons/recovery/jobs/${job.job_id}`));
+      } catch (error) {
+        elements["comparison-error"].textContent = error.message || String(error);
+      }
+    });
+    stream.onerror = () => {
+      if (!state.comparisonJob || !TERMINAL.has(state.comparisonJob.status)) {
+        elements["comparison-error"].textContent = "비교 실험 이벤트 연결을 재시도하고 있습니다.";
+      }
+    };
+  }
+
+  function closeComparisonEvents() {
+    if (state.comparisonEventSource) state.comparisonEventSource.close();
+    state.comparisonEventSource = null;
+  }
+
+  function updateComparisonModeBoundary() {
+    const mode = elements["comparison-mode"].value;
+    const runtime = state.comparisonRuntime[mode] || {};
+    elements["comparison-boundary"].textContent = mode === "real"
+      ? "Real은 Ubuntu에서 Chaos Mesh 장애를 실제 주입하고 Prometheus·Kubernetes 결과를 측정합니다. 서버 Gate와 확인 문구가 모두 필요합니다."
+      : "Mock은 UI와 분석 파이프라인 검증용 합성 비교 데이터입니다. 논문 근거는 Ubuntu Real 실행 결과만 사용합니다.";
+    elements["comparison-runtime-status"].textContent = runtime.ready
+      ? (mode === "real" ? "Real 실행 가능" : "Mock 실행 가능")
+      : `미준비 · ${(runtime.reasons && runtime.reasons[0]) || "서버 환경 확인 필요"}`;
+    elements["comparison-run"].disabled = !runtime.ready;
+  }
+
+  async function loadRecoveryComparison() {
+    try {
+      const payload = await api("/api/comparisons/recovery");
+      state.comparisonRuntime = payload.runtime_modes || {};
+      updateComparisonModeBoundary();
+    } catch (error) {
+      elements["comparison-runtime-status"].textContent = "연결 실패";
+      elements["comparison-run"].disabled = true;
+    }
+  }
+
+  async function runRecoveryComparison() {
+    elements["comparison-error"].textContent = "";
+    const mode = elements["comparison-mode"].value;
+    let realConfirmation = "";
+    if (mode === "real") {
+      realConfirmation = window.prompt(
+        "실제 36회 비교 실험을 실행하려면 EXECUTE REAL COMPARISON을 입력하세요.",
+        ""
+      ) || "";
+      if (realConfirmation !== "EXECUTE REAL COMPARISON") return;
+    }
+    try {
+      const job = await api("/api/comparisons/recovery/jobs", {
+        method: "POST",
+        body: JSON.stringify({
+          repetitions: Number(elements["comparison-repetitions"].value),
+          mode,
+          guard_backend: elements["comparison-guard"].value,
+          real_confirmation: realConfirmation,
+        }),
+      });
+      state.comparisonEvents = [];
+      elements["comparison-event-log"].replaceChildren();
+      elements["recovery-comparison-panel"].open = true;
+      renderComparisonJob(job);
+      connectComparisonEvents();
+    } catch (error) {
+      elements["comparison-error"].textContent = error.message || String(error);
+    }
+  }
+
+  async function cancelRecoveryComparison() {
+    if (!state.comparisonJobId) return;
+    try {
+      const job = await api(`/api/comparisons/recovery/jobs/${state.comparisonJobId}/cancel`, { method: "POST" });
+      renderComparisonJob(job);
+    } catch (error) {
+      elements["comparison-error"].textContent = error.message || String(error);
+    }
+  }
+
+  async function restoreLatestRecoveryComparison() {
+    try {
+      const payload = await api("/api/comparisons/recovery/jobs?limit=20");
+      const latest = payload.jobs && payload.jobs[0];
+      if (!latest) return;
+      const job = await api(`/api/comparisons/recovery/jobs/${latest.job_id}`);
+      state.comparisonEvents = [];
+      elements["comparison-event-log"].replaceChildren();
+      (job.events || []).forEach((event) => addComparisonEvent(event));
+      renderComparisonJob(job);
+      if (!TERMINAL.has(job.status)) connectComparisonEvents();
+    } catch (error) {
+      elements["comparison-error"].textContent = `최근 비교 Job 복원 실패: ${error.message || String(error)}`;
+    }
+  }
+
   async function loadScenarios() {
     try {
       const payload = await api("/api/scenarios");
@@ -713,21 +920,35 @@
     elements["cancel-experiment"].addEventListener("click", cancelExperiment);
     elements["aiopslab-run"].addEventListener("click", runAIOpsLabBenchmark);
     elements["aiopslab-cancel"].addEventListener("click", cancelAIOpsLabBenchmark);
+    elements["comparison-mode"].addEventListener("change", updateComparisonModeBoundary);
+    elements["comparison-run"].addEventListener("click", runRecoveryComparison);
+    elements["comparison-cancel"].addEventListener("click", cancelRecoveryComparison);
   }
 
   async function boot() {
     bindControls();
     renderResearchDocuments();
     elements["result-artifacts"].title = AIOPSLAB_BOUNDARY_NOTE;
+    elements["comparison-artifacts"].title = COMPARISON_BOUNDARY_NOTE;
     renderCondition();
     resetEvidenceView();
-    await Promise.all([loadScenarios(), loadConnections(), loadAIOpsLabBenchmarks()]);
-    await Promise.all([restoreLatestJob(), restoreLatestAIOpsLabJob()]);
+    await Promise.all([
+      loadScenarios(),
+      loadConnections(),
+      loadAIOpsLabBenchmarks(),
+      loadRecoveryComparison(),
+    ]);
+    await Promise.all([
+      restoreLatestJob(),
+      restoreLatestAIOpsLabJob(),
+      restoreLatestRecoveryComparison(),
+    ]);
   }
 
   window.addEventListener("beforeunload", () => {
     closeEvents();
     closeAIOpsLabEvents();
+    closeComparisonEvents();
   });
   boot();
 })();
