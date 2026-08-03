@@ -1,7 +1,10 @@
 import json
 
+import pytest
+
 from aiops_k8s_agents.prometheus import (
     PrometheusAdapter,
+    PrometheusAdapterError,
     PrometheusMetricConfig,
     prometheus_result_to_alert_event,
 )
@@ -77,6 +80,65 @@ def test_prometheus_adapter_uses_injected_fetcher_without_real_prometheus():
 
     assert alert.value == 91.5
     assert alert.service == "paymentservice"
+
+
+def test_query_vector_preserves_labels_timestamp_and_value():
+    adapter = PrometheusAdapter(
+        "http://prometheus",
+        fetcher=lambda _url, _query: {
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [{
+                    "metric": {"namespace": "online-boutique", "pod": "payment-1"},
+                    "value": [1780000000.5, "3.25"],
+                }],
+            },
+        },
+    )
+
+    samples = adapter.query_vector("up")
+
+    assert samples[0].labels["pod"] == "payment-1"
+    assert samples[0].timestamp == 1780000000.5
+    assert samples[0].value == 3.25
+
+
+def test_query_vector_rejects_non_vector_result():
+    adapter = PrometheusAdapter(
+        "http://prometheus",
+        fetcher=lambda _url, _query: {
+            "status": "success",
+            "data": {"resultType": "matrix", "result": []},
+        },
+    )
+
+    with pytest.raises(PrometheusAdapterError, match="vector"):
+        adapter.query_vector("up")
+
+
+def test_ready_returns_true_for_non_empty_vector():
+    adapter = PrometheusAdapter(
+        "http://prometheus",
+        fetcher=lambda _url, _query: {
+            "status": "success",
+            "data": {
+                "resultType": "vector",
+                "result": [{"metric": {}, "value": [1780000000.5, "1"]}],
+            },
+        },
+    )
+
+    assert adapter.ready() is True
+
+
+def test_ready_returns_false_when_query_fails():
+    def failing_fetcher(_url, _query):
+        raise OSError("Prometheus is unavailable")
+
+    adapter = PrometheusAdapter("http://prometheus", fetcher=failing_fetcher)
+
+    assert adapter.ready() is False
 
 
 def test_prometheus_cli_reads_mock_response_file(tmp_path, capsys):
