@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import sqlite3
+
 from aiops_k8s_agents.experiment_jobs import (
     ExperimentJobStatus,
     SQLiteExperimentJobStore,
@@ -44,10 +47,55 @@ def test_job_request_round_trips_through_sqlite(tmp_path):
         "backend": "python",
         "protocol_profile": "four-agent-role-veto-v1",
         "repetitions": 3,
+        "controller": "deterministic",
     }
     assert loaded.status is ExperimentJobStatus.QUEUED
     assert loaded.current_stage == RuntimeStage.QUEUED.value
     assert store.list(limit=10) == (loaded,)
+
+
+def test_autogen_controller_round_trips_through_sqlite(tmp_path):
+    store = SQLiteExperimentJobStore(tmp_path / "jobs.sqlite3")
+    request = ExperimentRuntimeRequest(
+        scenario_id="cpu-stress",
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+        mode=ExecutionMode.MOCK,
+        backend=ExecutionBackend.PYTHON,
+        protocol_profile="four-agent-autogen-v1",
+        controller="autogen",
+    )
+
+    store.create(request, experiment_id="exp-autogen")
+    loaded = store.get("exp-autogen")
+
+    assert loaded is not None
+    assert loaded.request.controller == "autogen"
+    assert loaded.request.to_dict()["controller"] == "autogen"
+
+
+def test_legacy_job_without_controller_loads_as_deterministic(tmp_path):
+    database = tmp_path / "jobs.sqlite3"
+    store = SQLiteExperimentJobStore(database)
+    store.create(_request(), experiment_id="exp-legacy")
+    with sqlite3.connect(database) as connection:
+        row = connection.execute(
+            "SELECT request_json FROM experiment_jobs WHERE experiment_id = ?",
+            ("exp-legacy",),
+        ).fetchone()
+        payload = json.loads(row[0])
+        payload.pop("controller", None)
+        connection.execute(
+            "UPDATE experiment_jobs SET request_json = ? WHERE experiment_id = ?",
+            (json.dumps(payload), "exp-legacy"),
+        )
+
+    loaded = SQLiteExperimentJobStore(database).get("exp-legacy")
+
+    assert loaded is not None
+    assert loaded.request.controller == "deterministic"
 
 
 def test_job_transitions_and_events_are_persisted_in_sequence(tmp_path):

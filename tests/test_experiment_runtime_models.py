@@ -53,9 +53,36 @@ def test_runtime_request_normalizes_mode_and_target():
     assert request.mode.value == "dry-run"
     assert request.backend.value == "python"
     assert request.protocol_profile == "four-agent-role-veto-v1"
+    assert request.controller == "deterministic"
+    assert request.to_dict()["controller"] == "deterministic"
     json.dumps(request.to_dict(), allow_nan=False)
     with pytest.raises(FrozenInstanceError):
         request.namespace = "default"
+
+
+def test_runtime_request_normalizes_explicit_autogen_controller():
+    request = ExperimentRuntimeRequest(
+        scenario_id="cpu-stress",
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+        mode="mock",
+        backend="python",
+        protocol_profile="four-agent-autogen-v1",
+        controller=" AutoGen ",
+    )
+
+    assert request.controller == "autogen"
+    assert request.to_dict()["controller"] == "autogen"
+
+
+def test_runtime_request_rejects_unknown_controller():
+    with pytest.raises(ValueError, match="controller"):
+        ExperimentRuntimeRequest(
+            "scenario", "namespace", "deployment", "cpu", 80.0,
+            "mock", "python", "profile", controller="free-form-agent",
+        )
 
 
 @pytest.mark.parametrize("field", ["scenario_id", "namespace", "deployment", "metric", "protocol_profile"])
