@@ -4,6 +4,7 @@
 
 - Implementation commit: `b06068c` (`feat: orchestrate bounded real experiments`)
 - Review-fix commit: `04e7913` (`fix: enforce experiment runtime safety invariants`)
+- Review-fix 2 commit: `f5d2b66` (`fix: bound coordinator execution by registered deadline`)
 - Base commit: `79b4ec5`
 
 ## Files
@@ -29,15 +30,18 @@
 - Added a deadline from `RuntimeConfiguration.timeouts["experiment"]`, cancellation/deadline checkpoints around injection, evidence, coordinator execution, and recovery execution, plus coordinator runtime-control checkpoints.
 - Coordinator event stores defer finalization to one runtime-owned terminal write after cleanup. The persisted report includes terminal status, cleanup data, runtime event sequence, and the same experiment id as the returned result.
 - Added an injectable `ExperimentSessionStore`; every terminal path persists exactly one normalized immutable session.
+- Added the required positive `experiment_seconds` production setting and validation; runtime deadlines now use this registered key rather than an optional timeout-map entry.
+- Added a cancellable coordinator worker boundary that signals runtime control on expiry, joins the worker before cleanup, and prevents recovery from continuing in background after timeout.
 
 ## Tests
 
 - `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py -q`: `24 passed`
-- `python -m pytest`: `427 passed, 1 warning`
+- `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py tests/test_real_evidence.py -q`: `58 passed`
+- `python -m pytest`: `429 passed, 1 warning`
 - `git diff --check`: passed
 
 ## Concerns
 
 - Tests use deterministic fakes and do not claim live Kubernetes, Prometheus, Chaos Mesh, or model/API-key validation.
-- Deadline cancellation is cooperative through the runtime-control contract and is checked by the existing synchronous coordinator before/after external stages; arbitrary third-party coordinators must honor the injected control capability to be interruptible.
+- The bounded worker joins before cleanup, so it never returns while coordinator work remains active. Coordinator implementations must honor the injected runtime-control capability at stage boundaries to terminate promptly after cancellation; the existing coordinator now checks around evidence and recovery execution.
 - The existing CLI behavior was not modified; runtime construction and web integration remain later plan tasks.
