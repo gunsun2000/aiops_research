@@ -130,11 +130,13 @@ real runtime 검증 절차는 [docs/experiments/platform_real_runtime_guide.md](
 - 완료: core runtime, Prometheus/Kubernetes/Chaos Mesh adapter, lifecycle cleanup
 - 완료: SQLite 영속 Job, 백그라운드 실행, SSE replay, 취소, 웹 `mock/dry-run/real` 요청
 - 완료: 3영역 연구 콘솔에서 조건, 4-Agent 상호검토, 안전 검사, 결과를 동일 Job으로 표시
-- 미통합: AutoGen GroupChat의 웹 Job 실행
+- 완료: AutoGen GroupChat을 선택 가능한 Controller로 연결하고 model/controller/transcript를 Job에 저장·표시
 - 미통합: AIOpsLab benchmark의 웹 Job 실행
 
-기존 AutoGen 및 AIOpsLab CLI/스크립트는 유지되지만, 현재 웹 Job이 이 두 실행을
-대신하거나 검증했다고 해석하지 않습니다.
+AutoGen 웹 Job은 `autogen` 의존성과 `OPENAI_API_KEY`가 준비된 경우에만 활성화됩니다.
+의존성이나 credential이 없으면 장애 주입 전에 안전하게 거부합니다. 로컬 자동 시험은
+fake provider로 수행하므로 실제 OpenAI 네트워크 호출이나 real Kubernetes AutoGen 실험의
+근거가 아닙니다. AIOpsLab CLI/스크립트는 유지되지만 아직 웹 Job에 연결되지 않았습니다.
 
 ## 핵심 실험
 
@@ -195,12 +197,14 @@ performs no execution, and requires human review. Provider output is accepted
 only through the structured schema, is rebound to the configured Agent
 identity and run/policy metadata, and remains subject to the Python Validator.
 
-This repository currently demonstrates AutoGen runtime support and offline
-fake-provider safety tests. Those checks are not evidence of a completed
+The persistent web Job can now select the registered AutoGen controller, store
+controller/model provenance, and render the structured GroupChat transcript.
+The connection probe enables this option only when the AutoGen dependencies and
+an OpenAI credential are available. Offline fake-provider tests verify this
+integration without making a model call; they are not evidence of a completed
 networked AutoGen experiment or a real Kubernetes experiment. The existing
-`autogen-run` and `autogen-prometheus-run` commands remain the standalone
-model-client execution paths and require the `autogen` extra plus an
-appropriately configured provider credential.
+`autogen-run` and `autogen-prometheus-run` commands remain available as
+standalone model-client paths.
 
 이 명령은 역할별 초기 판단, 동료 Agent의 `approve/revise/veto`,
 제한된 재합의 라운드, 안전 검증, 실행 후 4-Agent 재평가를 수행합니다.
@@ -274,7 +278,7 @@ bash scripts/server_recovery_statistics.sh
 - single-agent baseline 비교
 - Agent 제거 ablation 실험
 - reward 민감도 분석
-- AutoGen multi-round Agent 판단을 현재 웹 Job runtime에 연결
+- AutoGen 웹 Job을 Ubuntu의 실제 model client와 real 장애에 연결해 비교 실험 수행
 - AIOpsLab benchmark를 동일한 Job/SSE/산출물 구조에 연결
 - Prometheus metric, log enrichment, full real-cluster evidence fusion
 

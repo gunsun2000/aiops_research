@@ -9,7 +9,7 @@ establish. Run commands from the repository root.
 ```bash
 cd ~/geonhae/aiops_research
 conda activate aiops_research
-python -m pip install -e ".[ui,dev]"
+python -m pip install -e ".[ui,dev,autogen]"
 
 export PATH="$HOME/bin:$PATH"
 export KUBECONFIG="${KUBECONFIG:-$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml}"
@@ -75,8 +75,23 @@ not globally marked ready until request-specific preflight succeeds.
 Kubernetes, Prometheus, Chaos Mesh, AutoGen configuration, AIOpsLab path, and
 the artifact directory. Only Kubernetes, Prometheus, Chaos Mesh, and the artifact
 directory are required by the deterministic real Job. AutoGen and AIOpsLab are
-reported for visibility but are not prerequisites for this runtime. These probe
+reported for visibility but are not prerequisites for the deterministic runtime.
+The AutoGen controller becomes selectable only when its dependencies and an
+OpenAI credential are ready. AIOpsLab remains a separate benchmark runtime. These probe
 responses are read-only and never prove Kubernetes mutation or a real experiment.
+
+To prepare the optional AutoGen controller, set the credential before starting
+the Control Plane. Never place the key in a request body or saved artifact.
+
+```bash
+export OPENAI_API_KEY="<your-api-key>"
+aiops-control-plane
+```
+
+An AutoGen request must use `controller: "autogen"` with the registered
+`four-agent-autogen-v1` profile. The selected model and structured transcript
+are stored in the persistent Job result. Missing dependencies, credentials, or
+an incompatible profile are rejected before fault injection.
 
 ## 5. Request-specific preflight
 
@@ -296,8 +311,9 @@ different outcomes and must remain distinct in the report.
 ## 9. Explicit exclusions
 
 Python and Go regression tests use deterministic or injected fakes where stated;
-they are not real-cluster evidence. AutoGen model execution and AIOpsLab
-benchmark Jobs are separate runtimes and are not implied by the core runtime or
-its web Job API. Persistent Jobs, SSE, cancellation, and the gated deterministic
-web execution path are implemented. AutoGen GroupChat web execution and
-AIOpsLab benchmark Jobs remain future integrations.
+they are not real-cluster evidence. Persistent Jobs, SSE, cancellation, the gated
+deterministic web path, and the optional AutoGen GroupChat web path are implemented.
+The local AutoGen tests use an injected fake provider and do not prove networked
+model execution. AIOpsLab benchmark Jobs remain a future web integration. A genuine
+AutoGen real result requires Ubuntu-side model credentials, successful GroupChat
+execution, Kubernetes evidence, validation, recovery monitoring, and cleanup.
