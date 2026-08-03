@@ -126,6 +126,26 @@ class RuntimeExecutionError(RuntimeError):
     """Raised when a runtime lifecycle cannot produce a valid report."""
 
 
+@dataclass(frozen=True)
+class RuntimePreflightResult:
+    """Read-only admission result produced before any runtime mutation."""
+
+    valid: bool
+    scenario_id: str
+    manifest: str
+    resource_kind: str | None = None
+    missing_prerequisites: tuple[str, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "valid": self.valid,
+            "scenario_id": self.scenario_id,
+            "manifest": self.manifest,
+            "resource_kind": self.resource_kind,
+            "missing_prerequisites": list(self.missing_prerequisites),
+        }
+
+
 class RuntimeCancelled(RuntimeError):
     """Raised when a runtime cancellation checkpoint is reached."""
 
@@ -214,6 +234,65 @@ class ExperimentRuntime:
     session_store: ExperimentSessionStore | None = None
     clock: Callable[[], float] = monotonic
     admission_validator: Any | None = None
+
+    def preflight(self, request: ExperimentRuntimeRequest) -> RuntimePreflightResult:
+        """Validate one registered request without acquiring locks or mutating state."""
+        self._validate_request(request)
+        scenario = self.configuration.scenarios[request.scenario_id]
+        manifest = str(getattr(scenario, "manifest", ""))
+        if request.mode != ExecutionMode.REAL:
+            return RuntimePreflightResult(True, request.scenario_id, manifest)
+
+        try:
+            checker = getattr(self.chaos, "preflight_scenario", None)
+            chaos_result = (
+                checker(request.scenario_id)
+                if callable(checker)
+                else self.chaos.preflight()
+            )
+        except Exception:
+            return RuntimePreflightResult(
+                False,
+                request.scenario_id,
+                manifest,
+                missing_prerequisites=(f"chaos_mesh:{request.scenario_id}",),
+            )
+
+        resource_kind = getattr(chaos_result, "resource_kind", None)
+        if not bool(getattr(chaos_result, "valid", False)):
+            missing = tuple(getattr(chaos_result, "missing_prerequisites", ()) or ())
+            if not missing:
+                missing = (f"chaos_mesh:{request.scenario_id}",)
+            return RuntimePreflightResult(
+                False,
+                request.scenario_id,
+                manifest,
+                resource_kind=resource_kind,
+                missing_prerequisites=missing,
+            )
+
+        try:
+            coordinator = self.coordinator_factory(request)
+            admission = (
+                self.admission_validator or CoordinatorAdmissionValidator()
+            ).validate(coordinator, request, self.configuration)
+            self._validate_coordinator_mode(coordinator, request)
+            if admission is None:
+                raise _BlockedRequest("runtime admission is unavailable")
+        except Exception:
+            return RuntimePreflightResult(
+                False,
+                request.scenario_id,
+                manifest,
+                resource_kind=resource_kind,
+                missing_prerequisites=("runtime.coordinator",),
+            )
+        return RuntimePreflightResult(
+            True,
+            request.scenario_id,
+            manifest,
+            resource_kind=resource_kind,
+        )
 
     def run(self, request: ExperimentRuntimeRequest) -> ExperimentRuntimeResult:
         experiment_id = self.experiment_id_factory()

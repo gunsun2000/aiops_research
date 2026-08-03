@@ -21,6 +21,7 @@ from aiops_k8s_agents.control_plane_data import (
     scenario_catalog,
 )
 from aiops_k8s_agents.experiment_runtime_factory import build_experiment_runtime
+from aiops_k8s_agents.experiment_runtime import RuntimePreflightResult
 from aiops_k8s_agents.experiment_runtime_models import ExperimentRuntimeRequest
 from aiops_k8s_agents.executor import ExecutionBackend, ExecutionMode
 from aiops_k8s_agents.real_evidence import RuntimeConfiguration, load_runtime_configuration
@@ -206,8 +207,11 @@ def api_platform(request: Request) -> dict[str, object]:
             "mock": {"ready": True, "external_prerequisites": []},
             "dry-run": {"ready": True, "external_prerequisites": []},
             "real": {
-                "ready": not real_missing,
+                # A platform probe has no scenario request, so it cannot prove
+                # the registered manifest/resource-kind preflight.
+                "ready": False,
                 "external_prerequisites": True,
+                "request_specific_preflight_required": True,
                 "required_connections": _connection_names(state),
                 "missing_prerequisites": real_missing,
                 "safety_bounds": {
@@ -285,14 +289,43 @@ def api_validate_experiment(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     missing: list[str] = []
+    preflight_payload: dict[str, object] | None = None
     if runtime_request.mode is ExecutionMode.REAL:
         connection_result = api_connections(http_request)
         missing = list(connection_result["missing_prerequisites"])
-        if missing:
+        try:
+            runtime = state.runtime_factory()
+        except Exception as exc:
             raise HTTPException(
                 status_code=400,
-                detail="missing prerequisites: " + ", ".join(missing),
+                detail="runtime preflight failed",
+            ) from exc
+        preflight = getattr(runtime, "preflight", None)
+        if not callable(preflight):
+            raise HTTPException(
+                status_code=400,
+                detail="runtime preflight contract unavailable",
             )
+        try:
+            result = preflight(runtime_request)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail="runtime preflight failed",
+            ) from exc
+        if not isinstance(result, RuntimePreflightResult):
+            raise HTTPException(
+                status_code=400,
+                detail="runtime preflight contract returned an invalid result",
+            )
+        preflight_payload = result.to_dict()
+        missing.extend(result.missing_prerequisites)
+        missing = list(dict.fromkeys(missing))
+        if not result.valid or missing:
+            detail = "missing prerequisites: " + ", ".join(missing or [
+                "runtime.preflight",
+            ])
+            raise HTTPException(status_code=400, detail=detail)
 
     return {
         "validated": True,
@@ -314,6 +347,7 @@ def api_validate_experiment(
             "experiment_seconds": configuration.experiment_seconds,
         },
         "missing_prerequisites": missing,
+        "preflight": preflight_payload,
     }
 
 

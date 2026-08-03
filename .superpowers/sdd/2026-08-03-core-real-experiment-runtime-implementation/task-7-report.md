@@ -23,3 +23,12 @@ Changed only:
 - `src/aiops_k8s_agents/control_plane_web.py`
 - `tests/test_control_plane_web.py`
 - this report
+
+## Review Fix
+
+- Added the typed `RuntimePreflightResult` contract and `ExperimentRuntime.preflight(request)` path. It validates the registered request, exact scenario manifest/resource kind, and coordinator admission without acquiring a lock, calling `run`, injecting, applying, deleting, or executing an action.
+- `POST /api/experiments/validate` now constructs the injected runtime for real requests and requires that request-specific preflight to pass alongside all connection prerequisites.
+- `GET /api/platform` is conservative: generic readiness cannot claim real mode ready because scenario-specific preflight is request-dependent.
+- Added deterministic real-mode accepted/rejected, scenario-resource rejection, factory/preflight exception secrecy, and no-mutation tests.
+
+Review-fix verification: `11 passed` focused control-plane tests, `448 passed` full Python suite, and `git diff --check` passed. The review note was moved to this task folder and remains untracked reviewer material.

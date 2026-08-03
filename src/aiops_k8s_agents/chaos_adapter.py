@@ -26,6 +26,10 @@ class ChaosPreflight:
     valid: bool
     stdout: str = ""
     stderr: str = ""
+    scenario_id: str | None = None
+    manifest: str | None = None
+    resource_kind: str | None = None
+    missing_prerequisites: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -97,10 +101,80 @@ class ChaosMeshAdapter:
             }
             missing = sorted(kind for kind in required_kinds if kind not in resources)
             if missing:
-                return ChaosPreflight(False, stdout, "missing Chaos Mesh resources: " + ", ".join(missing))
+                return ChaosPreflight(
+                    False,
+                    stdout,
+                    "missing Chaos Mesh resources: " + ", ".join(missing),
+                    missing_prerequisites=tuple(
+                        f"chaos_mesh.resource_kind:{kind}" for kind in missing
+                    ),
+                )
             return ChaosPreflight(True, stdout, stderr)
         except (OSError, ValueError) as exc:
             return ChaosPreflight(False, stderr=str(exc))
+
+    def preflight_scenario(self, scenario_id: str) -> ChaosPreflight:
+        """Check one registered manifest and its exact Chaos Mesh kind only."""
+        scenario = self._scenarios.get(str(scenario_id).strip())
+        if scenario is None:
+            return ChaosPreflight(
+                False,
+                scenario_id=str(scenario_id),
+                missing_prerequisites=(f"scenario:{scenario_id}",),
+            )
+        try:
+            self._assert_manifest_is_safe(scenario.manifest)
+            if not scenario.manifest.is_file():
+                return ChaosPreflight(
+                    False,
+                    scenario_id=scenario.scenario_id,
+                    manifest=str(scenario.manifest),
+                    missing_prerequisites=(f"scenario_manifest:{scenario.scenario_id}",),
+                )
+            resource_kind = self._read_kind(scenario.manifest)
+            code, stdout, stderr = self._run(["kubectl", "api-resources"])
+            if code != 0:
+                return ChaosPreflight(
+                    False,
+                    stdout,
+                    "Chaos Mesh resource discovery unavailable",
+                    scenario_id=scenario.scenario_id,
+                    manifest=str(scenario.manifest),
+                    resource_kind=resource_kind,
+                    missing_prerequisites=("chaos_mesh.api_resources",),
+                )
+            resources = {
+                token.lower()
+                for line in stdout.splitlines()
+                for token in line.split()
+            }
+            if resource_kind.lower() not in resources:
+                return ChaosPreflight(
+                    False,
+                    stdout,
+                    "Chaos Mesh resource kind is unavailable",
+                    scenario_id=scenario.scenario_id,
+                    manifest=str(scenario.manifest),
+                    resource_kind=resource_kind,
+                    missing_prerequisites=(
+                        f"chaos_mesh.resource_kind:{resource_kind}",
+                    ),
+                )
+            return ChaosPreflight(
+                True,
+                stdout,
+                stderr,
+                scenario_id=scenario.scenario_id,
+                manifest=str(scenario.manifest),
+                resource_kind=resource_kind,
+            )
+        except (OSError, ValueError):
+            return ChaosPreflight(
+                False,
+                scenario_id=scenario.scenario_id,
+                manifest=str(scenario.manifest),
+                missing_prerequisites=(f"scenario_manifest:{scenario.scenario_id}",),
+            )
 
     def inject(self, scenario_id: str) -> ChaosApplication:
         scenario = self._scenarios.get(str(scenario_id).strip())
