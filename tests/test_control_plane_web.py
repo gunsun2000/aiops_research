@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 from threading import Event
 from time import monotonic, sleep
 
@@ -8,6 +10,10 @@ from fastapi.testclient import TestClient
 
 from aiops_k8s_agents.control_plane_web import app, create_app
 from aiops_k8s_agents.autogen_groupchat import parse_autogen_decision
+from aiops_k8s_agents.aiopslab_benchmark import (
+    AIOpsLabExecutionCancelled,
+    AIOpsLabExecutionResult,
+)
 from aiops_k8s_agents.experiment_runtime import RuntimePreflightResult
 from aiops_k8s_agents.experiment_runtime_models import RuntimeEvent, RuntimeStage
 
@@ -630,3 +636,241 @@ def test_unknown_persistent_job_returns_not_found(tmp_path):
     response = TestClient(test_app).get("/api/experiments/exp-missing")
 
     assert response.status_code == 404
+
+
+class _ApiAIOpsLabExecutor:
+    def __init__(self, *, ready=True, block=False):
+        self.ready = ready
+        self.block = block
+        self.started = Event()
+
+    def readiness(self):
+        return {
+            "ready": self.ready,
+            "reasons": [] if self.ready else ["AIOpsLab runtime unavailable"],
+        }
+
+    def execute(self, spec, *, job_id, repetition, output_dir, cancellation):
+        self.started.set()
+        if self.block and cancellation.wait(timeout=3):
+            raise AIOpsLabExecutionCancelled("benchmark cancelled")
+        report_path = Path(output_dir) / (
+            f"20260803-{repetition:02d}_aiopslab_auto_detection.json"
+        )
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            json.dumps(
+                {
+                    "problem_id": spec.problem_id,
+                    "namespace": spec.namespace,
+                    "service": spec.service,
+                    "decisions": [
+                        {
+                            "api_call": 'submit("Yes")',
+                            "metadata": {
+                                "reward_total": "3.10",
+                                "phase": "detection",
+                            },
+                            "observation_excerpt": (
+                                "Metrics data exported to directory: /tmp/metric"
+                            ),
+                        }
+                    ],
+                    "aiopslab_results": {
+                        "final_state": "SubmissionStatus.VALID_SUBMISSION",
+                        "results": {
+                            "Detection Accuracy": "Correct",
+                            "TTD": 4.1,
+                            "steps": 3,
+                        },
+                    },
+                }
+            ),
+            encoding="utf-8",
+        )
+        return AIOpsLabExecutionResult(report_path, 0, "complete", "")
+
+
+def _aiopslab_catalog_path(tmp_path):
+    path = tmp_path / "aiopslab_benchmarks.json"
+    path.write_text(
+        json.dumps(
+            {
+                "benchmarks": [
+                    {
+                        "id": "hotel-reservation-detection-v1",
+                        "title": "Hotel Reservation Detection",
+                        "problem_id": "misconfig_app_hotel_res-detection-1",
+                        "namespace": "test-hotel-reservation",
+                        "service": "geo",
+                        "metrics_duration_minutes": 10,
+                        "max_steps": 8,
+                        "timeout_seconds": 30,
+                        "max_repetitions": 12,
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
+
+
+def _wait_for_aiopslab_job(test_client, job_id, timeout=3):
+    deadline = monotonic() + timeout
+    while monotonic() < deadline:
+        response = test_client.get(f"/api/benchmarks/aiopslab/jobs/{job_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        if payload["status"] in {
+            "completed",
+            "failed",
+            "blocked",
+            "cancelled",
+            "interrupted",
+        }:
+            return payload
+        sleep(0.01)
+    raise AssertionError("AIOpsLab API job did not finish")
+
+
+def test_aiopslab_catalog_exposes_registered_benchmark_and_readiness(tmp_path):
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        aiopslab_catalog_path=_aiopslab_catalog_path(tmp_path),
+        aiopslab_executor=_ApiAIOpsLabExecutor(),
+        aiopslab_artifact_root=tmp_path / "runs",
+    )
+
+    response = TestClient(test_app).get("/api/benchmarks/aiopslab")
+
+    assert response.status_code == 200
+    assert response.json()["runtime"]["ready"] is True
+    assert response.json()["benchmarks"][0]["id"] == (
+        "hotel-reservation-detection-v1"
+    )
+
+
+def test_aiopslab_job_rejects_unready_runtime_before_submission(tmp_path):
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        aiopslab_catalog_path=_aiopslab_catalog_path(tmp_path),
+        aiopslab_executor=_ApiAIOpsLabExecutor(ready=False),
+        aiopslab_artifact_root=tmp_path / "runs",
+    )
+
+    response = TestClient(test_app).post(
+        "/api/benchmarks/aiopslab/jobs",
+        json={
+            "benchmark_id": "hotel-reservation-detection-v1",
+            "repetitions": 1,
+        },
+    )
+
+    assert response.status_code == 503
+    assert "AIOpsLab runtime unavailable" in response.json()["detail"]
+
+
+def test_aiopslab_job_completes_persists_and_exposes_artifacts(tmp_path):
+    database = tmp_path / "jobs.sqlite3"
+    catalog = _aiopslab_catalog_path(tmp_path)
+    artifact_root = tmp_path / "runs"
+    test_app = create_app(
+        job_database_path=database,
+        aiopslab_catalog_path=catalog,
+        aiopslab_executor=_ApiAIOpsLabExecutor(),
+        aiopslab_artifact_root=artifact_root,
+        aiopslab_job_id_factory=lambda: "lab-api-complete",
+    )
+    test_client = TestClient(test_app)
+
+    created = test_client.post(
+        "/api/benchmarks/aiopslab/jobs",
+        json={
+            "benchmark_id": "hotel-reservation-detection-v1",
+            "repetitions": 2,
+        },
+    )
+    finished = _wait_for_aiopslab_job(test_client, created.json()["job_id"])
+
+    assert created.status_code == 202
+    assert finished["status"] == "completed"
+    assert finished["result"]["total_runs"] == 2
+    assert finished["result"]["accuracy"] == 1.0
+    assert finished["artifact_urls"]["markdown"].endswith(
+        "/artifacts/markdown"
+    )
+    markdown = test_client.get(finished["artifact_urls"]["markdown"])
+    assert markdown.status_code == 200
+    assert "AIOpsLab" in markdown.text
+
+    restored_app = create_app(
+        job_database_path=database,
+        aiopslab_catalog_path=catalog,
+        aiopslab_executor=_ApiAIOpsLabExecutor(),
+        aiopslab_artifact_root=artifact_root,
+    )
+    restored = TestClient(restored_app).get(
+        "/api/benchmarks/aiopslab/jobs/lab-api-complete"
+    )
+    assert restored.status_code == 200
+    assert restored.json()["result"]["total_runs"] == 2
+
+
+def test_aiopslab_sse_replays_events_and_finishes(tmp_path):
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        aiopslab_catalog_path=_aiopslab_catalog_path(tmp_path),
+        aiopslab_executor=_ApiAIOpsLabExecutor(),
+        aiopslab_artifact_root=tmp_path / "runs",
+        aiopslab_job_id_factory=lambda: "lab-api-sse",
+    )
+    test_client = TestClient(test_app)
+    created = test_client.post(
+        "/api/benchmarks/aiopslab/jobs",
+        json={
+            "benchmark_id": "hotel-reservation-detection-v1",
+            "repetitions": 1,
+        },
+    ).json()
+    _wait_for_aiopslab_job(test_client, created["job_id"])
+
+    response = test_client.get(
+        f"/api/benchmarks/aiopslab/jobs/{created['job_id']}/events",
+        headers={"Last-Event-ID": "1"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert "event: benchmark" in response.text
+    assert "event: job" in response.text
+    assert "Benchmark preflight started" not in response.text
+
+
+def test_aiopslab_cancel_endpoint_stops_active_job(tmp_path):
+    executor = _ApiAIOpsLabExecutor(block=True)
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        aiopslab_catalog_path=_aiopslab_catalog_path(tmp_path),
+        aiopslab_executor=executor,
+        aiopslab_artifact_root=tmp_path / "runs",
+        aiopslab_job_id_factory=lambda: "lab-api-cancel",
+    )
+    test_client = TestClient(test_app)
+    created = test_client.post(
+        "/api/benchmarks/aiopslab/jobs",
+        json={
+            "benchmark_id": "hotel-reservation-detection-v1",
+            "repetitions": 3,
+        },
+    ).json()
+    assert executor.started.wait(timeout=1)
+
+    cancelled = test_client.post(
+        f"/api/benchmarks/aiopslab/jobs/{created['job_id']}/cancel"
+    )
+    finished = _wait_for_aiopslab_job(test_client, created["job_id"])
+
+    assert cancelled.status_code == 202
+    assert cancelled.json()["cancel_requested"] is True
+    assert finished["status"] == "cancelled"

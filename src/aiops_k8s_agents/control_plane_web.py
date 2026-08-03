@@ -4,6 +4,7 @@ import json
 import importlib.util
 import os
 import subprocess
+import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -22,6 +23,15 @@ from aiops_k8s_agents.control_plane_data import (
     run_mutual_supervision_mock,
     run_scenario_experiment_mock,
     scenario_catalog,
+)
+from aiops_k8s_agents.aiopslab_benchmark import (
+    AIOpsLabBenchmarkCatalog,
+    AIOpsLabBenchmarkExecutor,
+)
+from aiops_k8s_agents.aiopslab_job_runner import AIOpsLabJobRunner
+from aiops_k8s_agents.aiopslab_jobs import (
+    AIOpsLabBenchmarkRequest,
+    SQLiteAIOpsLabJobStore,
 )
 from aiops_k8s_agents.experiment_runtime_factory import build_experiment_runtime
 from aiops_k8s_agents.experiment_runtime import RuntimePreflightResult
@@ -57,6 +67,11 @@ class RuntimeApiState:
     connection_probes: Mapping[str, RuntimeProbe]
     job_store: SQLiteExperimentJobStore
     job_runner: ExperimentJobRunner
+    aiopslab_catalog: AIOpsLabBenchmarkCatalog
+    aiopslab_executor: Any
+    aiopslab_job_store: SQLiteAIOpsLabJobStore
+    aiopslab_job_runner: AIOpsLabJobRunner
+    aiopslab_artifact_root: Path
 
 
 class EmptyEventSink:
@@ -99,6 +114,11 @@ class ExperimentValidationRequest(BaseModel):
 
 class ExperimentCreateRequest(ExperimentValidationRequest):
     real_confirmation: str = ""
+
+
+class AIOpsLabBenchmarkCreateRequest(BaseModel):
+    benchmark_id: str = Field(min_length=1)
+    repetitions: int = Field(default=1, ge=1, le=12)
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -305,6 +325,132 @@ def api_artifact(relative_path: str) -> FileResponse:
         path = artifact_path(relative_path)
     except (ValueError, FileNotFoundError) as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return FileResponse(path)
+
+
+@router.get("/api/benchmarks/aiopslab")
+def api_aiopslab_benchmarks(request: Request) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    return {
+        "benchmarks": state.aiopslab_catalog.to_public_list(),
+        "runtime": state.aiopslab_executor.readiness(),
+        "boundary": (
+            "AIOpsLab detection benchmark; separate from Chaos Mesh recovery jobs"
+        ),
+    }
+
+
+@router.post("/api/benchmarks/aiopslab/jobs", status_code=202)
+def api_create_aiopslab_job(
+    payload: AIOpsLabBenchmarkCreateRequest,
+    request: Request,
+) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        benchmark_request = AIOpsLabBenchmarkRequest(
+            benchmark_id=payload.benchmark_id,
+            repetitions=payload.repetitions,
+        )
+        spec = state.aiopslab_catalog.resolve(benchmark_request.benchmark_id)
+        spec.validate_request(benchmark_request)
+    except (KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc).strip("'")) from exc
+    readiness = state.aiopslab_executor.readiness()
+    if not readiness.get("ready"):
+        reasons = readiness.get("reasons", ["AIOpsLab runtime unavailable"])
+        raise HTTPException(status_code=503, detail="; ".join(reasons))
+    job = state.aiopslab_job_runner.submit(benchmark_request)
+    return _aiopslab_job_payload(state, job)
+
+
+@router.get("/api/benchmarks/aiopslab/jobs")
+def api_aiopslab_jobs(request: Request, limit: int = 50) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        jobs = state.aiopslab_job_store.list(limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"jobs": [_aiopslab_job_payload(state, job) for job in jobs]}
+
+
+@router.get("/api/benchmarks/aiopslab/jobs/{job_id}")
+def api_aiopslab_job(job_id: str, request: Request) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    job = state.aiopslab_job_store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="AIOpsLab benchmark job not found")
+    payload = _aiopslab_job_payload(state, job)
+    payload["events"] = [
+        event.to_dict()
+        for event in state.aiopslab_job_store.events_after(job_id)
+    ]
+    return payload
+
+
+@router.post("/api/benchmarks/aiopslab/jobs/{job_id}/cancel", status_code=202)
+def api_cancel_aiopslab_job(job_id: str, request: Request) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        job = state.aiopslab_job_runner.cancel(job_id)
+    except KeyError as exc:
+        raise HTTPException(
+            status_code=404,
+            detail="AIOpsLab benchmark job not found",
+        ) from exc
+    return _aiopslab_job_payload(state, job)
+
+
+@router.get("/api/benchmarks/aiopslab/jobs/{job_id}/events")
+def api_aiopslab_job_events(job_id: str, request: Request) -> StreamingResponse:
+    state: RuntimeApiState = request.app.state.runtime_api
+    if state.aiopslab_job_store.get(job_id) is None:
+        raise HTTPException(status_code=404, detail="AIOpsLab benchmark job not found")
+    raw_cursor = request.headers.get("last-event-id", "0").strip() or "0"
+    try:
+        cursor = int(raw_cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Last-Event-ID must be an integer") from exc
+    if cursor < 0:
+        raise HTTPException(status_code=400, detail="Last-Event-ID must be non-negative")
+
+    def stream():
+        nonlocal cursor
+        while True:
+            events = state.aiopslab_job_runner.wait_for_events(
+                job_id,
+                after_sequence=cursor,
+                timeout=10.0,
+            )
+            for event in events:
+                cursor = event.sequence
+                yield _sse("benchmark", event.to_dict(), event_id=event.sequence)
+            job = state.aiopslab_job_store.get(job_id)
+            if job is None:
+                return
+            if job.status.terminal:
+                yield _sse("job", _aiopslab_job_payload(state, job))
+                return
+            if not events:
+                yield ": keep-alive\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+@router.get("/api/benchmarks/aiopslab/jobs/{job_id}/artifacts/{artifact_name}")
+def api_aiopslab_artifact(
+    job_id: str,
+    artifact_name: str,
+    request: Request,
+) -> FileResponse:
+    state: RuntimeApiState = request.app.state.runtime_api
+    path = _aiopslab_artifact_path(state, job_id, artifact_name)
     return FileResponse(path)
 
 
@@ -560,6 +706,63 @@ def _sse(event: str, payload: Mapping[str, Any], event_id: int | None = None) ->
     return "\n".join(lines) + "\n\n"
 
 
+def _aiopslab_job_payload(state: RuntimeApiState, job: Any) -> dict[str, Any]:
+    payload = job.to_dict()
+    result = payload.get("result")
+    if not isinstance(result, Mapping):
+        payload["artifact_urls"] = {}
+        return payload
+    artifact_urls: dict[str, str] = {}
+    artifacts = result.get("artifacts", {})
+    for name in ("markdown", "csv"):
+        if isinstance(artifacts, Mapping) and artifacts.get(name):
+            artifact_urls[name] = (
+                f"/api/benchmarks/aiopslab/jobs/{job.job_id}/artifacts/{name}"
+            )
+    reports = result.get("reports", [])
+    if isinstance(reports, list):
+        for index, _ in enumerate(reports, start=1):
+            key = f"report-{index}"
+            artifact_urls[key] = (
+                f"/api/benchmarks/aiopslab/jobs/{job.job_id}/artifacts/{key}"
+            )
+    payload["artifact_urls"] = artifact_urls
+    return payload
+
+
+def _aiopslab_artifact_path(
+    state: RuntimeApiState,
+    job_id: str,
+    artifact_name: str,
+) -> Path:
+    job = state.aiopslab_job_store.get(job_id)
+    if job is None or job.result is None:
+        raise HTTPException(status_code=404, detail="AIOpsLab artifact not found")
+    result = dict(job.result)
+    candidate: str | None = None
+    artifacts = result.get("artifacts", {})
+    if artifact_name in {"markdown", "csv"} and isinstance(artifacts, Mapping):
+        candidate = artifacts.get(artifact_name)
+    elif artifact_name.startswith("report-"):
+        try:
+            index = int(artifact_name.removeprefix("report-")) - 1
+            reports = result.get("reports", [])
+            candidate = reports[index]
+        except (ValueError, IndexError, TypeError):
+            candidate = None
+    if not candidate:
+        raise HTTPException(status_code=404, detail="AIOpsLab artifact not found")
+    path = Path(candidate).expanduser().resolve()
+    allowed_root = (state.aiopslab_artifact_root / job_id).resolve()
+    try:
+        path.relative_to(allowed_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="AIOpsLab artifact not found") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="AIOpsLab artifact not found")
+    return path
+
+
 def _default_probe(command: list[str]) -> RuntimeProbe:
     def probe() -> bool:
         try:
@@ -639,6 +842,10 @@ def create_app(
     prometheus_url: str | None = None,
     autogen_decision_provider_factory: Callable[[str], Any] | None = None,
     autogen_model_client_factory: Callable[[str], Any] | None = None,
+    aiopslab_catalog_path: str | Path | None = None,
+    aiopslab_executor: Any | None = None,
+    aiopslab_artifact_root: str | Path | None = None,
+    aiopslab_job_id_factory: Callable[[], str] | None = None,
 ) -> FastAPI:
     root = project_root()
     config_path = Path(configuration_path or root / "config" / "experiment_runtime.json")
@@ -674,6 +881,43 @@ def create_app(
         )
     )
     job_runner = ExperimentJobRunner(job_store, runtime_builder)
+    benchmark_catalog = AIOpsLabBenchmarkCatalog.from_path(
+        aiopslab_catalog_path or root / "config" / "aiopslab_benchmarks.json"
+    )
+    benchmark_executor = aiopslab_executor or AIOpsLabBenchmarkExecutor(
+        repo_root=root,
+        aiopslab_root=os.environ.get(
+            "AIOPSLAB_ROOT",
+            root.parent / "external" / "AIOpsLab",
+        ),
+        python_executable=os.environ.get("AIOPSLAB_PYTHON", sys.executable),
+        kubeconfig=os.environ.get(
+            "KUBECONFIG",
+            root / "config" / "missing-kubeconfig",
+        ),
+    )
+    benchmark_artifact_root = Path(
+        aiopslab_artifact_root
+        or root / "runs" / "control-plane" / "aiopslab"
+    ).expanduser().resolve()
+    aiopslab_job_store = SQLiteAIOpsLabJobStore(database_path)
+    aiopslab_job_runner = AIOpsLabJobRunner(
+        aiopslab_job_store,
+        benchmark_catalog,
+        benchmark_executor,
+        artifact_root=benchmark_artifact_root,
+        job_id_factory=aiopslab_job_id_factory,
+    )
+    probes = dict(
+        connection_probes
+        or _default_connection_probes(
+            root,
+            prometheus_url
+            or os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9090"),
+        )
+    )
+    if connection_probes is None:
+        probes["aiopslab"] = benchmark_executor.readiness
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -681,6 +925,7 @@ def create_app(
             yield
         finally:
             job_runner.shutdown(wait=True)
+            aiopslab_job_runner.shutdown(wait=True)
 
     app_instance = FastAPI(
         title="AIOps 4-Agent Control Plane",
@@ -693,11 +938,14 @@ def create_app(
         configuration=configuration,
         protocol_profiles=protocol_profiles,
         runtime_factory=factory,
-        connection_probes=connection_probes or _default_connection_probes(
-            root, prometheus_url or os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9090")
-        ),
+        connection_probes=probes,
         job_store=job_store,
         job_runner=job_runner,
+        aiopslab_catalog=benchmark_catalog,
+        aiopslab_executor=benchmark_executor,
+        aiopslab_job_store=aiopslab_job_store,
+        aiopslab_job_runner=aiopslab_job_runner,
+        aiopslab_artifact_root=benchmark_artifact_root,
     )
     app_instance.include_router(router)
     app_instance.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
