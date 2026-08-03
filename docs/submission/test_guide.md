@@ -83,7 +83,40 @@ KubernetesEvidenceProvider는 deployment/pod snapshot 중심의 제한적 provid
 Prometheus metric, log enrichment, full real-cluster evidence fusion은 후속 확장이다.
 ```
 
-## 5. Prometheus 연결 시험
+## 5. 웹 영속 Job 시험
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+export PORT=18080
+aiops-control-plane
+```
+
+브라우저에서 `Mock`, `CPU Stress`, `1회`를 선택하고 `실험 실행`을 누릅니다.
+
+성공 기준:
+
+- 실험 ID가 `exp-...` 형식으로 표시됨
+- 7단계 타임라인과 이벤트 수가 실시간 갱신됨
+- 완료 후 Agent 판단, 최종 Action, Recovery와 Reward가 표시됨
+- 새로고침 후 동일 Job과 저장 이벤트가 복원됨
+- `runs/control-plane/experiment-jobs.sqlite3`가 생성됨
+
+자동화된 웹/API 계약 시험:
+
+```bash
+python -m pytest \
+  tests/test_experiment_jobs.py \
+  tests/test_experiment_job_runner.py \
+  tests/test_control_plane_web.py \
+  tests/test_control_plane_ui.py
+```
+
+취소 시험은 실행 중 `취소`를 한 번 누르고, 최종 상태가 `cancelled` 또는 안전한
+terminal 상태인지 확인합니다. 서버 재시작 시험에서는 진행 중 Job이 자동 재실행되지
+않고 `interrupted`로 기록되는지 확인합니다.
+
+## 6. Prometheus 연결 시험
 
 터미널 A:
 
@@ -107,7 +140,7 @@ curl -sSG "$PROM/api/v1/query" --data-urlencode 'query=up'
 - `Prometheus Server is Ready.`
 - Prometheus query response에 `"status":"success"` 포함
 
-## 6. Real recovery action 36회 시험
+## 7. Real recovery action 36회 시험
 
 ```bash
 export NETWORK_LATENCY_QUERY='max(probe_duration_seconds{target="paymentservice"})'
@@ -146,7 +179,7 @@ for line in open(sys.argv[1], encoding="utf-8"):
 PY
 ```
 
-## 7. 정량 분석 시험
+## 8. 정량 분석 시험
 
 ```bash
 bash scripts/server_recovery_statistics.sh
@@ -170,7 +203,7 @@ cat "$LATEST/statistics/quantitative_summary.md"
 - `success_rate_by_action.png`
 - `reward_by_policy.png`
 
-## 8. AIOpsLab benchmark 시험
+## 9. AIOpsLab benchmark 시험
 
 ```bash
 cd ~/geonhae/aiops_research
