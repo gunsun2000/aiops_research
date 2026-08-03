@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
+from threading import Event
 
 import pytest
 
@@ -56,6 +57,21 @@ def test_runtime_factory_builds_real_dependencies_from_registered_config(tmp_pat
         "network-delay",
         "pod-kill",
     )
+
+
+def test_runtime_factory_accepts_job_identity_and_cancellation_signal(tmp_path):
+    cancellation = Event()
+
+    runtime = build_experiment_runtime(
+        configuration_path=write_runtime_config(tmp_path),
+        prometheus_url="http://127.0.0.1:9091",
+        event_sink=RecordingEventSink(),
+        experiment_id_factory=lambda: "exp-job-r01",
+        cancellation_event=cancellation,
+    )
+
+    assert runtime.experiment_id_factory() == "exp-job-r01"
+    assert runtime.cancellation_event is cancellation
 
 
 def test_runtime_factory_selects_requested_registered_protocol(tmp_path):
