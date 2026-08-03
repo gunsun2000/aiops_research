@@ -435,6 +435,18 @@ class ExperimentRuntime:
             raise _BlockedRequest(f"scenario is not registered: {request.scenario_id}")
         if request.metric not in self.configuration.metric_queries:
             raise _BlockedRequest(f"metric is not registered: {request.metric}")
+        scenario = self.configuration.scenarios[request.scenario_id]
+        for field in ("namespace", "deployment", "metric", "threshold"):
+            expected = getattr(scenario, field, None)
+            if expected is None:
+                raise _BlockedRequest(
+                    f"scenario binding is incomplete: {request.scenario_id}.{field}"
+                )
+            actual = getattr(request, field)
+            if actual != expected:
+                raise _BlockedRequest(
+                    f"request {field} does not match scenario {request.scenario_id}"
+                )
 
     @staticmethod
     def _validate_coordinator_mode(coordinator: Any, request: ExperimentRuntimeRequest) -> None:

@@ -120,7 +120,7 @@ def approved_report(run_id):
 def runtime_configuration():
     return RuntimeConfiguration(
         version="1.0.0",
-        allowed_namespaces=("online-boutique",),
+        allowed_namespaces=("online-boutique", "observability"),
         allowed_deployments=("paymentservice", "checkoutservice"),
         min_replicas=1,
         max_replicas=5,
@@ -131,8 +131,20 @@ def runtime_configuration():
             "recovery_seconds": 120,
             "cleanup_seconds": 60,
         },
-        metric_queries={"cpu": MetricQueryDefinition("cpu", "up")},
-        scenarios={"cpu-stress": "paymentservice-cpu-stress.yaml"},
+        metric_queries={
+            "cpu": MetricQueryDefinition("cpu", "up"),
+            "memory": MetricQueryDefinition("memory", "up"),
+        },
+        scenarios={
+            "cpu-stress": {
+                "id": "cpu-stress",
+                "namespace": "online-boutique",
+                "deployment": "paymentservice",
+                "metric": "cpu",
+                "threshold": 80.0,
+                "manifest": "paymentservice-cpu-stress.yaml",
+            }
+        },
     )
 
 
@@ -221,6 +233,29 @@ def test_runtime_rejects_target_outside_allowlist_before_fault_injection():
     assert result.status == "blocked"
     assert chaos.calls == []
     assert result.session.status == "blocked"
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("namespace", "observability"),
+        ("deployment", "checkoutservice"),
+        ("metric", "memory"),
+        ("threshold", 81.0),
+    ),
+    ids=("namespace", "deployment", "metric", "threshold"),
+)
+def test_runtime_rejects_scenario_request_binding_mismatch_before_chaos(
+    field, value
+):
+    chaos = FakeChaosAdapter()
+    request = replace(real_request(), **{field: value})
+
+    result = runtime_with(chaos=chaos).run(request)
+
+    assert result.status == "blocked"
+    assert field in result.report["error"]
+    assert chaos.calls == []
 
 
 def test_runtime_preserves_timeout_status_and_always_cleans_up():
@@ -356,16 +391,10 @@ def test_runtime_checks_cancellation_after_injection_and_still_cleans_up():
 
 
 def test_runtime_deadline_interrupts_coordinator_and_persists_terminal_facts():
-    configuration = RuntimeConfiguration(
-        version="1.0.0",
-        allowed_namespaces=("online-boutique",),
-        allowed_deployments=("paymentservice", "checkoutservice"),
-        min_replicas=1,
-        max_replicas=5,
+    configuration = replace(
+        runtime_configuration(),
         timeouts={"experiment": 1},
         experiment_seconds=1,
-        metric_queries={"cpu": MetricQueryDefinition("cpu", "up")},
-        scenarios={"cpu-stress": "paymentservice-cpu-stress.yaml"},
     )
     class CountingStore(InMemoryResearchEventStore):
         def __init__(self):
