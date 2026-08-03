@@ -56,9 +56,10 @@ aiops-control-plane
 ```
 
 The server is available at `http://127.0.0.1:${PORT}/` and its OpenAPI page is
-`http://127.0.0.1:${PORT}/api/docs`. The current web boundary is preflight-only:
-there is no persistent Job, SSE stream, cancellation endpoint, or web-triggered
-real execution endpoint in Plan A.
+`http://127.0.0.1:${PORT}/api/docs`. The web runtime now provides persistent
+background Jobs, event replay and live SSE, cooperative cancellation, and a
+gated `mock`, `dry-run`, or `real` execution request. The default SQLite file is
+`runs/control-plane/experiment-jobs.sqlite3`.
 
 ## 4. Capability and connection probes
 
@@ -67,13 +68,15 @@ curl -fsS "http://127.0.0.1:${PORT}/api/platform"
 curl -fsS "http://127.0.0.1:${PORT}/api/connections"
 ```
 
-Expected result: `/api/platform` reports `persistent_jobs: false`,
-`real_runtime: true`, and `runtime_boundary: preflight_only`. The real mode is
+Expected result: `/api/platform` reports `persistent_jobs: true`,
+`real_runtime: true`, and `runtime_boundary: persistent_bounded_jobs`. The real mode is
 not globally marked ready until request-specific preflight succeeds.
 `/api/connections` reports `read_only: true` and individual readiness for
 Kubernetes, Prometheus, Chaos Mesh, AutoGen configuration, AIOpsLab path, and
-the artifact directory. These responses prove read-only capability/readiness
-checks, never Kubernetes mutation or a real experiment.
+the artifact directory. Only Kubernetes, Prometheus, Chaos Mesh, and the artifact
+directory are required by the deterministic real Job. AutoGen and AIOpsLab are
+reported for visibility but are not prerequisites for this runtime. These probe
+responses are read-only and never prove Kubernetes mutation or a real experiment.
 
 ## 5. Request-specific preflight
 
@@ -139,7 +142,42 @@ acquire the operation lock, inject Chaos Mesh, execute an Action, or perform
 cleanup. A missing prerequisite should produce HTTP 400 with the missing names;
 that is a preflight failure, not evidence of an unsuccessful real experiment.
 
-## 6. Existing CLI real experiment path
+## 6. Persistent web Job execution
+
+Create a mock Job:
+
+```bash
+jq '. + {"repetitions":1,"real_confirmation":""}' \
+  /tmp/cpu-stress-validate.json \
+  | curl -fsS -X POST "http://127.0.0.1:${PORT}/api/experiments" \
+      -H 'content-type: application/json' --data-binary @-
+```
+
+The response is HTTP 202 and contains an `experiment_id`. Use that id to query
+the persistent Job, replay/live-stream its events, or request cancellation:
+
+```bash
+EXPERIMENT_ID="<response experiment_id>"
+curl -fsS "http://127.0.0.1:${PORT}/api/experiments/${EXPERIMENT_ID}"
+curl -N "http://127.0.0.1:${PORT}/api/experiments/${EXPERIMENT_ID}/events"
+curl -fsS -X POST \
+  "http://127.0.0.1:${PORT}/api/experiments/${EXPERIMENT_ID}/cancel"
+```
+
+Cancellation is cooperative and cleanup remains mandatory. On server startup,
+stale nonterminal Jobs become `interrupted`; they are not blindly resumed.
+
+For a real web Job, start the server with `CONFIRM_REAL_RUN=YES`, change the mode
+to `real`, and include the exact body field below:
+
+```json
+"real_confirmation": "EXECUTE REAL EXPERIMENT"
+```
+
+This authorization does not bypass request-specific preflight, the target lock,
+allowlists, replica bounds, validation, recovery monitoring, or cleanup.
+
+## 7. Existing CLI real experiment path
 
 The supported real execution path remains the existing CLI/matrix runner, not a
 web request. First set the required network-delay query for the deployed
@@ -172,7 +210,7 @@ cp config/recovery_action_experiments.json \
   "$RUN_DIR/recovery_action_experiments.json"
 ```
 
-## 7. Cleanup and failure evidence
+## 8. Cleanup and failure evidence
 
 Always retain the run directory before cleanup. Inspect every matrix record with
 `cleanup_valid=false`; do not assume the failed treatment was CPU stress. The
@@ -255,11 +293,11 @@ Kubernetes context, and whether cleanup completed. A failed preflight, a failed
 fault injection, a failed recovery observation, and a failed cleanup are
 different outcomes and must remain distinct in the report.
 
-## 8. Explicit exclusions
+## 9. Explicit exclusions
 
 Python and Go regression tests use deterministic or injected fakes where stated;
 they are not real-cluster evidence. AutoGen model execution and AIOpsLab
 benchmark Jobs are separate runtimes and are not implied by the core runtime or
-its preflight API. Persistent Jobs, SSE, cancellation, and web-triggered real
-execution require Plan B implementation before they can be documented as
-available.
+its web Job API. Persistent Jobs, SSE, cancellation, and the gated deterministic
+web execution path are implemented. AutoGen GroupChat web execution and
+AIOpsLab benchmark Jobs remain future integrations.

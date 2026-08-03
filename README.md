@@ -86,20 +86,30 @@ go test ./...
 
 상세 실행 코드는 [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md)에 정리되어 있습니다.
 
-## Control Plane and Real Runtime Boundary
+## Control Plane과 실험 실행 경계
 
-The core real experiment runtime service is implemented. It validates registered
-scenarios, admits bounded dependencies, coordinates the injected fault/evidence/
-agent/cleanup lifecycle, and preserves one `experiment_id` and `ExperimentSession`.
-The FastAPI surface currently provides capability, read-only connection readiness,
-and `POST /api/experiments/validate` preflight. Preflight never acquires the real
-operation lock, applies Chaos Mesh, or changes Kubernetes.
+웹 Control Plane은 등록된 장애 시나리오를 영속 Job으로 실행하고, 하나의
+`experiment_id` 아래에서 장애 주입, Evidence 수집, 4-Agent 상호감시,
+안전 검증, Kubernetes Action, 복구 관찰, cleanup 이벤트를 추적합니다.
+Job과 이벤트는 기본적으로
+`runs/control-plane/experiment-jobs.sqlite3`에 저장되며, SSE로 화면에
+실시간 전달됩니다. 실행 취소는 안전한 단계 경계에서 처리되고 cleanup은 항상
+시도합니다. 서버 재시작 시 진행 중이던 Job은 자동 재실행하지 않고
+`interrupted`로 표시하여 중복 장애 주입을 방지합니다.
 
-The existing UI mock endpoints remain available for demonstrations, and the
-existing CLI real experiment paths remain supported. A successful mock test is
-not real-cluster evidence; the documented dry-run request checks API admission
-only and does not execute a command path; only an authorized Ubuntu cluster run
-can establish real experiment evidence.
+실행 모드는 다음처럼 구분합니다.
+
+| 모드 | Evidence 및 실행 경계 |
+| --- | --- |
+| `mock` | `FakeEvidenceProvider` 기반 합성 Evidence. Kubernetes를 변경하지 않음 |
+| `dry-run` | 실제 대상과 명령을 검증하지만 Kubernetes 상태를 변경하지 않음 |
+| `real` | Ubuntu 서버의 Prometheus, Chaos Mesh, Kubernetes를 사용해 제한된 Action을 실행 |
+
+`real` 웹 실행은 서버 환경변수 `CONFIRM_REAL_RUN=YES`와 UI 확인 문구
+`EXECUTE REAL EXPERIMENT`가 모두 필요합니다. 이 Gate를 통과해도 등록된
+시나리오, allowlist, replica 제한, target lock, Validator와 cleanup 경계는
+그대로 적용됩니다. Windows에서 통과한 테스트와 `mock` 결과는 실제 클러스터
+실험 근거가 아닙니다.
 
 ```bash
 python -m pip install -e ".[ui,dev,autogen]"
@@ -115,17 +125,16 @@ http://127.0.0.1:18080/
 상세 UI 가이드는 [docs/submission/control_plane_ui_guide.md](docs/submission/control_plane_ui_guide.md)에,
 real runtime 검증 절차는 [docs/experiments/platform_real_runtime_guide.md](docs/experiments/platform_real_runtime_guide.md)에 있습니다.
 
-### Plan boundaries
+### 현재 통합 범위
 
-- Plan A (current): bounded core runtime, adapters, lifecycle cleanup, and
-  read-only web preflight.
-- Plan B (not implemented): persistent background Jobs, SSE event replay,
-  cancellation, and web-triggered real execution.
-- Plan C (not implemented): AutoGen web runtime and an AIOpsLab Job/adapter.
-  Existing AutoGen and AIOpsLab paths remain separate capabilities.
+- 완료: core runtime, Prometheus/Kubernetes/Chaos Mesh adapter, lifecycle cleanup
+- 완료: SQLite 영속 Job, 백그라운드 실행, SSE replay, 취소, 웹 `mock/dry-run/real` 요청
+- 완료: 3영역 연구 콘솔에서 조건, 4-Agent 상호검토, 안전 검사, 결과를 동일 Job으로 표시
+- 미통합: AutoGen GroupChat의 웹 Job 실행
+- 미통합: AIOpsLab benchmark의 웹 Job 실행
 
-The Windows worktree verification below proves code and mock-safe contracts only;
-it does not validate a real Kubernetes, Prometheus, or Chaos Mesh environment.
+기존 AutoGen 및 AIOpsLab CLI/스크립트는 유지되지만, 현재 웹 Job이 이 두 실행을
+대신하거나 검증했다고 해석하지 않습니다.
 
 ## 핵심 실험
 
@@ -255,15 +264,18 @@ bash scripts/server_recovery_statistics.sh
 
 ## 현재 연구 단계
 
-현재 저장소는 mock-safe 테스트와 bounded core runtime/CLI real 경로를 제공하는 **1차 연구 프로토타입**입니다. 이 worktree에서는 실제 Kubernetes/Chaos Mesh/Prometheus 실험을 수행하지 않았으므로 테스트 통과를 real evidence로 해석하지 않습니다.
+현재 저장소는 mock-safe 검증, bounded core runtime, CLI real 경로와 영속형 웹
+실험 Job을 제공하는 **1차 연구 프레임워크**입니다. 이 Windows worktree에서는
+실제 Kubernetes/Chaos Mesh/Prometheus 실험을 수행하지 않았으므로 테스트 통과와
+웹 mock 결과를 real evidence로 해석하지 않습니다.
 
 다음 단계는 이 구조를 고정한 뒤, 다음 비교 실험을 추가하는 것입니다.
 
 - single-agent baseline 비교
 - Agent 제거 ablation 실험
 - reward 민감도 분석
-- Plan B의 persistent web execution과 AutoGen multi-round real action 선택
-- Plan C의 AutoGen web runtime 및 AIOpsLab Job 통합
+- AutoGen multi-round Agent 판단을 현재 웹 Job runtime에 연결
+- AIOpsLab benchmark를 동일한 Job/SSE/산출물 구조에 연결
 - Prometheus metric, log enrichment, full real-cluster evidence fusion
 
 초기 `CPU 95%` 입력은 smoke test입니다. Chaos Mesh/AIOpsLab 기반 실제 장애

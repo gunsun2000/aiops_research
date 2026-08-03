@@ -2,8 +2,8 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_JS = ROOT / "ui" / "control_plane_static" / "app.js"
 INDEX_HTML = ROOT / "ui" / "control_plane_static" / "index.html"
+APP_JS = ROOT / "ui" / "control_plane_static" / "app.js"
 STYLES_CSS = ROOT / "ui" / "control_plane_static" / "styles.css"
 
 
@@ -11,45 +11,21 @@ def _source(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_control_plane_renders_one_integrated_experiment_console():
-    source = _source(APP_JS)
+def test_console_has_one_accessible_research_workspace():
+    source = _source(INDEX_HTML)
 
-    for class_name in (
-        "experiment-console",
-        "console-header",
-        "metric-strip",
-        "scenario-rail",
-        "live-canvas",
-        "agent-flow-grid",
-        "decision-inspector",
-    ):
-        assert class_name in source
-
-    assert "4-Agent AIOps 실험 콘솔" in source
-    assert "운영 판단과 복구 흐름" in source
-    assert "장애 시나리오" in source
+    assert '<html lang="ko">' in source
+    assert 'id="experiment-controls"' in source
+    assert 'id="live-workflow"' in source
+    assert 'id="decision-inspector"' in source
+    assert 'id="research-results"' in source
+    assert "4-Agent AIOps 연구 운영 콘솔" in source
+    assert "styles.css?v=8" in source
+    assert "app.js?v=8" in source
 
 
-def test_control_plane_uses_one_experiment_session_for_all_scenarios():
-    source = _source(APP_JS)
-
-    assert 'fetch("/api/scenarios"' in source
-    assert 'fetch("/api/experiments/mock"' in source
-    assert "currentSession" in source
-    assert "experimentHistory" in source
-    assert "mockResult" not in source
-    assert "mutualResult" not in source
-
-
-def test_scenario_change_clears_a_mismatched_current_session():
-    source = _source(APP_JS)
-
-    assert "state.currentSession.condition.scenario !== scenarioId" in source
-    assert "state.currentSession = null;" in source
-
-
-def test_control_plane_exposes_all_four_fault_scenarios():
-    source = _source(APP_JS)
+def test_console_offers_all_registered_fault_scenarios_and_safe_modes():
+    source = _source(INDEX_HTML) + _source(APP_JS)
 
     for scenario_id in (
         "pod-kill",
@@ -58,10 +34,23 @@ def test_control_plane_exposes_all_four_fault_scenarios():
         "network-delay",
     ):
         assert scenario_id in source
+    for mode in ("mock", "dry-run", "real"):
+        assert f'data-mode="{mode}"' in source
 
 
-def test_control_plane_exposes_all_four_agent_roles_in_one_flow():
+def test_console_connects_create_stream_cancel_and_restore_job_apis():
     source = _source(APP_JS)
+
+    assert 'api("/api/experiments",' in source
+    assert "new EventSource" in source
+    assert "`/api/experiments/${state.experimentId}/events`" in source
+    assert "`/api/experiments/${state.experimentId}/cancel`" in source
+    assert 'api("/api/experiments?limit=20")' in source
+    assert 'real_confirmation: "EXECUTE REAL EXPERIMENT"' in source
+
+
+def test_console_exposes_four_agents_without_fake_precomputed_decisions():
+    source = _source(INDEX_HTML) + _source(APP_JS)
 
     for agent_name in (
         "AIServiceHASupportAgent",
@@ -70,57 +59,29 @@ def test_control_plane_exposes_all_four_agent_roles_in_one_flow():
         "CostOptimizationAgent",
     ):
         assert agent_name in source
-
-    assert "selectedAgent" in source
-    assert "selectAgent" in source
-    assert "상호검토" in source
-    assert "최종 Action" in source
+    assert "DEFAULT_DIAGNOSIS" not in source
+    assert "DEFAULT_ACTIONS" not in source
+    assert "실험 Evidence 수집 후 표시" in source
 
 
-def test_guard_backend_and_safety_boundary_remain_visible():
+def test_console_separates_mock_dry_run_and_real_evidence_boundaries():
     source = _source(APP_JS)
 
-    assert 'selected: state.backend === "python"' in source
-    assert 'selected: state.backend === "go"' in source
-    assert "session ? session.guard_backend : state.backend" in source
-    assert "Python Validator" in source
-    assert "Go Guard" in source
-    assert "allowlist" in source
-    assert "replica 1–5" in source
+    assert "합성 Evidence" in source
+    assert "명령 검증" in source
+    assert "실제 Kubernetes" in source
+    assert "CONFIRM_REAL_RUN" in source
+    assert "AutoGen GroupChat은 다음 통합 단계" in source
+    assert "AIOpsLab benchmark는 다음 통합 단계" in source
 
 
-def test_control_plane_uses_clean_korean_utf8_and_cache_busting():
-    app_source = _source(APP_JS)
-    html_source = _source(INDEX_HTML)
-
-    assert "연구 운영" in app_source
-    assert "실험 실행" in app_source
-    assert "JavaScript가 비활성화되어" in html_source
-    assert "styles.css?v=7" in html_source
-    assert "app.js?v=7" in html_source
-
-
-def test_control_plane_styles_match_compact_research_console():
+def test_console_styles_use_three_area_desktop_layout_and_mobile_reflow():
     source = _source(STYLES_CSS)
 
-    for selector in (
-        ".experiment-console",
-        ".console-header",
-        ".metric-strip",
-        ".scenario-rail",
-        ".live-canvas",
-        ".agent-flow-grid",
-        ".decision-inspector",
-    ):
-        assert selector in source
-
-    assert "max-width: 1180px" in source
-    assert "grid-template-columns: 230px minmax(0, 1fr)" in source
-
-
-def test_control_plane_prevents_long_research_terms_from_overflowing_mobile():
-    source = _source(STYLES_CSS)
-
-    assert "overflow-x: hidden" in source
+    assert "grid-template-columns: 220px minmax(440px, 1fr) 300px" in source
+    assert ".experiment-controls" in source
+    assert ".live-workflow" in source
+    assert ".decision-inspector" in source
+    assert "@media (max-width: 760px)" in source
     assert "overflow-wrap: anywhere" in source
-    assert "@media (max-width: 720px)" in source
+    assert "letter-spacing: 0" in source

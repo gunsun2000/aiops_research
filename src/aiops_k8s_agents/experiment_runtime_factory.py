@@ -17,6 +17,7 @@ from aiops_k8s_agents.experiment_runtime import (
     CoordinatorAdmission,
     CoordinatorAdmissionValidator,
     ExperimentRuntime,
+    default_experiment_id,
 )
 from aiops_k8s_agents.experiment_runtime_models import ExperimentRuntimeRequest
 from aiops_k8s_agents.executor import ExecutionBackend, ExecutionMode
@@ -84,6 +85,8 @@ def build_experiment_runtime(
     subprocess_runner: CommandRunner | None = None,
     prometheus_fetcher: PrometheusFetcher | None = None,
     kubernetes_collector: KubernetesCollector | None = None,
+    experiment_id_factory: Callable[[], str] | None = None,
+    cancellation_event: Any | None = None,
 ) -> ExperimentRuntime:
     """Build the admitted deterministic runtime without performing I/O.
 
@@ -164,6 +167,8 @@ def build_experiment_runtime(
         chaos=chaos,
         coordinator_factory=coordinator_factory,
         event_sink=event_sink,
+        experiment_id_factory=experiment_id_factory or default_experiment_id,
+        cancellation_event=cancellation_event,
         admission_validator=_FactoryCoordinatorAdmissionValidator(),
     )
 
