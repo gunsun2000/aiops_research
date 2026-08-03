@@ -6,12 +6,16 @@
 - Review-fix commit: `04e7913` (`fix: enforce experiment runtime safety invariants`)
 - Review-fix 2 commit: `f5d2b66` (`fix: bound coordinator execution by registered deadline`)
 - Review-fix 3 commit: `b2f4b71` (`fix: reject unsupported coordinator capabilities`)
+- Review-fix 4 commit: `46c92aa` (`fix: derive coordinator admission from registered stages`)
 - Base commit: `79b4ec5`
 
 ## Files
 
 - `src/aiops_k8s_agents/experiment_runtime.py`
+- `src/aiops_k8s_agents/experiment_runtime_models.py`
+- `src/aiops_k8s_agents/executor.py`
 - `src/aiops_k8s_agents/experiment_session.py`
+- `src/aiops_k8s_agents/kubernetes_status.py`
 - `src/aiops_k8s_agents/mutual_supervision.py`
 - `tests/test_experiment_runtime.py`
 - `tests/test_experiment_session.py`
@@ -33,14 +37,15 @@
 - Added an injectable `ExperimentSessionStore`; every terminal path persists exactly one normalized immutable session.
 - Added the required positive `experiment_seconds` production setting and validation; runtime deadlines now use this registered key rather than an optional timeout-map entry.
 - Added a cancellable coordinator worker boundary that signals runtime control on expiry, joins the worker before cleanup, and prevents recovery from continuing in background after timeout.
-- Replaced the worker boundary with an explicit `CoordinatorRuntimeCapabilities` contract validated before fault injection. Unsupported/non-cooperative coordinators are rejected before Chaos Mesh work; no Python thread cancellation or unbounded join is claimed or used.
-- The production `MutualSupervisionCoordinator` advertises the bounded, cancellable, finite-stage-I/O, deadline-aware contract and continues to enforce runtime control at evidence and recovery boundaries.
+- Replaced self-attested capability admission with `CoordinatorAdmissionValidator`, which derives a concrete admission from the actual `MutualSupervisionCoordinator`, exact registered evidence/recovery/agent stages, protocol profile, and positive finite stage timeouts before fault injection.
+- Admission rejects subclasses, overridden/custom coordinator stages, blocking or unsupported evidence/agent/executor dependencies, and self-claiming non-cooperative coordinators before Chaos Mesh work. Capability fields default false and are not trusted by production admission.
+- Added finite subprocess I/O timeouts for executor and Kubernetes snapshot operations, plus runtime-control checks after each supported coordinator stage. Coordinator execution remains synchronous; no Python thread cancellation or unbounded join is used.
 
 ## Tests
 
 - `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py -q`: `27 passed`
-- `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py tests/test_real_evidence.py -q`: `58 passed`
-- `python -m pytest`: `430 passed, 1 warning`
+- `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py tests/test_real_evidence.py -q`: `62 passed`
+- `python -m pytest -q`: `433 passed, 1 warning`
 - `git diff --check`: passed
 
 ## Concerns
