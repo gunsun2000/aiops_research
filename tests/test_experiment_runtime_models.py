@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from enum import Enum
 import json
 from math import inf, nan
+from pathlib import Path
 from types import MappingProxyType
 
 import pytest
@@ -52,6 +53,7 @@ def test_runtime_request_normalizes_mode_and_target():
     assert request.mode.value == "dry-run"
     assert request.backend.value == "python"
     assert request.protocol_profile == "four-agent-role-veto-v1"
+    json.dumps(request.to_dict(), allow_nan=False)
     with pytest.raises(FrozenInstanceError):
         request.namespace = "default"
 
@@ -102,6 +104,7 @@ def test_runtime_event_serializes_and_detaches_payload():
     serialized = event.to_dict()
     assert serialized["stage"] == "collecting_evidence"
     assert serialized["sequence"] == 3
+    json.dumps(serialized, allow_nan=False)
     serialized["payload"]["source"]["labels"].append("tampered")
     assert event.payload["source"]["labels"] == ("pod",)
     with pytest.raises(ValueError, match="sequence"):
@@ -136,6 +139,7 @@ def test_runtime_result_to_dict_is_json_safe_for_nested_runtime_values():
     report = MappingProxyType(
         {
             "observed_at": observed_at,
+            "artifact": Path("evidence.json"),
             "evidence": (
                 _EvidenceKind.CPU,
                 MappingProxyType({"timestamps": (observed_at,)}),
@@ -161,13 +165,52 @@ def test_runtime_result_to_dict_is_json_safe_for_nested_runtime_values():
     )
 
     serialized = result.to_dict()
-    json.dumps(serialized)
+    json.dumps(serialized, allow_nan=False)
 
     assert serialized["report"]["observed_at"] == "2026-08-03T01:02:03+00:00"
+    assert serialized["report"]["artifact"] == "evidence.json"
     assert serialized["report"]["evidence"][0] == "cpu"
     assert serialized["report"]["evidence"][1]["timestamps"] == [
         "2026-08-03T01:02:03+00:00"
     ]
-    assert result.report["observed_at"] == observed_at
-    assert result.report["evidence"][1]["timestamps"] == (observed_at,)
+    assert result.report["observed_at"] == "2026-08-03T01:02:03+00:00"
+    assert result.report["evidence"][1]["timestamps"] == (
+        "2026-08-03T01:02:03+00:00",
+    )
+    assert result.events[0].payload["observed_at"] == (
+        "2026-08-03T01:02:03+00:00"
+    )
     assert result.events[0].payload["values"] == (1, 2)
+
+
+def test_runtime_event_rejects_nested_non_finite_float_at_construction():
+    with pytest.raises(ValueError, match="finite"):
+        RuntimeEvent(
+            "exp-1", 0, RuntimeStage.QUEUED, "queued", "waiting", "now",
+            {"nested": {"value": nan}},
+        )
+
+
+@pytest.mark.parametrize("value", [nan, inf, -inf])
+def test_runtime_result_rejects_nested_non_finite_float_at_construction(value):
+    with pytest.raises(ValueError, match="finite"):
+        ExperimentRuntimeResult(
+            "exp-1",
+            "completed",
+            {"nested": (MappingProxyType({"value": value}),)},
+            _session(),
+            (),
+            {"valid": True},
+        )
+
+
+def test_runtime_result_rejects_opaque_nested_object_at_construction():
+    with pytest.raises(TypeError, match="not JSON serializable"):
+        ExperimentRuntimeResult(
+            "exp-1",
+            "completed",
+            {"nested": [object()]},
+            _session(),
+            (),
+            {"valid": True},
+        )

@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, time
 from enum import Enum
 from math import isfinite
+from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -136,6 +137,7 @@ class ExperimentRuntimeResult:
             raise TypeError("cleanup must be a mapping")
         if not isinstance(self.session, ExperimentSession):
             raise TypeError("session must be an ExperimentSession")
+        _json_safe(self.session.to_dict())
         events = tuple(self.events)
         if not all(isinstance(event, RuntimeEvent) for event in events):
             raise TypeError("events must contain RuntimeEvent values")
@@ -171,13 +173,27 @@ def _enum_value(enum_type: type[Enum], value: Any) -> Enum:
 
 
 def _freeze(value: Any) -> Any:
+    if isinstance(value, Enum):
+        return _freeze(value.value)
     if isinstance(value, Mapping):
         return MappingProxyType({str(key): _freeze(item) for key, item in value.items()})
     if isinstance(value, list | tuple):
         return tuple(_freeze(item) for item in value)
     if isinstance(value, set | frozenset):
         return frozenset(_freeze(item) for item in value)
-    return deepcopy(value)
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, datetime | date | time):
+        return value.isoformat()
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise ValueError("float values must be finite")
+        return value
+    if value is None or isinstance(value, (str, int, bool)):
+        return deepcopy(value)
+    raise TypeError(
+        f"value of type {type(value).__name__} is not JSON serializable"
+    )
 
 
 def _json_safe(value: Any) -> Any:
@@ -191,7 +207,11 @@ def _json_safe(value: Any) -> Any:
         return [_json_safe(item) for item in sorted(value, key=repr)]
     if isinstance(value, datetime | date | time):
         return value.isoformat()
-    if value is None or isinstance(value, (str, int, float, bool)):
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise ValueError("float values must be finite")
+        return value
+    if value is None or isinstance(value, (str, int, bool)):
         return value
     raise TypeError(
         f"value of type {type(value).__name__} is not JSON serializable"
