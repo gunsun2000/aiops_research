@@ -6,7 +6,11 @@ from types import SimpleNamespace
 import pytest
 
 from aiops_k8s_agents.experiment_runtime import ExperimentRuntime
-from aiops_k8s_agents.experiment_runtime_models import ExperimentRuntimeRequest, RuntimeStage
+from aiops_k8s_agents.experiment_runtime_models import (
+    CoordinatorRuntimeCapabilities,
+    ExperimentRuntimeRequest,
+    RuntimeStage,
+)
 from aiops_k8s_agents.executor import ExecutionMode
 from aiops_k8s_agents.real_evidence import (
     MetricQueryDefinition,
@@ -44,6 +48,8 @@ class FakeChaosAdapter:
 
 
 class FakeCoordinator:
+    runtime_capabilities = CoordinatorRuntimeCapabilities()
+
     def __init__(self, report, mode=ExecutionMode.REAL):
         self.report = report
         self.mode = mode
@@ -54,6 +60,7 @@ class FakeCoordinator:
 
 class RaisingCoordinator:
     mode = ExecutionMode.REAL
+    runtime_capabilities = CoordinatorRuntimeCapabilities()
 
     def run(self, namespace, deployment, metric, threshold):
         raise RuntimeError("coordinator failed")
@@ -61,6 +68,7 @@ class RaisingCoordinator:
 
 class TimeoutCoordinator:
     mode = ExecutionMode.REAL
+    runtime_capabilities = CoordinatorRuntimeCapabilities()
 
     def run(self, namespace, deployment, metric, threshold):
         raise TimeoutError("coordinator timed out")
@@ -378,6 +386,7 @@ def test_blocking_coordinator_is_cancelled_before_cleanup_and_cannot_recover():
     started = Event()
     active = Event()
     recovery_started = Event()
+    release = Event()
     clock_calls = 0
 
     class GatedCoordinator(FakeCoordinator):
@@ -385,10 +394,10 @@ def test_blocking_coordinator_is_cancelled_before_cleanup_and_cannot_recover():
             started.set()
             active.set()
             try:
-                while True:
+                while not release.wait(0.001):
                     self.runtime_control.check()
-                    if recovery_started.is_set():
-                        raise AssertionError("recovery started after deadline")
+                recovery_started.set()
+                return super().run(namespace, deployment, metric, threshold)
             finally:
                 active.clear()
 
@@ -432,6 +441,24 @@ def test_blocking_coordinator_is_cancelled_before_cleanup_and_cannot_recover():
     assert store.finalize_count == 1
     assert sessions.list() == (result.session,)
     assert store.final_report == result.to_dict()["report"]
+
+
+def test_unsupported_non_cooperative_coordinator_is_rejected_before_injection():
+    class UnsupportedCoordinator:
+        mode = ExecutionMode.REAL
+
+        def run(self, namespace, deployment, metric, threshold):
+            raise AssertionError("unsupported coordinator must not run")
+
+    chaos = FakeChaosAdapter()
+    result = runtime_with(
+        coordinator=UnsupportedCoordinator(),
+        chaos=chaos,
+    ).run(real_request())
+
+    assert result.status == "blocked"
+    assert "capabilities" in result.report["error"]
+    assert chaos.calls == []
 
 
 @pytest.mark.parametrize("case", ("success", "blocked", "cancelled", "cleanup_failed"))

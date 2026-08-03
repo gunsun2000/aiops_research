@@ -4,11 +4,12 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import monotonic
-from threading import Event, Thread
+from threading import Event
 from typing import Any, Callable, Mapping, Protocol
 from uuid import uuid4
 
 from aiops_k8s_agents.experiment_runtime_models import (
+    CoordinatorRuntimeCapabilities,
     ExperimentRuntimeRequest,
     ExperimentRuntimeResult,
     RuntimeEvent,
@@ -41,21 +42,15 @@ class RuntimeControl:
     cancellation_event: Event | None
     deadline: float | None
     clock: Callable[[], float]
-    stop_event: Event = field(default_factory=Event, compare=False)
 
     def check(self) -> None:
         if (
-            self.stop_event.is_set()
-            or self.cancellation_event is not None
+            self.cancellation_event is not None
             and self.cancellation_event.is_set()
         ):
             raise RuntimeCancelled("experiment cancelled")
         if self.deadline is not None and self.clock() >= self.deadline:
             raise TimeoutError("experiment runtime deadline exceeded")
-
-    def cancel(self) -> None:
-        self.stop_event.set()
-
 
 STREAM_STAGE = {
     "evidence": RuntimeStage.COLLECTING_EVIDENCE,
@@ -145,6 +140,7 @@ class ExperimentRuntime:
         try:
             self._validate_request(request)
             coordinator = self.coordinator_factory(request)
+            self._validate_coordinator_capabilities(coordinator)
             self._validate_coordinator_mode(coordinator, request)
             coordinator.runtime_control = control
             if hasattr(coordinator, "operation_lock_owned_externally"):
@@ -174,8 +170,11 @@ class ExperimentRuntime:
                 store = self.artifact_event_store or getattr(coordinator, "event_store", None)
                 bridge.artifact_store = store
                 coordinator.event_store = bridge
-            report = deepcopy(self._run_coordinator_bounded(
-                coordinator, request, control
+            report = deepcopy(coordinator.run(
+                request.namespace,
+                request.deployment,
+                request.metric,
+                request.threshold,
             ))
             control.check()
             report["run_id"] = experiment_id
@@ -225,47 +224,6 @@ class ExperimentRuntime:
         status = str(report.get("final_status", primary_status))
         return self._finish(request, report, status, cleanup, bridge)
 
-    def _run_coordinator_bounded(
-        self,
-        coordinator: Any,
-        request: ExperimentRuntimeRequest,
-        control: RuntimeControl,
-    ) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        failure: list[BaseException] = []
-        completed = Event()
-
-        def run_coordinator() -> None:
-            try:
-                result["report"] = coordinator.run(
-                    request.namespace,
-                    request.deployment,
-                    request.metric,
-                    request.threshold,
-                )
-            except BaseException as exc:
-                failure.append(exc)
-            finally:
-                completed.set()
-
-        worker = Thread(
-            target=run_coordinator,
-            name=f"experiment-coordinator-{request.scenario_id}",
-            daemon=False,
-        )
-        worker.start()
-        while not completed.wait(0.001):
-            try:
-                control.check()
-            except (RuntimeCancelled, TimeoutError):
-                control.cancel()
-                worker.join()
-                raise
-        worker.join()
-        if failure:
-            raise failure[0]
-        return result["report"]
-
     def _finish(
         self,
         request: ExperimentRuntimeRequest,
@@ -301,6 +259,25 @@ class ExperimentRuntime:
             raise _BlockedRequest(f"scenario is not registered: {request.scenario_id}")
         if request.metric not in self.configuration.metric_queries:
             raise _BlockedRequest(f"metric is not registered: {request.metric}")
+
+    @staticmethod
+    def _validate_coordinator_capabilities(coordinator: Any) -> None:
+        capabilities = getattr(coordinator, "runtime_capabilities", None)
+        if not isinstance(capabilities, CoordinatorRuntimeCapabilities):
+            raise _BlockedRequest(
+                "coordinator capabilities are required before fault injection"
+            )
+        if not all(
+            (
+                capabilities.bounded,
+                capabilities.cancellable,
+                capabilities.finite_stage_io,
+                capabilities.deadline_aware,
+            )
+        ):
+            raise _BlockedRequest(
+                "coordinator capabilities do not provide bounded cancellation"
+            )
 
     @staticmethod
     def _validate_coordinator_mode(coordinator: Any, request: ExperimentRuntimeRequest) -> None:

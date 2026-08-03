@@ -43,6 +43,7 @@ from aiops_k8s_agents.mutual_supervision_models import (
     new_trace_id,
     to_serializable,
 )
+from aiops_k8s_agents.experiment_runtime_models import CoordinatorRuntimeCapabilities
 from aiops_k8s_agents.mutual_supervision_policy import MutualSupervisionPolicy
 from aiops_k8s_agents.operation_lock import (
     OperationLockError,
@@ -148,6 +149,7 @@ class MutualSupervisionCoordinator:
     adapter_registry: AgentAdapterRegistry | None = None
     consensus_resolver: ConsensusResolver = field(default_factory=ConsensusResolver)
     adapters: dict[str, AgentAdapter] = field(init=False, repr=False)
+    runtime_capabilities = CoordinatorRuntimeCapabilities()
 
     def __post_init__(self) -> None:
         if isinstance(self.mode, str):

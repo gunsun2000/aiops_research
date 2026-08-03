@@ -29,6 +29,16 @@ class RuntimeStage(str, Enum):
 
 
 @dataclass(frozen=True)
+class CoordinatorRuntimeCapabilities:
+    """Safety contract required before a coordinator may receive a fault."""
+
+    bounded: bool = True
+    cancellable: bool = True
+    finite_stage_io: bool = True
+    deadline_aware: bool = True
+
+
+@dataclass(frozen=True)
 class ExperimentRuntimeRequest:
     scenario_id: str
     namespace: str
