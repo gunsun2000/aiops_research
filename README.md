@@ -86,16 +86,20 @@ go test ./...
 
 상세 실행 코드는 [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md)에 정리되어 있습니다.
 
-## Control Plane UI
+## Control Plane and Real Runtime Boundary
 
-교수님 시연과 연구실 점검을 위해 FastAPI 기반 웹 Control Plane을 제공합니다.
-Pod Kill, CPU Stress, Memory Stress, Network Delay 중 하나를 선택하면
-`조건 → Evidence → Agent 진단 → 상호검토·합의 → 안전 검증 → 실행·복구 관찰
-→ 결과`가 하나의 `ExperimentSession`으로 연결됩니다. 사이드바의 4-Agent 판단,
-상호감시, 안전 경계, 실험 근거 화면은 동일한 세션을 각 연구 관점에서 보여줍니다.
+The core real experiment runtime service is implemented. It validates registered
+scenarios, admits bounded dependencies, coordinates the injected fault/evidence/
+agent/cleanup lifecycle, and preserves one `experiment_id` and `ExperimentSession`.
+The FastAPI surface currently provides capability, read-only connection readiness,
+and `POST /api/experiments/validate` preflight. Preflight never acquires the real
+operation lock, applies Chaos Mesh, or changes Kubernetes.
 
-웹 실행은 재현 가능한 mock evidence로 제한되며 실제 Kubernetes `real` 제어는
-기존 CLI와 명시적 확인 절차를 사용합니다.
+The existing UI mock endpoints remain available for demonstrations, and the
+existing CLI real experiment paths remain supported. A successful mock test is
+not real-cluster evidence; a dry-run checks command/API compatibility without
+changing resources; only an authorized Ubuntu cluster run can establish real
+experiment evidence.
 
 ```bash
 python -m pip install -e ".[ui,dev,autogen]"
@@ -108,7 +112,20 @@ aiops-control-plane
 http://127.0.0.1:18080/
 ```
 
-상세 가이드는 [docs/submission/control_plane_ui_guide.md](docs/submission/control_plane_ui_guide.md)에 있습니다.
+상세 UI 가이드는 [docs/submission/control_plane_ui_guide.md](docs/submission/control_plane_ui_guide.md)에,
+real runtime 검증 절차는 [docs/experiments/platform_real_runtime_guide.md](docs/experiments/platform_real_runtime_guide.md)에 있습니다.
+
+### Plan boundaries
+
+- Plan A (current): bounded core runtime, adapters, lifecycle cleanup, and
+  read-only web preflight.
+- Plan B (not implemented): persistent background Jobs, SSE event replay,
+  cancellation, and web-triggered real execution.
+- Plan C (not implemented): AutoGen web runtime and an AIOpsLab Job/adapter.
+  Existing AutoGen and AIOpsLab paths remain separate capabilities.
+
+The Windows worktree verification below proves code and mock-safe contracts only;
+it does not validate a real Kubernetes, Prometheus, or Chaos Mesh environment.
 
 ## 핵심 실험
 
@@ -232,19 +249,22 @@ bash scripts/server_recovery_statistics.sh
 | 시험 가이드 | [docs/submission/test_guide.md](docs/submission/test_guide.md) |
 | Agent Registry | [docs/design/agent_registry_guide.md](docs/design/agent_registry_guide.md) |
 | Action / Reward 정책 | [docs/design/agent_action_reward_policy.md](docs/design/agent_action_reward_policy.md) |
+| Core real runtime 검증 | [docs/experiments/platform_real_runtime_guide.md](docs/experiments/platform_real_runtime_guide.md) |
 | Recovery 실험 | [docs/experiments/recovery_action_experiment_guide.md](docs/experiments/recovery_action_experiment_guide.md) |
 | 정량 분석 | [docs/experiments/recovery_quantitative_analysis_guide.md](docs/experiments/recovery_quantitative_analysis_guide.md) |
 
 ## 현재 연구 단계
 
-현재 저장소는 단순 mock 예제가 아니라, 서버의 Kubernetes/Chaos Mesh/Prometheus 환경에서 real-mode 장애 실험과 정량 분석까지 수행할 수 있는 **1차 연구 프로토타입**입니다.
+현재 저장소는 mock-safe 테스트와 bounded core runtime/CLI real 경로를 제공하는 **1차 연구 프로토타입**입니다. 이 worktree에서는 실제 Kubernetes/Chaos Mesh/Prometheus 실험을 수행하지 않았으므로 테스트 통과를 real evidence로 해석하지 않습니다.
 
 다음 단계는 이 구조를 고정한 뒤, 다음 비교 실험을 추가하는 것입니다.
 
 - single-agent baseline 비교
 - Agent 제거 ablation 실험
 - reward 민감도 분석
-- AutoGen multi-round real action 선택
+- Plan B의 persistent web execution과 AutoGen multi-round real action 선택
+- Plan C의 AutoGen web runtime 및 AIOpsLab Job 통합
 - Prometheus metric, log enrichment, full real-cluster evidence fusion
 
-초기 `CPU 95%` 입력은 smoke test이며, 연구 결과의 중심은 Chaos Mesh/AIOpsLab 기반 실제 장애 실험입니다.
+초기 `CPU 95%` 입력은 smoke test입니다. Chaos Mesh/AIOpsLab 기반 실제 장애
+결과는 별도의 승인된 Ubuntu 환경 실행과 artifact 검토가 있어야 주장할 수 있습니다.
