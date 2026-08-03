@@ -1,4 +1,5 @@
 from dataclasses import replace
+from pathlib import Path
 from threading import Event, Thread
 from types import SimpleNamespace
 
@@ -7,7 +8,11 @@ import pytest
 from aiops_k8s_agents.experiment_runtime import ExperimentRuntime
 from aiops_k8s_agents.experiment_runtime_models import ExperimentRuntimeRequest, RuntimeStage
 from aiops_k8s_agents.executor import ExecutionMode
-from aiops_k8s_agents.real_evidence import MetricQueryDefinition, RuntimeConfiguration
+from aiops_k8s_agents.real_evidence import (
+    MetricQueryDefinition,
+    RuntimeConfiguration,
+    load_runtime_configuration,
+)
 from aiops_k8s_agents.research_event_store import InMemoryResearchEventStore
 from aiops_k8s_agents.experiment_session import InMemoryExperimentSessionStore
 
@@ -320,6 +325,7 @@ def test_runtime_deadline_interrupts_coordinator_and_persists_terminal_facts():
         min_replicas=1,
         max_replicas=5,
         timeouts={"experiment": 1},
+        experiment_seconds=1,
         metric_queries={"cpu": MetricQueryDefinition("cpu", "up")},
         scenarios={"cpu-stress": "paymentservice-cpu-stress.yaml"},
     )
@@ -359,6 +365,73 @@ def test_runtime_deadline_interrupts_coordinator_and_persists_terminal_facts():
     assert store.final_report == result.to_dict()["report"]
     assert store.finalize_count == 1
     assert sessions.get("exp-deadline") == result.session
+
+
+def test_registered_production_configuration_has_positive_experiment_deadline():
+    configuration = load_runtime_configuration(
+        Path(__file__).parents[1] / "config" / "experiment_runtime.json"
+    )
+    assert configuration.experiment_seconds > 0
+
+
+def test_blocking_coordinator_is_cancelled_before_cleanup_and_cannot_recover():
+    started = Event()
+    active = Event()
+    recovery_started = Event()
+    clock_calls = 0
+
+    class GatedCoordinator(FakeCoordinator):
+        def run(self, namespace, deployment, metric, threshold):
+            started.set()
+            active.set()
+            try:
+                while True:
+                    self.runtime_control.check()
+                    if recovery_started.is_set():
+                        raise AssertionError("recovery started after deadline")
+            finally:
+                active.clear()
+
+    def deterministic_clock():
+        nonlocal clock_calls
+        clock_calls += 1
+        return 0.0 if clock_calls < 8 else 2.0
+
+    class CountingStore(InMemoryResearchEventStore):
+        def __init__(self):
+            super().__init__()
+            self.finalize_count = 0
+
+        def finalize(self, report):
+            self.finalize_count += 1
+            return super().finalize(report)
+
+    chaos = FakeChaosAdapter()
+    store = CountingStore()
+    sessions = InMemoryExperimentSessionStore()
+    runtime = ExperimentRuntime(
+        configuration=replace(runtime_configuration(), experiment_seconds=1),
+        chaos=chaos,
+        coordinator_factory=lambda _request: GatedCoordinator(
+            approved_report("gated")
+        ),
+        event_sink=RecordingEventSink(),
+        artifact_event_store=store,
+        session_store=sessions,
+        experiment_id_factory=lambda: "exp-gated-timeout",
+        clock=deterministic_clock,
+    )
+
+    result = runtime.run(real_request())
+
+    assert started.is_set()
+    assert result.status == "interrupted"
+    assert chaos.calls == ["preflight", "inject:cpu-stress", "cleanup:cpu-stress"]
+    assert not recovery_started.is_set()
+    assert not active.is_set()
+    assert store.finalize_count == 1
+    assert sessions.list() == (result.session,)
+    assert store.final_report == result.to_dict()["report"]
 
 
 @pytest.mark.parametrize("case", ("success", "blocked", "cancelled", "cleanup_failed"))

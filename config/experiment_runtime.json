@@ -4,6 +4,7 @@
   "allowed_deployments": ["paymentservice", "checkoutservice"],
   "min_replicas": 1,
   "max_replicas": 5,
+  "experiment_seconds": 300,
   "timeouts": {
     "preflight_seconds": 15,
     "fault_ready_seconds": 60,

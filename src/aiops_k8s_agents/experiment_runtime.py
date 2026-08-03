@@ -4,7 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from time import monotonic
-from threading import Event
+from threading import Event, Thread
 from typing import Any, Callable, Mapping, Protocol
 from uuid import uuid4
 
@@ -41,12 +41,20 @@ class RuntimeControl:
     cancellation_event: Event | None
     deadline: float | None
     clock: Callable[[], float]
+    stop_event: Event = field(default_factory=Event, compare=False)
 
     def check(self) -> None:
-        if self.cancellation_event is not None and self.cancellation_event.is_set():
+        if (
+            self.stop_event.is_set()
+            or self.cancellation_event is not None
+            and self.cancellation_event.is_set()
+        ):
             raise RuntimeCancelled("experiment cancelled")
         if self.deadline is not None and self.clock() >= self.deadline:
             raise TimeoutError("experiment runtime deadline exceeded")
+
+    def cancel(self) -> None:
+        self.stop_event.set()
 
 
 STREAM_STAGE = {
@@ -125,8 +133,7 @@ class ExperimentRuntime:
         application: Any | None = None
         cleanup: Mapping[str, Any] = {}
         primary_status = "failed"
-        timeout = self.configuration.timeouts.get("experiment")
-        deadline = None if timeout in (None, 0) else self.clock() + float(timeout)
+        deadline = self.clock() + self.configuration.experiment_seconds
         control = RuntimeControl(self.cancellation_event, deadline, self.clock)
         lock_context = (
             TargetOperationLock(request.namespace, request.deployment, self.lock_dir)
@@ -167,8 +174,8 @@ class ExperimentRuntime:
                 store = self.artifact_event_store or getattr(coordinator, "event_store", None)
                 bridge.artifact_store = store
                 coordinator.event_store = bridge
-            report = deepcopy(coordinator.run(
-                request.namespace, request.deployment, request.metric, request.threshold
+            report = deepcopy(self._run_coordinator_bounded(
+                coordinator, request, control
             ))
             control.check()
             report["run_id"] = experiment_id
@@ -217,6 +224,47 @@ class ExperimentRuntime:
             report["cleanup_status"] = "cleanup_failed"
         status = str(report.get("final_status", primary_status))
         return self._finish(request, report, status, cleanup, bridge)
+
+    def _run_coordinator_bounded(
+        self,
+        coordinator: Any,
+        request: ExperimentRuntimeRequest,
+        control: RuntimeControl,
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        failure: list[BaseException] = []
+        completed = Event()
+
+        def run_coordinator() -> None:
+            try:
+                result["report"] = coordinator.run(
+                    request.namespace,
+                    request.deployment,
+                    request.metric,
+                    request.threshold,
+                )
+            except BaseException as exc:
+                failure.append(exc)
+            finally:
+                completed.set()
+
+        worker = Thread(
+            target=run_coordinator,
+            name=f"experiment-coordinator-{request.scenario_id}",
+            daemon=False,
+        )
+        worker.start()
+        while not completed.wait(0.001):
+            try:
+                control.check()
+            except (RuntimeCancelled, TimeoutError):
+                control.cancel()
+                worker.join()
+                raise
+        worker.join()
+        if failure:
+            raise failure[0]
+        return result["report"]
 
     def _finish(
         self,

@@ -62,6 +62,7 @@ class RuntimeConfiguration:
     metric_queries: Mapping[str, MetricQueryDefinition]
     scenarios: Mapping[str, str]
     max_sample_age_seconds: float = 300.0
+    experiment_seconds: float = 300.0
 
     def __post_init__(self) -> None:
         if not self.version.strip():
@@ -69,6 +70,7 @@ class RuntimeConfiguration:
         if self.min_replicas < 1 or self.max_replicas < self.min_replicas:
             raise ValueError("replica bounds are invalid")
         _validate_sample_age(self.max_sample_age_seconds)
+        _validate_experiment_seconds(self.experiment_seconds)
         definitions = {
             name.strip().lower().replace("-", "_"): (
                 value if isinstance(value, MetricQueryDefinition)
@@ -83,6 +85,7 @@ class RuntimeConfiguration:
         object.__setattr__(self, "metric_queries", MappingProxyType(definitions))
         object.__setattr__(self, "scenarios", MappingProxyType(dict(self.scenarios)))
         object.__setattr__(self, "max_sample_age_seconds", float(self.max_sample_age_seconds))
+        object.__setattr__(self, "experiment_seconds", float(self.experiment_seconds))
 
 
 def load_runtime_configuration(path: str | Path) -> RuntimeConfiguration:
@@ -93,6 +96,7 @@ def load_runtime_configuration(path: str | Path) -> RuntimeConfiguration:
     required = {
         "version", "allowed_namespaces", "allowed_deployments", "min_replicas",
         "max_replicas", "timeouts", "metric_queries", "scenarios",
+        "experiment_seconds",
     }
     missing = sorted(required - payload.keys())
     if missing:
@@ -107,6 +111,7 @@ def load_runtime_configuration(path: str | Path) -> RuntimeConfiguration:
         metric_queries=dict(payload["metric_queries"]),
         scenarios=dict(payload["scenarios"]),
         max_sample_age_seconds=float(payload.get("max_sample_age_seconds", 300.0)),
+        experiment_seconds=float(payload["experiment_seconds"]),
     )
 
 
@@ -224,6 +229,13 @@ def _validate_sample_age(value: float) -> None:
         raise ValueError("max_sample_age_seconds must be finite and positive")
     if not isfinite(value) or value <= 0:
         raise ValueError("max_sample_age_seconds must be finite and positive")
+
+
+def _validate_experiment_seconds(value: float) -> None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("experiment_seconds must be finite and positive")
+    if not isfinite(value) or value <= 0:
+        raise ValueError("experiment_seconds must be finite and positive")
 
 
 def _validate_count(value: Any, field: str) -> int:
