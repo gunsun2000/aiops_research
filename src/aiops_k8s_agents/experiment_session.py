@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from enum import Enum
 from threading import RLock
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Mapping, Protocol
 
 
 class ExperimentStage(str, Enum):
@@ -48,6 +48,12 @@ class ExperimentSession:
             "human_review_required": self.human_review_required,
             "artifacts": _thaw(self.artifacts),
         }
+
+
+class ExperimentSessionStore(Protocol):
+    def put(self, session: ExperimentSession) -> ExperimentSession: ...
+
+    def get(self, experiment_id: str) -> ExperimentSession | None: ...
 
 
 class InMemoryExperimentSessionStore:

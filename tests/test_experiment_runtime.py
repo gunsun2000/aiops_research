@@ -1,5 +1,5 @@
 from dataclasses import replace
-from threading import Event
+from threading import Event, Thread
 from types import SimpleNamespace
 
 import pytest
@@ -9,6 +9,7 @@ from aiops_k8s_agents.experiment_runtime_models import ExperimentRuntimeRequest,
 from aiops_k8s_agents.executor import ExecutionMode
 from aiops_k8s_agents.real_evidence import MetricQueryDefinition, RuntimeConfiguration
 from aiops_k8s_agents.research_event_store import InMemoryResearchEventStore
+from aiops_k8s_agents.experiment_session import InMemoryExperimentSessionStore
 
 
 class RecordingEventSink:
@@ -38,19 +39,24 @@ class FakeChaosAdapter:
 
 
 class FakeCoordinator:
-    def __init__(self, report):
+    def __init__(self, report, mode=ExecutionMode.REAL):
         self.report = report
+        self.mode = mode
 
     def run(self, namespace, deployment, metric, threshold):
         return dict(self.report)
 
 
 class RaisingCoordinator:
+    mode = ExecutionMode.REAL
+
     def run(self, namespace, deployment, metric, threshold):
         raise RuntimeError("coordinator failed")
 
 
 class TimeoutCoordinator:
+    mode = ExecutionMode.REAL
+
     def run(self, namespace, deployment, metric, threshold):
         raise TimeoutError("coordinator timed out")
 
@@ -108,12 +114,16 @@ def mock_request():
 
 def runtime_with(coordinator=None, chaos=None, **kwargs):
     events = kwargs.pop("event_sink", RecordingEventSink())
+    if coordinator is None:
+        coordinator_factory = lambda request: FakeCoordinator(
+            approved_report("exp-runtime-1"), mode=request.mode
+        )
+    else:
+        coordinator_factory = lambda _request: coordinator
     return ExperimentRuntime(
         configuration=runtime_configuration(),
         chaos=chaos or FakeChaosAdapter(),
-        coordinator_factory=lambda _request: coordinator or FakeCoordinator(
-            approved_report("exp-runtime-1")
-        ),
+        coordinator_factory=coordinator_factory,
         event_sink=events,
         experiment_id_factory=lambda: "exp-runtime-1",
         **kwargs,
@@ -216,3 +226,168 @@ def test_runtime_bridge_keeps_persisted_research_evidence_on_one_experiment_id()
     evidence = result.report["evidence"]
     with pytest.raises(TypeError):
         evidence["metric_values"]["cpu"] = 1.0
+
+
+def test_real_target_lock_spans_injection_and_coordinator_completion(tmp_path):
+    entered = Event()
+    release = Event()
+
+    class BlockingCoordinator(FakeCoordinator):
+        def run(self, namespace, deployment, metric, threshold):
+            entered.set()
+            release.wait(timeout=2)
+            return super().run(namespace, deployment, metric, threshold)
+
+    first_chaos = FakeChaosAdapter()
+    second_chaos = FakeChaosAdapter()
+    first = runtime_with(
+        coordinator=BlockingCoordinator(approved_report("first")),
+        chaos=first_chaos,
+        lock_dir=str(tmp_path),
+    )
+    second = runtime_with(lock_dir=str(tmp_path), chaos=second_chaos)
+    first_result = []
+    thread = Thread(target=lambda: first_result.append(first.run(real_request())))
+    thread.start()
+    assert entered.wait(timeout=2)
+
+    second_result = second.run(real_request())
+    release.set()
+    thread.join(timeout=2)
+
+    assert second_result.status == "blocked"
+    assert second_chaos.calls == []
+    assert first_result[0].status == "recovered"
+
+
+def test_runtime_rejects_coordinator_mode_mismatch_before_external_operations():
+    chaos = FakeChaosAdapter()
+    result = runtime_with(
+        coordinator=FakeCoordinator(approved_report("wrong"), mode=ExecutionMode.REAL),
+        chaos=chaos,
+    ).run(mock_request())
+    assert result.status == "blocked"
+    assert "mode" in result.report["error"]
+    assert chaos.calls == []
+
+
+def test_runtime_rejects_real_request_with_mock_coordinator_before_injection():
+    chaos = FakeChaosAdapter()
+    result = runtime_with(
+        coordinator=FakeCoordinator(approved_report("wrong"), mode=ExecutionMode.MOCK),
+        chaos=chaos,
+    ).run(real_request())
+    assert result.status == "blocked"
+    assert "mode" in result.report["error"]
+    assert chaos.calls == []
+
+
+def test_runtime_checks_cancellation_between_preflight_and_injection():
+    cancelled = Event()
+
+    class CancellingChaos(FakeChaosAdapter):
+        def preflight(self):
+            result = super().preflight()
+            cancelled.set()
+            return result
+
+    chaos = CancellingChaos()
+    result = runtime_with(chaos=chaos, cancellation_event=cancelled).run(real_request())
+    assert result.status == "cancelled"
+    assert chaos.calls == ["preflight"]
+
+
+def test_runtime_checks_cancellation_after_injection_and_still_cleans_up():
+    cancelled = Event()
+
+    class CancellingChaos(FakeChaosAdapter):
+        def inject(self, scenario_id):
+            application = super().inject(scenario_id)
+            cancelled.set()
+            return application
+
+    chaos = CancellingChaos()
+    result = runtime_with(chaos=chaos, cancellation_event=cancelled).run(real_request())
+    assert result.status == "cancelled"
+    assert chaos.calls == ["preflight", "inject:cpu-stress", "cleanup:cpu-stress"]
+
+
+def test_runtime_deadline_interrupts_coordinator_and_persists_terminal_facts():
+    configuration = RuntimeConfiguration(
+        version="1.0.0",
+        allowed_namespaces=("online-boutique",),
+        allowed_deployments=("paymentservice", "checkoutservice"),
+        min_replicas=1,
+        max_replicas=5,
+        timeouts={"experiment": 1},
+        metric_queries={"cpu": MetricQueryDefinition("cpu", "up")},
+        scenarios={"cpu-stress": "paymentservice-cpu-stress.yaml"},
+    )
+    class CountingStore(InMemoryResearchEventStore):
+        def __init__(self):
+            super().__init__()
+            self.finalize_count = 0
+
+        def finalize(self, report):
+            self.finalize_count += 1
+            return super().finalize(report)
+
+    store = CountingStore()
+    sessions = InMemoryExperimentSessionStore()
+    clock_values = iter(([0.0] * 5) + ([2.0] * 10))
+
+    class DeadlineCoordinator(FakeCoordinator):
+        def run(self, namespace, deployment, metric, threshold):
+            self.runtime_control.check()
+            return super().run(namespace, deployment, metric, threshold)
+
+    runtime = ExperimentRuntime(
+        configuration=configuration,
+        chaos=FakeChaosAdapter(cleanup_result={"valid": False, "stderr": "delete failed"}),
+        coordinator_factory=lambda _request: DeadlineCoordinator(approved_report("x")),
+        event_sink=RecordingEventSink(),
+        artifact_event_store=store,
+        session_store=sessions,
+        experiment_id_factory=lambda: "exp-deadline",
+        clock=lambda: next(clock_values),
+    )
+    result = runtime.run(real_request())
+
+    assert result.status == "interrupted"
+    assert result.report["cleanup"]["valid"] is False
+    assert result.report["runtime_events"][-1]["stage"] == "completed"
+    assert store.final_report == result.to_dict()["report"]
+    assert store.finalize_count == 1
+    assert sessions.get("exp-deadline") == result.session
+
+
+@pytest.mark.parametrize("case", ("success", "blocked", "cancelled", "cleanup_failed"))
+def test_runtime_persists_one_terminal_session_for_every_terminal_path(case):
+    sessions = InMemoryExperimentSessionStore()
+    chaos = FakeChaosAdapter(
+        cleanup_result={"valid": False, "stderr": "delete failed"}
+        if case == "cleanup_failed" else None
+    )
+    cancellation = Event()
+    if case == "cancelled":
+        cancellation.set()
+    coordinator = RaisingCoordinator() if case == "cleanup_failed" else None
+    request = (
+        replace(real_request(), deployment="not-allowed")
+        if case == "blocked" else real_request()
+    )
+    result = runtime_with(
+        coordinator=coordinator,
+        chaos=chaos,
+        cancellation_event=cancellation,
+        session_store=sessions,
+    ).run(request)
+
+    assert sessions.list() == (result.session,)
+    assert sessions.get(result.experiment_id).experiment_id == result.experiment_id
+    assert result.session.status == (
+        "blocked" if case == "blocked" else
+        "cancelled" if case == "cancelled" else
+        "recovered" if case == "success" else
+        "failed"
+    )

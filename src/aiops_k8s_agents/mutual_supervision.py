@@ -142,6 +142,8 @@ class MutualSupervisionCoordinator:
     cost_agent: CostOptimizationAgent | None = None
     event_store: ResearchEventSink | None = None
     operation_lock_dir: str | Path | None = None
+    operation_lock_owned_externally: bool = False
+    runtime_control: Any | None = None
     protocol: ResearchProtocolProfile | None = None
     adapter_registry: AgentAdapterRegistry | None = None
     consensus_resolver: ConsensusResolver = field(default_factory=ConsensusResolver)
@@ -200,6 +202,7 @@ class MutualSupervisionCoordinator:
         metric: str,
         threshold: float,
     ) -> dict[str, Any]:
+        self._check_runtime_control()
         run_id = new_trace_id("run")
         self._begin_adapter_run(run_id)
         self._record(
@@ -220,6 +223,7 @@ class MutualSupervisionCoordinator:
                 )
             )
 
+        self._check_runtime_control()
         evidence = self.evidence_provider.collect(namespace, deployment)
         self._record("evidence", evidence.to_summary(), run_id)
         diagnosis_adapter = self._single_adapter_for("diagnose")
@@ -447,6 +451,7 @@ class MutualSupervisionCoordinator:
 
             action_id = all_rounds[-1].selected_action_id or new_trace_id("action")
             try:
+                self._check_runtime_control()
                 with self._operation_context(namespace, deployment):
                     execution_event = {
                         "run_id": run_id,
@@ -462,6 +467,7 @@ class MutualSupervisionCoordinator:
                         run_id,
                     )
                     execution = executor.execute_recovery(selected_action)
+                    self._check_runtime_control()
                     last_execution = execution
                     self._record(
                         "executed_actions",
@@ -1125,6 +1131,8 @@ class MutualSupervisionCoordinator:
                 },
                 report["run_id"],
             )
+        if getattr(self.event_store, "defer_finalization", False):
+            return report
         artifacts = self.event_store.finalize(report)
         if artifacts:
             report["artifacts"] = artifacts
@@ -1153,13 +1161,17 @@ class MutualSupervisionCoordinator:
         namespace: str,
         deployment: str,
     ) -> AbstractContextManager[Any]:
-        if self.mode != ExecutionMode.REAL:
+        if self.mode != ExecutionMode.REAL or self.operation_lock_owned_externally:
             return nullcontext()
         return TargetOperationLock(
             namespace=namespace,
             deployment=deployment,
             lock_dir=self.operation_lock_dir,
         )
+
+    def _check_runtime_control(self) -> None:
+        if self.runtime_control is not None:
+            self.runtime_control.check()
 
 
 def _normalize_diagnosis_output(

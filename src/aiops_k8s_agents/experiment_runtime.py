@@ -3,8 +3,8 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from time import monotonic
 from threading import Event
-from types import SimpleNamespace
 from typing import Any, Callable, Mapping, Protocol
 from uuid import uuid4
 
@@ -14,10 +14,13 @@ from aiops_k8s_agents.experiment_runtime_models import (
     RuntimeEvent,
     RuntimeStage,
 )
-from aiops_k8s_agents.experiment_session import normalize_experiment_session
+from aiops_k8s_agents.experiment_session import (
+    ExperimentSessionStore,
+    normalize_experiment_session,
+)
 from aiops_k8s_agents.executor import ExecutionMode
 from aiops_k8s_agents.mutual_supervision_models import to_serializable
-from aiops_k8s_agents.operation_lock import TargetOperationLock
+from aiops_k8s_agents.operation_lock import OperationLockError, TargetOperationLock
 from aiops_k8s_agents.real_evidence import RuntimeConfiguration
 
 
@@ -27,6 +30,23 @@ class RuntimeEventSink(Protocol):
 
 class RuntimeExecutionError(RuntimeError):
     """Raised when a runtime lifecycle cannot produce a valid report."""
+
+
+class RuntimeCancelled(RuntimeError):
+    """Raised when a runtime cancellation checkpoint is reached."""
+
+
+@dataclass(frozen=True)
+class RuntimeControl:
+    cancellation_event: Event | None
+    deadline: float | None
+    clock: Callable[[], float]
+
+    def check(self) -> None:
+        if self.cancellation_event is not None and self.cancellation_event.is_set():
+            raise RuntimeCancelled("experiment cancelled")
+        if self.deadline is not None and self.clock() >= self.deadline:
+            raise TimeoutError("experiment runtime deadline exceeded")
 
 
 STREAM_STAGE = {
@@ -49,6 +69,7 @@ class RuntimeResearchEventBridge:
     experiment_id: str
     event_sink: RuntimeEventSink
     artifact_store: Any | None = None
+    defer_finalization: bool = True
     _sequence: int = field(default=0, init=False, repr=False)
     _events: list[RuntimeEvent] = field(default_factory=list, init=False, repr=False)
 
@@ -94,6 +115,8 @@ class ExperimentRuntime:
     artifact_event_store: Any | None = None
     cancellation_event: Event | None = None
     lock_dir: str | None = None
+    session_store: ExperimentSessionStore | None = None
+    clock: Callable[[], float] = monotonic
 
     def run(self, request: ExperimentRuntimeRequest) -> ExperimentRuntimeResult:
         experiment_id = self.experiment_id_factory()
@@ -102,35 +125,44 @@ class ExperimentRuntime:
         application: Any | None = None
         cleanup: Mapping[str, Any] = {}
         primary_status = "failed"
+        timeout = self.configuration.timeouts.get("experiment")
+        deadline = None if timeout in (None, 0) else self.clock() + float(timeout)
+        control = RuntimeControl(self.cancellation_event, deadline, self.clock)
+        lock_context = (
+            TargetOperationLock(request.namespace, request.deployment, self.lock_dir)
+            if request.mode == ExecutionMode.REAL
+            else _null_context()
+        )
+        lock_acquired = False
 
         try:
             self._validate_request(request)
-            if self._cancelled():
-                return self._finish(request, report, "cancelled", {}, bridge)
+            coordinator = self.coordinator_factory(request)
+            self._validate_coordinator_mode(coordinator, request)
+            coordinator.runtime_control = control
+            if hasattr(coordinator, "operation_lock_owned_externally"):
+                coordinator.operation_lock_owned_externally = True
+            control.check()
+            lock_context.__enter__()
+            lock_acquired = True
             bridge.emit(RuntimeStage.PREFLIGHT, "runtime preflight")
-
-            lock_context = (
-                TargetOperationLock(request.namespace, request.deployment, self.lock_dir)
-                if request.mode == ExecutionMode.REAL
-                else _null_context()
-            )
-            with lock_context:
-                if request.mode == ExecutionMode.REAL:
-                    preflight = self.chaos.preflight()
-                    if not bool(getattr(preflight, "valid", False)):
-                        report["error"] = getattr(preflight, "stderr", "chaos preflight failed")
-                        primary_status = "blocked"
-                        report["final_status"] = primary_status
-                        return self._finish(request, report, primary_status, {}, bridge)
-                    bridge.emit(RuntimeStage.INJECTING_FAULT, "injecting registered fault")
-                    application = self.chaos.inject(request.scenario_id)
-                    if not bool(getattr(application, "valid", False)):
-                        report["error"] = getattr(application, "stderr", "fault injection failed")
-                        raise RuntimeExecutionError(report["error"])
-
+            if request.mode == ExecutionMode.REAL:
+                control.check()
+                preflight = self.chaos.preflight()
+                if not bool(getattr(preflight, "valid", False)):
+                    raise _BlockedRequest(getattr(preflight, "stderr", "chaos preflight failed"))
+                control.check()
+                bridge.emit(RuntimeStage.INJECTING_FAULT, "injecting registered fault")
+                control.check()
+                application = self.chaos.inject(request.scenario_id)
+                if not bool(getattr(application, "valid", False)):
+                    raise RuntimeExecutionError(
+                        getattr(application, "stderr", "fault injection failed")
+                    )
+                control.check()
+            control.check()
             bridge.emit(RuntimeStage.COLLECTING_EVIDENCE, "collecting registered evidence")
             bridge.emit(RuntimeStage.AGENT_REASONING, "running mutual supervision")
-            coordinator = self.coordinator_factory(request)
             if hasattr(coordinator, "event_store"):
                 store = self.artifact_event_store or getattr(coordinator, "event_store", None)
                 bridge.artifact_store = store
@@ -138,11 +170,9 @@ class ExperimentRuntime:
             report = deepcopy(coordinator.run(
                 request.namespace, request.deployment, request.metric, request.threshold
             ))
+            control.check()
             report["run_id"] = experiment_id
             report["mode"] = request.mode.value
-            artifacts = bridge.finalize(report)
-            if artifacts:
-                report["artifacts"] = artifacts
             primary_status = str(report.get("final_status", "failed"))
             for stage, key in (
                 (RuntimeStage.VALIDATING, "safety_validation"),
@@ -151,11 +181,13 @@ class ExperimentRuntime:
             ):
                 if report.get(key):
                     bridge.emit(stage, f"runtime stage: {key}")
-            if self._cancelled():
-                primary_status = "cancelled"
-                report["final_status"] = primary_status
-        except _BlockedRequest as exc:
+            report["final_status"] = primary_status
+        except (OperationLockError, _BlockedRequest) as exc:
             primary_status = "blocked"
+            report["error"] = str(exc)
+            report["final_status"] = primary_status
+        except RuntimeCancelled as exc:
+            primary_status = "cancelled"
             report["error"] = str(exc)
             report["final_status"] = primary_status
         except (TimeoutError, InterruptedError) as exc:
@@ -178,6 +210,8 @@ class ExperimentRuntime:
                     cleanup = {"valid": False, "stderr": str(exc)}
                     report["cleanup_error"] = str(exc)
                     report["human_review_required"] = True
+            if lock_acquired:
+                lock_context.__exit__(None, None, None)
 
         if report.get("cleanup_error"):
             report["cleanup_status"] = "cleanup_failed"
@@ -193,9 +227,20 @@ class ExperimentRuntime:
         bridge: RuntimeResearchEventBridge,
     ) -> ExperimentRuntimeResult:
         report = deepcopy(report)
-        report.update({"run_id": bridge.experiment_id, "mode": request.mode.value, "final_status": status})
+        report.update({
+            "run_id": bridge.experiment_id,
+            "mode": request.mode.value,
+            "final_status": status,
+            "cleanup": deepcopy(dict(cleanup)),
+        })
         bridge.emit(RuntimeStage.COMPLETED, f"experiment {status}")
+        report["runtime_events"] = [event.to_dict() for event in bridge._events]
+        if bridge.artifact_store is not None and hasattr(bridge.artifact_store, "paths"):
+            report["artifacts"] = deepcopy(bridge.artifact_store.paths)
+        bridge.finalize(report)
         session = normalize_experiment_session(report)
+        if self.session_store is not None:
+            self.session_store.put(session)
         events = tuple(bridge._events)
         return ExperimentRuntimeResult(bridge.experiment_id, status, report, session, events, cleanup)
 
@@ -209,8 +254,22 @@ class ExperimentRuntime:
         if request.metric not in self.configuration.metric_queries:
             raise _BlockedRequest(f"metric is not registered: {request.metric}")
 
-    def _cancelled(self) -> bool:
-        return self.cancellation_event is not None and self.cancellation_event.is_set()
+    @staticmethod
+    def _validate_coordinator_mode(coordinator: Any, request: ExperimentRuntimeRequest) -> None:
+        coordinator_mode = getattr(coordinator, "mode", None)
+        if coordinator_mode is None:
+            raise _BlockedRequest("coordinator mode is required")
+        try:
+            coordinator_mode = ExecutionMode(coordinator_mode)
+        except (TypeError, ValueError) as exc:
+            raise _BlockedRequest("coordinator mode is invalid") from exc
+        if coordinator_mode != request.mode:
+            raise _BlockedRequest(
+                f"coordinator mode {coordinator_mode.value} does not match request mode {request.mode.value}"
+            )
+        coordinator_backend = getattr(coordinator, "backend", None)
+        if coordinator_backend is not None and str(coordinator_backend) != str(request.backend):
+            raise _BlockedRequest("coordinator backend does not match request backend")
 
     @staticmethod
     def _base_report(experiment_id: str, request: ExperimentRuntimeRequest) -> dict[str, Any]:
