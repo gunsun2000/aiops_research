@@ -195,6 +195,32 @@ def test_scenario_catalog_accepts_registered_runtime_configuration(tmp_path: Pat
     assert catalog[0]["ui_fallback"] is True
 
 
+def test_scenario_catalog_does_not_restore_legacy_target_values(tmp_path: Path):
+    source = json.loads(Path("config/experiment_runtime.json").read_text(encoding="utf-8"))
+    source["scenarios"]["cpu-stress"].update(
+        {
+            "namespace": "online-boutique",
+            "deployment": "checkoutservice",
+            "metric": "memory",
+            "threshold": 88.0,
+        }
+    )
+    config_path = tmp_path / "experiment_runtime.json"
+    config_path.write_text(json.dumps(source), encoding="utf-8")
+
+    from aiops_k8s_agents.real_evidence import load_runtime_configuration
+
+    scenario = next(
+        item
+        for item in scenario_catalog(load_runtime_configuration(config_path))
+        if item["scenario_id"] == "cpu-stress"
+    )
+
+    assert scenario["deployment"] == "checkoutservice"
+    assert scenario["metric"] == "memory"
+    assert scenario["threshold"] == 88.0
+
+
 def test_scenario_experiment_rejects_unknown_scenario():
     with pytest.raises(ValueError, match="unknown scenario"):
         run_scenario_experiment_mock(

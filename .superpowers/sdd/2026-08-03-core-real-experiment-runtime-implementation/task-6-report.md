@@ -17,6 +17,13 @@ Implemented Task 6 only on branch `codex/full-research-platform-v1-impl`.
 - Updated `control_plane_data.scenario_catalog()` to use the registered runtime catalog while preserving existing mock/demo payload compatibility.
 - Added factory, catalog, compatibility, and fail-closed real-boundary tests.
 
+## Review Fixes
+
+- Extended validated `RuntimeConfiguration.scenarios` entries with explicit `id`, `namespace`, `deployment`, `metric`, `threshold`, and `manifest` fields.
+- Updated the registered runtime JSON and catalog so configuration-only scenarios are accepted; only chart/demo presentation data uses `ui_fallback` metadata.
+- Loaded the complete registered protocol profile map and resolve `ExperimentRuntimeRequest.protocol_profile` before constructing a coordinator. Unknown profiles fail closed.
+- Added regressions for configuration-only scenarios, configured target overrides, registered profile selection, and unregistered profile rejection.
+
 ## Boundaries
 
 - No Kubernetes cluster was started.
@@ -26,7 +33,7 @@ Implemented Task 6 only on branch `codex/full-research-platform-v1-impl`.
 
 ## Verification
 
-- `python -m pytest tests/test_experiment_runtime_factory.py tests/test_control_plane_data.py -q`: 18 passed
-- `python -m pytest tests/test_experiment_runtime.py tests/test_experiment_session.py tests/test_experiment_runtime_factory.py tests/test_control_plane_data.py -q`: 48 passed
-- `python -m pytest`: 437 passed, 1 existing Starlette/httpx deprecation warning
+- `python -m pytest tests/test_experiment_runtime_factory.py tests/test_control_plane_data.py tests/test_real_evidence.py tests/test_chaos_adapter.py -q`: 67 passed
+- `python -m pytest tests/test_experiment_runtime_factory.py tests/test_control_plane_data.py tests/test_real_evidence.py tests/test_chaos_adapter.py tests/test_experiment_runtime.py tests/test_experiment_session.py -q`: 96 passed
+- `python -m pytest -q`: 441 passed, 1 existing Starlette/httpx deprecation warning
 - `git diff --check`: passed

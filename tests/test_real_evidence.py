@@ -254,4 +254,4 @@ def test_runtime_configuration_loads_registered_defaults():
     assert configuration.version == "1.0.0"
     assert configuration.allowed_namespaces == ("online-boutique",)
     assert configuration.metric_queries["cpu"].render("online-boutique", "paymentservice")
-    assert configuration.scenarios["pod-kill"] == "k8s/paymentservice-pod-kill.yaml"
+    assert configuration.scenarios["pod-kill"].manifest == "k8s/paymentservice-pod-kill.yaml"

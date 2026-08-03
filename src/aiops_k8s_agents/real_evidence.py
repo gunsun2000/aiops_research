@@ -52,6 +52,47 @@ class MetricQueryDefinition:
 
 
 @dataclass(frozen=True)
+class ScenarioConfiguration:
+    scenario_id: str
+    namespace: str | None = None
+    deployment: str | None = None
+    metric: str | None = None
+    threshold: float | None = None
+    manifest: str = ""
+
+    def __post_init__(self) -> None:
+        scenario_id = _strip_scenario_identifier("scenario id", self.scenario_id)
+        manifest = _strip_scenario_identifier("scenario manifest", self.manifest)
+        object.__setattr__(self, "scenario_id", scenario_id)
+        object.__setattr__(self, "manifest", manifest)
+        if self.namespace is None:
+            return
+        namespace = _validate_kubernetes_name("scenario namespace", self.namespace)
+        deployment = _validate_kubernetes_name("scenario deployment", self.deployment)
+        metric = _normalize_metric(self.metric)
+        if isinstance(self.threshold, bool) or not isinstance(self.threshold, (int, float)):
+            raise ValueError("scenario threshold must be finite")
+        if not isfinite(self.threshold):
+            raise ValueError("scenario threshold must be finite")
+        object.__setattr__(self, "namespace", namespace)
+        object.__setattr__(self, "deployment", deployment)
+        object.__setattr__(self, "metric", metric)
+        object.__setattr__(self, "threshold", float(self.threshold))
+
+    @property
+    def is_fully_validated(self) -> bool:
+        return (
+            self.namespace is not None
+            and self.deployment is not None
+            and self.metric is not None
+            and self.threshold is not None
+        )
+
+    def __fspath__(self) -> str:
+        return self.manifest
+
+
+@dataclass(frozen=True)
 class RuntimeConfiguration:
     version: str
     allowed_namespaces: tuple[str, ...]
@@ -60,7 +101,7 @@ class RuntimeConfiguration:
     max_replicas: int
     timeouts: Mapping[str, int]
     metric_queries: Mapping[str, MetricQueryDefinition]
-    scenarios: Mapping[str, str]
+    scenarios: Mapping[str, ScenarioConfiguration | Mapping[str, Any] | str]
     max_sample_age_seconds: float = 300.0
     experiment_seconds: float = 300.0
 
@@ -78,12 +119,57 @@ class RuntimeConfiguration:
             )
             for name, value in self.metric_queries.items()
         }
+        scenarios: dict[str, ScenarioConfiguration] = {}
+        for scenario_id, value in self.scenarios.items():
+            if isinstance(value, ScenarioConfiguration):
+                scenario = value
+            elif isinstance(value, Mapping):
+                required = {
+                    "id", "namespace", "deployment", "metric", "threshold", "manifest",
+                }
+                missing = sorted(required - set(value))
+                if missing:
+                    raise ValueError(
+                        f"scenario {scenario_id} missing: {', '.join(missing)}"
+                    )
+                if any(value[field] is None for field in required):
+                    raise ValueError(f"scenario {scenario_id} contains null fields")
+                scenario = ScenarioConfiguration(
+                    scenario_id=str(value["id"]),
+                    namespace=value["namespace"],
+                    deployment=value["deployment"],
+                    metric=value["metric"],
+                    threshold=value["threshold"],
+                    manifest=value["manifest"],
+                )
+            elif isinstance(value, str):
+                # Preserve direct-construction compatibility for older tests;
+                # file-loaded configurations are rejected below.
+                scenario = ScenarioConfiguration(scenario_id, manifest=value)
+            else:
+                raise ValueError(f"scenario {scenario_id} must be an object")
+            if scenario.scenario_id != str(scenario_id):
+                raise ValueError(
+                    f"scenario id does not match configuration key: {scenario_id}"
+                )
+            if scenario.is_fully_validated and scenario.metric not in definitions:
+                raise ValueError(f"scenario metric is not registered: {scenario.metric}")
+            if scenario.is_fully_validated:
+                if scenario.namespace not in self.allowed_namespaces:
+                    raise ValueError(
+                        f"scenario namespace is not allowlisted: {scenario.namespace}"
+                    )
+                if scenario.deployment not in self.allowed_deployments:
+                    raise ValueError(
+                        f"scenario deployment is not allowlisted: {scenario.deployment}"
+                    )
+            scenarios[str(scenario_id)] = scenario
         object.__setattr__(self, "version", self.version.strip())
         object.__setattr__(self, "allowed_namespaces", tuple(self.allowed_namespaces))
         object.__setattr__(self, "allowed_deployments", tuple(self.allowed_deployments))
         object.__setattr__(self, "timeouts", MappingProxyType(dict(self.timeouts)))
         object.__setattr__(self, "metric_queries", MappingProxyType(definitions))
-        object.__setattr__(self, "scenarios", MappingProxyType(dict(self.scenarios)))
+        object.__setattr__(self, "scenarios", MappingProxyType(scenarios))
         object.__setattr__(self, "max_sample_age_seconds", float(self.max_sample_age_seconds))
         object.__setattr__(self, "experiment_seconds", float(self.experiment_seconds))
 
@@ -101,6 +187,12 @@ def load_runtime_configuration(path: str | Path) -> RuntimeConfiguration:
     missing = sorted(required - payload.keys())
     if missing:
         raise ValueError(f"runtime configuration missing: {', '.join(missing)}")
+    scenarios = payload["scenarios"]
+    if not isinstance(scenarios, dict):
+        raise ValueError("scenarios must be an object")
+    for scenario_id, scenario in scenarios.items():
+        if not isinstance(scenario, Mapping):
+            raise ValueError(f"scenario {scenario_id} must be an object")
     return RuntimeConfiguration(
         version=payload["version"],
         allowed_namespaces=tuple(payload["allowed_namespaces"]),
@@ -109,7 +201,7 @@ def load_runtime_configuration(path: str | Path) -> RuntimeConfiguration:
         max_replicas=int(payload["max_replicas"]),
         timeouts=dict(payload["timeouts"]),
         metric_queries=dict(payload["metric_queries"]),
-        scenarios=dict(payload["scenarios"]),
+        scenarios=scenarios,
         max_sample_age_seconds=float(payload.get("max_sample_age_seconds", 300.0)),
         experiment_seconds=float(payload["experiment_seconds"]),
     )
@@ -222,6 +314,17 @@ def _validate_kubernetes_name(kind: str, value: str) -> str:
     if not _KUBERNETES_NAME.fullmatch(value) or len(value) > 63:
         raise ValueError(f"{kind} is not a valid Kubernetes name")
     return value
+
+
+def _strip_scenario_identifier(kind: str, value: Any) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"{kind} must not be empty")
+    return value.strip()
+
+
+def _normalize_metric(value: Any) -> str:
+    metric = _strip_scenario_identifier("scenario metric", value)
+    return metric.lower().replace("-", "_")
 
 
 def _validate_sample_age(value: float) -> None:

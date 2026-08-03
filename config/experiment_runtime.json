@@ -18,9 +18,37 @@
     "availability": "kube_deployment_status_replicas_available{namespace=\"{namespace}\",deployment=\"{deployment}\"}"
   },
   "scenarios": {
-    "pod-kill": "k8s/paymentservice-pod-kill.yaml",
-    "cpu-stress": "k8s/chaos/paymentservice-cpu-stress.yaml",
-    "memory-stress": "k8s/chaos/checkoutservice-memory-stress.yaml",
-    "network-delay": "k8s/chaos/paymentservice-network-delay.yaml"
+    "pod-kill": {
+      "id": "pod-kill",
+      "namespace": "online-boutique",
+      "deployment": "paymentservice",
+      "metric": "availability",
+      "threshold": 1.0,
+      "manifest": "k8s/paymentservice-pod-kill.yaml"
+    },
+    "cpu-stress": {
+      "id": "cpu-stress",
+      "namespace": "online-boutique",
+      "deployment": "paymentservice",
+      "metric": "cpu",
+      "threshold": 80.0,
+      "manifest": "k8s/chaos/paymentservice-cpu-stress.yaml"
+    },
+    "memory-stress": {
+      "id": "memory-stress",
+      "namespace": "online-boutique",
+      "deployment": "checkoutservice",
+      "metric": "memory",
+      "threshold": 80.0,
+      "manifest": "k8s/chaos/checkoutservice-memory-stress.yaml"
+    },
+    "network-delay": {
+      "id": "network-delay",
+      "namespace": "online-boutique",
+      "deployment": "paymentservice",
+      "metric": "latency",
+      "threshold": 0.1,
+      "manifest": "k8s/chaos/paymentservice-network-delay.yaml"
+    }
   }
 }

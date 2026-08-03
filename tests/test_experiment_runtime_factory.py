@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+
+import pytest
 
 from aiops_k8s_agents.experiment_runtime_factory import (
     build_experiment_runtime,
@@ -53,6 +56,28 @@ def test_runtime_factory_builds_real_dependencies_from_registered_config(tmp_pat
     )
 
 
+def test_runtime_factory_selects_requested_registered_protocol(tmp_path):
+    runtime = build_experiment_runtime(
+        configuration_path=write_runtime_config(tmp_path),
+        prometheus_url="http://127.0.0.1:9091",
+        event_sink=RecordingEventSink(),
+    )
+    request = ExperimentRuntimeRequest(
+        scenario_id="cpu-stress",
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+        mode="mock",
+        backend="python",
+        protocol_profile="four-agent-role-veto-v1",
+    )
+
+    coordinator = runtime.coordinator_factory(request)
+
+    assert coordinator.protocol.profile_id == request.protocol_profile
+
+
 def test_runtime_scenario_catalog_uses_registered_manifest_and_ui_fallback(tmp_path):
     configuration = load_runtime_configuration(write_runtime_config(tmp_path))
 
@@ -70,6 +95,30 @@ def test_runtime_scenario_catalog_uses_registered_manifest_and_ui_fallback(tmp_p
     assert catalog[1]["metric"] == "cpu"
     assert catalog[1]["threshold"] == 80.0
     assert catalog[1]["ui_fallback"] is True
+
+
+def test_runtime_scenario_catalog_accepts_configuration_only_scenario(tmp_path):
+    source = json.loads(Path("config/experiment_runtime.json").read_text(encoding="utf-8"))
+    source["scenarios"]["disk-pressure"] = {
+        "id": "disk-pressure",
+        "namespace": "online-boutique",
+        "deployment": "paymentservice",
+        "metric": "cpu",
+        "threshold": 91.0,
+        "manifest": "k8s/chaos/paymentservice-cpu-stress.yaml",
+    }
+    path = tmp_path / "experiment_runtime.json"
+    path.write_text(json.dumps(source), encoding="utf-8")
+
+    catalog = runtime_scenario_catalog(load_runtime_configuration(path))
+
+    scenario = next(item for item in catalog if item["scenario_id"] == "disk-pressure")
+    assert scenario["namespace"] == "online-boutique"
+    assert scenario["deployment"] == "paymentservice"
+    assert scenario["metric"] == "cpu"
+    assert scenario["threshold"] == 91.0
+    assert scenario["manifest"] == "k8s/chaos/paymentservice-cpu-stress.yaml"
+    assert scenario["ui_fallback"] is False
 
 
 def test_injected_prometheus_client_is_not_admitted_as_real_runtime(tmp_path):
@@ -96,3 +145,25 @@ def test_injected_prometheus_client_is_not_admitted_as_real_runtime(tmp_path):
 
     assert result.status == "blocked"
     assert "bounded production client" in result.report["error"]
+
+
+def test_runtime_factory_rejects_unregistered_protocol_before_coordinator_creation(tmp_path):
+    runtime = build_experiment_runtime(
+        configuration_path=write_runtime_config(tmp_path),
+        prometheus_url="http://127.0.0.1:9091",
+        event_sink=RecordingEventSink(),
+    )
+
+    request = ExperimentRuntimeRequest(
+        scenario_id="cpu-stress",
+        namespace="online-boutique",
+        deployment="paymentservice",
+        metric="cpu",
+        threshold=80.0,
+        mode="mock",
+        backend="python",
+        protocol_profile="unregistered-profile",
+    )
+
+    with pytest.raises(ValueError, match="protocol profile is not registered"):
+        runtime.coordinator_factory(request)

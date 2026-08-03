@@ -17,7 +17,7 @@ from aiops_k8s_agents.real_evidence import (
     load_runtime_configuration,
 )
 from aiops_k8s_agents.recovery_monitor import KubernetesSnapshotRecoveryMonitor
-from aiops_k8s_agents.research_protocol import load_research_protocol
+from aiops_k8s_agents.research_protocol import load_protocol_profiles
 from aiops_k8s_agents.validator import CommandValidator
 
 
@@ -27,11 +27,7 @@ PrometheusFetcher = Callable[[str, str], dict[str, Any]]
 _UI_FALLBACK = {
     "pod-kill": {
         "label": "Pod Kill",
-        "namespace": "online-boutique",
-        "deployment": "paymentservice",
-        "metric": "availability",
         "value": 0.0,
-        "threshold": 1.0,
         "desired_replicas": 1,
         "available_replicas": 0,
         "pod_statuses": ("Terminating",),
@@ -44,31 +40,19 @@ _UI_FALLBACK = {
     },
     "cpu-stress": {
         "label": "CPU Stress",
-        "namespace": "online-boutique",
-        "deployment": "paymentservice",
-        "metric": "cpu",
         "value": 95.0,
-        "threshold": 80.0,
         "signal": "container CPU usage",
         "summary": "Registered CPU stress demonstration metadata.",
     },
     "memory-stress": {
         "label": "Memory Stress",
-        "namespace": "online-boutique",
-        "deployment": "checkoutservice",
-        "metric": "memory",
         "value": 95.7,
-        "threshold": 80.0,
         "signal": "working set / restart count",
         "summary": "Registered memory stress demonstration metadata.",
     },
     "network-delay": {
         "label": "Network Delay",
-        "namespace": "online-boutique",
-        "deployment": "paymentservice",
-        "metric": "latency",
         "value": 0.234,
-        "threshold": 0.1,
         "signal": "probe duration",
         "summary": "Registered network delay demonstration metadata.",
     },
@@ -91,9 +75,7 @@ def build_experiment_runtime(
     configuration = load_runtime_configuration(configuration_path)
     repository_root = Path(__file__).resolve().parents[2]
     config_root = repository_root / "config"
-    protocol = load_research_protocol(
-        config_root / "protocol_profiles" / "four-agent-role-veto-v1.json"
-    )
+    protocol_profiles = load_protocol_profiles(config_root / "protocol_profiles")
     policy = load_mutual_supervision_policy(
         config_root / "mutual_supervision_policy.json"
     )
@@ -104,7 +86,10 @@ def build_experiment_runtime(
         max_replicas=configuration.max_replicas,
     )
     chaos = ChaosMeshAdapter(
-        configuration.scenarios,
+        {
+            scenario_id: scenario.manifest
+            for scenario_id, scenario in configuration.scenarios.items()
+        },
         runner=subprocess_runner,
         repository_root=repository_root,
         wait_timeout_seconds=configuration.timeouts["fault_ready_seconds"],
@@ -115,6 +100,12 @@ def build_experiment_runtime(
     chaos.scenario_ids = scenario_ids
 
     def coordinator_factory(request: ExperimentRuntimeRequest) -> MutualSupervisionCoordinator:
+        try:
+            protocol = protocol_profiles[request.protocol_profile]
+        except KeyError as exc:
+            raise ValueError(
+                f"protocol profile is not registered: {request.protocol_profile}"
+            ) from exc
         prometheus = PrometheusAdapter(prometheus_url, fetcher=prometheus_fetcher)
         evidence = PrometheusKubernetesEvidenceProvider(
             prometheus=prometheus,
@@ -154,17 +145,19 @@ def runtime_scenario_catalog(
 ) -> list[dict[str, Any]]:
     """Return registered scenarios plus explicitly UI-only fallback fields."""
     catalog: list[dict[str, Any]] = []
-    for scenario_id, manifest in configuration.scenarios.items():
-        fallback = _UI_FALLBACK.get(scenario_id)
-        if fallback is None:
-            raise ValueError(f"scenario has no UI fallback metadata: {scenario_id}")
+    for scenario_id, scenario in configuration.scenarios.items():
+        fallback = _UI_FALLBACK.get(scenario_id, {})
         item = dict(fallback)
         item.update(
             {
-                "scenario_id": scenario_id,
-                "manifest": str(manifest),
+                "scenario_id": scenario.scenario_id,
+                "namespace": scenario.namespace,
+                "deployment": scenario.deployment,
+                "metric": scenario.metric,
+                "threshold": scenario.threshold,
+                "manifest": scenario.manifest,
                 "mode": "mock",
-                "ui_fallback": True,
+                "ui_fallback": bool(fallback),
             }
         )
         catalog.append(item)
