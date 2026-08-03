@@ -141,6 +141,10 @@ button:disabled { cursor: not-allowed; opacity: .48; }
 
 .research-results { padding: 14px 18px; background: var(--surface); border-top: 1px solid var(--line); }
 .research-results .section-heading { margin-bottom: 10px; }
+.research-documents { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+.research-documents a { display: inline-flex; align-items: center; gap: 7px; min-height: 30px; padding: 5px 9px; border: 1px solid var(--line); color: var(--ink); background: var(--surface-soft); text-decoration: none; font-size: 12px; }
+.research-documents a:hover { border-color: var(--blue); color: var(--blue); }
+.research-documents b { color: var(--blue); font-size: 10px; }
 .result-grid { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--line); }
 .result-grid div { min-width: 0; padding: 10px 12px; border-right: 1px solid var(--line); }
 .result-grid div:last-child { border-right: 0; }

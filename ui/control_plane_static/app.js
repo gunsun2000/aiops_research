@@ -24,6 +24,24 @@
   const FUTURE_INTEGRATION_NOTE =
     "AutoGen GroupChat은 다음 통합 단계 · AIOpsLab benchmark는 다음 통합 단계";
 
+  const RESEARCH_DOCUMENTS = [
+    {
+      label: "4-Agent 연구 보고서",
+      text: "DOCX",
+      sourcePath: "docs/deliverables/AIOps_4Agent_Research_Report.docx",
+    },
+    {
+      label: "실험 실행 가이드",
+      text: "DOCX",
+      sourcePath: "docs/deliverables/AIOps_Experiment_Operations_Guide.docx",
+    },
+    {
+      label: "Agent 정책 명세",
+      text: "DOCX",
+      sourcePath: "docs/deliverables/AIOps_Agent_Policy_Specification.docx",
+    },
+  ];
+
   const STAGE_ORDER = [
     "preflight",
     "injecting_fault",
@@ -61,7 +79,7 @@
     "agent-decision", "agent-approval", "agent-reward", "agent-statement",
     "peer-reviews", "allowlist-result", "validator-result", "cleanup-result",
     "result-status", "result-recovery", "result-mttr", "result-reward",
-    "result-reviews", "result-artifacts",
+    "result-reviews", "result-artifacts", "research-documents",
   ].map((id) => [id, document.getElementById(id)]));
 
   async function api(path, options) {
@@ -383,6 +401,21 @@
     elements["control-error"].textContent = error instanceof Error ? error.message : String(error);
   }
 
+  function renderResearchDocuments() {
+    elements["research-documents"].replaceChildren(...RESEARCH_DOCUMENTS.map((documentInfo) => {
+      const link = document.createElement("a");
+      link.href = `/api/artifacts/${documentInfo.sourcePath}`;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      const type = document.createElement("b");
+      type.textContent = documentInfo.text;
+      const label = document.createElement("span");
+      label.textContent = documentInfo.label;
+      link.append(type, label);
+      return link;
+    }));
+  }
+
   async function loadScenarios() {
     try {
       const payload = await api("/api/scenarios");
@@ -443,6 +476,7 @@
 
   async function boot() {
     bindControls();
+    renderResearchDocuments();
     elements["result-artifacts"].title = FUTURE_INTEGRATION_NOTE;
     renderCondition();
     resetEvidenceView();
