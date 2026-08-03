@@ -40,6 +40,14 @@ from aiops_k8s_agents.experiment_jobs import SQLiteExperimentJobStore
 from aiops_k8s_agents.experiment_runtime_models import ExperimentRuntimeRequest
 from aiops_k8s_agents.executor import ExecutionBackend, ExecutionMode
 from aiops_k8s_agents.real_evidence import RuntimeConfiguration, load_runtime_configuration
+from aiops_k8s_agents.recovery_comparison_jobs import (
+    RecoveryComparisonRequest,
+    SQLiteRecoveryComparisonJobStore,
+)
+from aiops_k8s_agents.recovery_comparison_runner import (
+    RecoveryComparisonExecutor,
+    RecoveryComparisonJobRunner,
+)
 from aiops_k8s_agents.research_protocol import load_protocol_profiles
 
 try:
@@ -72,6 +80,10 @@ class RuntimeApiState:
     aiopslab_job_store: SQLiteAIOpsLabJobStore
     aiopslab_job_runner: AIOpsLabJobRunner
     aiopslab_artifact_root: Path
+    recovery_comparison_executor: Any
+    recovery_comparison_job_store: SQLiteRecoveryComparisonJobStore
+    recovery_comparison_job_runner: RecoveryComparisonJobRunner
+    recovery_comparison_artifact_root: Path
 
 
 class EmptyEventSink:
@@ -119,6 +131,13 @@ class ExperimentCreateRequest(ExperimentValidationRequest):
 class AIOpsLabBenchmarkCreateRequest(BaseModel):
     benchmark_id: str = Field(min_length=1)
     repetitions: int = Field(default=1, ge=1, le=12)
+
+
+class RecoveryComparisonCreateRequest(BaseModel):
+    repetitions: int = Field(default=1, ge=1, le=3)
+    mode: Literal["mock", "real"] = "mock"
+    guard_backend: Literal["python", "go"] = "python"
+    real_confirmation: str = ""
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -454,6 +473,156 @@ def api_aiopslab_artifact(
     return FileResponse(path)
 
 
+@router.get("/api/comparisons/recovery")
+def api_recovery_comparison(request: Request) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    return {
+        "matrix": {"scenarios": 4, "actions": 3, "max_repetitions": 3},
+        "runtime_modes": {
+            "mock": state.recovery_comparison_executor.readiness("mock"),
+            "real": state.recovery_comparison_executor.readiness("real"),
+        },
+        "boundary": (
+            "mock uses synthetic comparison outcomes; only Ubuntu real mode "
+            "produces cluster experiment evidence"
+        ),
+    }
+
+
+@router.post("/api/comparisons/recovery/jobs", status_code=202)
+def api_create_recovery_comparison_job(
+    payload: RecoveryComparisonCreateRequest,
+    request: Request,
+) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    if payload.mode == "real":
+        if os.environ.get("CONFIRM_REAL_RUN") != "YES":
+            raise HTTPException(
+                status_code=403,
+                detail="real comparison is disabled on this server",
+            )
+        if payload.real_confirmation.strip() != "EXECUTE REAL COMPARISON":
+            raise HTTPException(
+                status_code=400,
+                detail="real_confirmation must be exactly EXECUTE REAL COMPARISON",
+            )
+    comparison_request = RecoveryComparisonRequest(
+        repetitions=payload.repetitions,
+        mode=payload.mode,
+        guard_backend=payload.guard_backend,
+    )
+    readiness = state.recovery_comparison_executor.readiness(
+        comparison_request.mode
+    )
+    if not readiness.get("ready"):
+        reasons = readiness.get("reasons", ["comparison runtime unavailable"])
+        raise HTTPException(status_code=503, detail="; ".join(reasons))
+    job = state.recovery_comparison_job_runner.submit(comparison_request)
+    return _recovery_comparison_job_payload(state, job)
+
+
+@router.get("/api/comparisons/recovery/jobs")
+def api_recovery_comparison_jobs(
+    request: Request,
+    limit: int = 50,
+) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        jobs = state.recovery_comparison_job_store.list(limit=limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {
+        "jobs": [_recovery_comparison_job_payload(state, job) for job in jobs]
+    }
+
+
+@router.get("/api/comparisons/recovery/jobs/{job_id}")
+def api_recovery_comparison_job(
+    job_id: str,
+    request: Request,
+) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    job = state.recovery_comparison_job_store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="comparison job not found")
+    payload = _recovery_comparison_job_payload(state, job)
+    payload["events"] = [
+        event.to_dict()
+        for event in state.recovery_comparison_job_store.events_after(job_id)
+    ]
+    return payload
+
+
+@router.post("/api/comparisons/recovery/jobs/{job_id}/cancel", status_code=202)
+def api_cancel_recovery_comparison_job(
+    job_id: str,
+    request: Request,
+) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        job = state.recovery_comparison_job_runner.cancel(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="comparison job not found") from exc
+    return _recovery_comparison_job_payload(state, job)
+
+
+@router.get("/api/comparisons/recovery/jobs/{job_id}/events")
+def api_recovery_comparison_events(
+    job_id: str,
+    request: Request,
+) -> StreamingResponse:
+    state: RuntimeApiState = request.app.state.runtime_api
+    if state.recovery_comparison_job_store.get(job_id) is None:
+        raise HTTPException(status_code=404, detail="comparison job not found")
+    raw_cursor = request.headers.get("last-event-id", "0").strip() or "0"
+    try:
+        cursor = int(raw_cursor)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Last-Event-ID must be an integer") from exc
+    if cursor < 0:
+        raise HTTPException(status_code=400, detail="Last-Event-ID must be non-negative")
+
+    def stream():
+        nonlocal cursor
+        while True:
+            events = state.recovery_comparison_job_runner.wait_for_events(
+                job_id,
+                after_sequence=cursor,
+                timeout=10.0,
+            )
+            for event in events:
+                cursor = event.sequence
+                yield _sse("comparison", event.to_dict(), event_id=event.sequence)
+            job = state.recovery_comparison_job_store.get(job_id)
+            if job is None:
+                return
+            if job.status.terminal:
+                yield _sse("job", _recovery_comparison_job_payload(state, job))
+                return
+            if not events:
+                yield ": keep-alive\n\n"
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.get(
+    "/api/comparisons/recovery/jobs/{job_id}/artifacts/{artifact_name}"
+)
+def api_recovery_comparison_artifact(
+    job_id: str,
+    artifact_name: str,
+    request: Request,
+) -> FileResponse:
+    state: RuntimeApiState = request.app.state.runtime_api
+    return FileResponse(
+        _recovery_comparison_artifact_path(state, job_id, artifact_name)
+    )
+
+
 @router.get("/api/platform")
 def api_platform(request: Request) -> dict[str, object]:
     state: RuntimeApiState = request.app.state.runtime_api
@@ -763,6 +932,49 @@ def _aiopslab_artifact_path(
     return path
 
 
+def _recovery_comparison_job_payload(
+    state: RuntimeApiState,
+    job: Any,
+) -> dict[str, Any]:
+    payload = job.to_dict()
+    result = payload.get("result")
+    artifact_urls: dict[str, str] = {}
+    if isinstance(result, Mapping):
+        artifacts = result.get("artifacts", {})
+        if isinstance(artifacts, Mapping):
+            for name, path in artifacts.items():
+                if path:
+                    artifact_urls[str(name)] = (
+                        f"/api/comparisons/recovery/jobs/{job.job_id}"
+                        f"/artifacts/{name}"
+                    )
+    payload["artifact_urls"] = artifact_urls
+    return payload
+
+
+def _recovery_comparison_artifact_path(
+    state: RuntimeApiState,
+    job_id: str,
+    artifact_name: str,
+) -> Path:
+    job = state.recovery_comparison_job_store.get(job_id)
+    if job is None or job.result is None:
+        raise HTTPException(status_code=404, detail="comparison artifact not found")
+    artifacts = dict(job.result).get("artifacts", {})
+    candidate = artifacts.get(artifact_name) if isinstance(artifacts, Mapping) else None
+    if not candidate:
+        raise HTTPException(status_code=404, detail="comparison artifact not found")
+    path = Path(str(candidate)).expanduser().resolve()
+    allowed_root = (state.recovery_comparison_artifact_root / job_id).resolve()
+    try:
+        path.relative_to(allowed_root)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail="comparison artifact not found") from exc
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="comparison artifact not found")
+    return path
+
+
 def _default_probe(command: list[str]) -> RuntimeProbe:
     def probe() -> bool:
         try:
@@ -846,6 +1058,9 @@ def create_app(
     aiopslab_executor: Any | None = None,
     aiopslab_artifact_root: str | Path | None = None,
     aiopslab_job_id_factory: Callable[[], str] | None = None,
+    recovery_comparison_executor: Any | None = None,
+    recovery_comparison_artifact_root: str | Path | None = None,
+    recovery_comparison_job_id_factory: Callable[[], str] | None = None,
 ) -> FastAPI:
     root = project_root()
     config_path = Path(configuration_path or root / "config" / "experiment_runtime.json")
@@ -908,6 +1123,29 @@ def create_app(
         artifact_root=benchmark_artifact_root,
         job_id_factory=aiopslab_job_id_factory,
     )
+    comparison_executor = recovery_comparison_executor or RecoveryComparisonExecutor(
+        repo_root=root,
+        config_path=root / "config" / "recovery_action_experiments.json",
+        prometheus_url=(
+            prometheus_url
+            or os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9091")
+        ),
+        kubeconfig=os.environ.get(
+            "KUBECONFIG",
+            root / "config" / "missing-kubeconfig",
+        ),
+    )
+    comparison_artifact_root = Path(
+        recovery_comparison_artifact_root
+        or root / "runs" / "control-plane" / "recovery-comparison"
+    ).expanduser().resolve()
+    recovery_comparison_job_store = SQLiteRecoveryComparisonJobStore(database_path)
+    recovery_comparison_job_runner = RecoveryComparisonJobRunner(
+        recovery_comparison_job_store,
+        comparison_executor,
+        artifact_root=comparison_artifact_root,
+        job_id_factory=recovery_comparison_job_id_factory,
+    )
     probes = dict(
         connection_probes
         or _default_connection_probes(
@@ -926,6 +1164,7 @@ def create_app(
         finally:
             job_runner.shutdown(wait=True)
             aiopslab_job_runner.shutdown(wait=True)
+            recovery_comparison_job_runner.shutdown(wait=True)
 
     app_instance = FastAPI(
         title="AIOps 4-Agent Control Plane",
@@ -946,6 +1185,10 @@ def create_app(
         aiopslab_job_store=aiopslab_job_store,
         aiopslab_job_runner=aiopslab_job_runner,
         aiopslab_artifact_root=benchmark_artifact_root,
+        recovery_comparison_executor=comparison_executor,
+        recovery_comparison_job_store=recovery_comparison_job_store,
+        recovery_comparison_job_runner=recovery_comparison_job_runner,
+        recovery_comparison_artifact_root=comparison_artifact_root,
     )
     app_instance.include_router(router)
     app_instance.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

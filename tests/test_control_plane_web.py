@@ -16,6 +16,7 @@ from aiops_k8s_agents.aiopslab_benchmark import (
 )
 from aiops_k8s_agents.experiment_runtime import RuntimePreflightResult
 from aiops_k8s_agents.experiment_runtime_models import RuntimeEvent, RuntimeStage
+from aiops_k8s_agents.recovery_comparison_runner import RecoveryComparisonExecutor
 
 
 client = TestClient(app)
@@ -874,3 +875,124 @@ def test_aiopslab_cancel_endpoint_stops_active_job(tmp_path):
     assert cancelled.status_code == 202
     assert cancelled.json()["cancel_requested"] is True
     assert finished["status"] == "cancelled"
+
+
+def _comparison_executor(tmp_path):
+    return RecoveryComparisonExecutor(
+        repo_root=tmp_path,
+        config_path=tmp_path / "unused-recovery-config.json",
+    )
+
+
+def _wait_for_comparison_job(test_client, job_id, timeout=5):
+    deadline = monotonic() + timeout
+    while monotonic() < deadline:
+        response = test_client.get(f"/api/comparisons/recovery/jobs/{job_id}")
+        assert response.status_code == 200
+        payload = response.json()
+        if payload["status"] in {
+            "completed",
+            "failed",
+            "blocked",
+            "cancelled",
+            "interrupted",
+        }:
+            return payload
+        sleep(0.01)
+    raise AssertionError("recovery comparison API job did not finish")
+
+
+def test_recovery_comparison_catalog_exposes_mock_and_real_boundaries(tmp_path):
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        recovery_comparison_executor=_comparison_executor(tmp_path),
+        recovery_comparison_artifact_root=tmp_path / "comparison-runs",
+    )
+
+    response = TestClient(test_app).get("/api/comparisons/recovery")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["matrix"] == {
+        "scenarios": 4,
+        "actions": 3,
+        "max_repetitions": 3,
+    }
+    assert payload["runtime_modes"]["mock"]["ready"] is True
+    assert payload["runtime_modes"]["mock"]["evidence_type"] == "synthetic_mock"
+    assert payload["runtime_modes"]["real"]["ready"] is False
+
+
+def test_recovery_comparison_job_generates_and_serves_graphs(tmp_path):
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        recovery_comparison_executor=_comparison_executor(tmp_path),
+        recovery_comparison_artifact_root=tmp_path / "comparison-runs",
+        recovery_comparison_job_id_factory=lambda: "comparison-api-complete",
+    )
+    test_client = TestClient(test_app)
+
+    created = test_client.post(
+        "/api/comparisons/recovery/jobs",
+        json={"repetitions": 1, "mode": "mock", "guard_backend": "python"},
+    )
+    finished = _wait_for_comparison_job(test_client, created.json()["job_id"])
+
+    assert created.status_code == 202
+    assert finished["status"] == "completed"
+    assert finished["result"]["total_treatments"] == 12
+    assert finished["result"]["evidence_type"] == "synthetic_mock"
+    assert finished["artifact_urls"]["success_rate_png"].endswith(
+        "/artifacts/success_rate_png"
+    )
+    graph = test_client.get(finished["artifact_urls"]["success_rate_png"])
+    assert graph.status_code == 200
+    assert graph.headers["content-type"] == "image/png"
+
+
+def test_recovery_comparison_real_requires_explicit_server_and_user_gate(
+    tmp_path, monkeypatch
+):
+    monkeypatch.delenv("CONFIRM_REAL_RUN", raising=False)
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        recovery_comparison_executor=_comparison_executor(tmp_path),
+        recovery_comparison_artifact_root=tmp_path / "comparison-runs",
+    )
+
+    response = TestClient(test_app).post(
+        "/api/comparisons/recovery/jobs",
+        json={
+            "repetitions": 1,
+            "mode": "real",
+            "guard_backend": "python",
+            "real_confirmation": "EXECUTE REAL COMPARISON",
+        },
+    )
+
+    assert response.status_code == 403
+    assert response.json()["detail"] == "real comparison is disabled on this server"
+
+
+def test_recovery_comparison_sse_replays_progress_and_terminal_job(tmp_path):
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        recovery_comparison_executor=_comparison_executor(tmp_path),
+        recovery_comparison_artifact_root=tmp_path / "comparison-runs",
+        recovery_comparison_job_id_factory=lambda: "comparison-api-sse",
+    )
+    test_client = TestClient(test_app)
+    created = test_client.post(
+        "/api/comparisons/recovery/jobs",
+        json={"repetitions": 1, "mode": "mock", "guard_backend": "python"},
+    ).json()
+    _wait_for_comparison_job(test_client, created["job_id"])
+
+    response = test_client.get(
+        f"/api/comparisons/recovery/jobs/{created['job_id']}/events",
+        headers={"Last-Event-ID": "1"},
+    )
+
+    assert response.status_code == 200
+    assert "event: comparison" in response.text
+    assert "event: job" in response.text
