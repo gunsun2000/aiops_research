@@ -380,6 +380,7 @@ def _request_from_dict(data: Mapping[str, Any]) -> ExperimentRuntimeRequest:
         protocol_profile=data["protocol_profile"],
         repetitions=data["repetitions"],
         controller=data.get("controller", "deterministic"),
+        model=data.get("model", ""),
     )
 
 

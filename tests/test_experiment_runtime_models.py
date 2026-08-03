@@ -71,10 +71,13 @@ def test_runtime_request_normalizes_explicit_autogen_controller():
         backend="python",
         protocol_profile="four-agent-autogen-v1",
         controller=" AutoGen ",
+        model=" fake-research-model ",
     )
 
     assert request.controller == "autogen"
+    assert request.model == "fake-research-model"
     assert request.to_dict()["controller"] == "autogen"
+    assert request.to_dict()["model"] == "fake-research-model"
 
 
 def test_runtime_request_rejects_unknown_controller():

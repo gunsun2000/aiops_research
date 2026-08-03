@@ -48,6 +48,7 @@ def test_job_request_round_trips_through_sqlite(tmp_path):
         "protocol_profile": "four-agent-role-veto-v1",
         "repetitions": 3,
         "controller": "deterministic",
+        "model": "",
     }
     assert loaded.status is ExperimentJobStatus.QUEUED
     assert loaded.current_stage == RuntimeStage.QUEUED.value
@@ -66,6 +67,7 @@ def test_autogen_controller_round_trips_through_sqlite(tmp_path):
         backend=ExecutionBackend.PYTHON,
         protocol_profile="four-agent-autogen-v1",
         controller="autogen",
+        model="fake-research-model",
     )
 
     store.create(request, experiment_id="exp-autogen")
@@ -73,6 +75,7 @@ def test_autogen_controller_round_trips_through_sqlite(tmp_path):
 
     assert loaded is not None
     assert loaded.request.controller == "autogen"
+    assert loaded.request.model == "fake-research-model"
     assert loaded.request.to_dict()["controller"] == "autogen"
 
 
@@ -87,6 +90,7 @@ def test_legacy_job_without_controller_loads_as_deterministic(tmp_path):
         ).fetchone()
         payload = json.loads(row[0])
         payload.pop("controller", None)
+        payload.pop("model", None)
         connection.execute(
             "UPDATE experiment_jobs SET request_json = ? WHERE experiment_id = ?",
             (json.dumps(payload), "exp-legacy"),
@@ -96,6 +100,7 @@ def test_legacy_job_without_controller_loads_as_deterministic(tmp_path):
 
     assert loaded is not None
     assert loaded.request.controller == "deterministic"
+    assert loaded.request.model == ""
 
 
 def test_job_transitions_and_events_are_persisted_in_sequence(tmp_path):

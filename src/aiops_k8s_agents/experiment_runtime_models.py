@@ -50,6 +50,7 @@ class ExperimentRuntimeRequest:
     protocol_profile: str
     repetitions: int = 1
     controller: str = "deterministic"
+    model: str = ""
 
     def __post_init__(self) -> None:
         for name in (
@@ -69,6 +70,9 @@ class ExperimentRuntimeRequest:
         if controller not in {"deterministic", "autogen"}:
             raise ValueError(f"invalid controller: {self.controller!r}")
         object.__setattr__(self, "controller", controller)
+        if not isinstance(self.model, str):
+            raise TypeError("model must be a string")
+        object.__setattr__(self, "model", self.model.strip())
 
         if isinstance(self.repetitions, bool) or not isinstance(self.repetitions, int):
             raise ValueError("repetitions must be an integer >= 1")
@@ -92,6 +96,7 @@ class ExperimentRuntimeRequest:
             "protocol_profile": self.protocol_profile,
             "repetitions": self.repetitions,
             "controller": self.controller,
+            "model": self.model,
         })
 
 
