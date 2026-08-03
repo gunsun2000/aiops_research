@@ -6,17 +6,29 @@ from types import SimpleNamespace
 import pytest
 
 from aiops_k8s_agents.experiment_runtime import ExperimentRuntime
+from aiops_k8s_agents.experiment_runtime import (
+    CoordinatorAdmission,
+    CoordinatorAdmissionValidator,
+)
 from aiops_k8s_agents.experiment_runtime_models import (
     CoordinatorRuntimeCapabilities,
     ExperimentRuntimeRequest,
     RuntimeStage,
 )
 from aiops_k8s_agents.executor import ExecutionMode
+from aiops_k8s_agents.agent_adapters import build_default_agent_adapter_registry
+from aiops_k8s_agents.evidence import FakeEvidenceProvider
+from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
+from aiops_k8s_agents.prometheus import PrometheusAdapter
 from aiops_k8s_agents.real_evidence import (
     MetricQueryDefinition,
+    PrometheusKubernetesEvidenceProvider,
     RuntimeConfiguration,
     load_runtime_configuration,
 )
+from aiops_k8s_agents.recovery_monitor import KubernetesSnapshotRecoveryMonitor
+from aiops_k8s_agents.research_protocol import load_research_protocol
+from aiops_k8s_agents.validator import CommandValidator
 from aiops_k8s_agents.research_event_store import InMemoryResearchEventStore
 from aiops_k8s_agents.experiment_session import InMemoryExperimentSessionStore
 
@@ -27,6 +39,16 @@ class RecordingEventSink:
 
     def emit(self, event):
         self.events.append(event)
+
+
+class TestAdmissionValidator:
+    def validate(self, coordinator, request, configuration):
+        del coordinator, request, configuration
+        return CoordinatorAdmission(
+            executor_timeout_seconds=15.0,
+            evidence_timeout_seconds=10.0,
+            stage_timeouts={},
+        )
 
 
 class FakeChaosAdapter:
@@ -102,7 +124,13 @@ def runtime_configuration():
         allowed_deployments=("paymentservice", "checkoutservice"),
         min_replicas=1,
         max_replicas=5,
-        timeouts={"experiment": 30},
+        timeouts={
+            "experiment": 30,
+            "preflight_seconds": 15,
+            "fault_ready_seconds": 60,
+            "recovery_seconds": 120,
+            "cleanup_seconds": 60,
+        },
         metric_queries={"cpu": MetricQueryDefinition("cpu", "up")},
         scenarios={"cpu-stress": "paymentservice-cpu-stress.yaml"},
     )
@@ -127,6 +155,7 @@ def mock_request():
 
 def runtime_with(coordinator=None, chaos=None, **kwargs):
     events = kwargs.pop("event_sink", RecordingEventSink())
+    admission_validator = kwargs.pop("admission_validator", TestAdmissionValidator())
     if coordinator is None:
         coordinator_factory = lambda request: FakeCoordinator(
             approved_report("exp-runtime-1"), mode=request.mode
@@ -139,6 +168,7 @@ def runtime_with(coordinator=None, chaos=None, **kwargs):
         coordinator_factory=coordinator_factory,
         event_sink=events,
         experiment_id_factory=lambda: "exp-runtime-1",
+        admission_validator=admission_validator,
         **kwargs,
     )
 
@@ -364,6 +394,7 @@ def test_runtime_deadline_interrupts_coordinator_and_persists_terminal_facts():
         session_store=sessions,
         experiment_id_factory=lambda: "exp-deadline",
         clock=lambda: next(clock_values),
+        admission_validator=TestAdmissionValidator(),
     )
     result = runtime.run(real_request())
 
@@ -429,6 +460,7 @@ def test_blocking_coordinator_is_cancelled_before_cleanup_and_cannot_recover():
         session_store=sessions,
         experiment_id_factory=lambda: "exp-gated-timeout",
         clock=deterministic_clock,
+        admission_validator=TestAdmissionValidator(),
     )
 
     result = runtime.run(real_request())
@@ -454,10 +486,103 @@ def test_unsupported_non_cooperative_coordinator_is_rejected_before_injection():
     result = runtime_with(
         coordinator=UnsupportedCoordinator(),
         chaos=chaos,
+        admission_validator=CoordinatorAdmissionValidator(),
     ).run(real_request())
 
     assert result.status == "blocked"
-    assert "capabilities" in result.report["error"]
+    assert "MutualSupervisionCoordinator" in result.report["error"]
+    assert chaos.calls == []
+
+
+def _known_production_coordinator(evidence_provider=None):
+    provider = evidence_provider or PrometheusKubernetesEvidenceProvider(
+        prometheus=PrometheusAdapter("http://prometheus"),
+        metric_queries={"cpu": "up"},
+        requested_metric="cpu",
+    )
+    return MutualSupervisionCoordinator(
+        validator=CommandValidator(
+            allowed_namespaces={"online-boutique"},
+            allowed_deployments={"paymentservice", "checkoutservice"},
+            min_replicas=1,
+            max_replicas=5,
+        ),
+        evidence_provider=provider,
+        recovery_monitor=KubernetesSnapshotRecoveryMonitor(
+            evidence_provider=provider,
+            max_attempts=1,
+            interval_seconds=0,
+        ),
+        mode=ExecutionMode.REAL,
+        backend="python",
+        protocol=load_research_protocol(
+            "config/protocol_profiles/four-agent-role-veto-v1.json"
+        ),
+        adapter_registry=build_default_agent_adapter_registry(),
+    )
+
+
+def test_known_production_coordinator_is_admitted_without_caller_capability_claims():
+    coordinator = _known_production_coordinator()
+    admission = CoordinatorAdmissionValidator().validate(
+        coordinator, real_request(), runtime_configuration()
+    )
+    assert admission.executor_timeout_seconds > 0
+    assert admission.evidence_timeout_seconds > 0
+
+
+def test_actual_coordinator_with_unsupported_blocking_evidence_is_rejected_before_injection():
+    class BlockingEvidenceProvider(PrometheusKubernetesEvidenceProvider):
+        pass
+
+    provider = BlockingEvidenceProvider(
+        prometheus=PrometheusAdapter("http://prometheus"),
+        metric_queries={"cpu": "up"},
+        requested_metric="cpu",
+    )
+    coordinator = _known_production_coordinator(provider)
+    chaos = FakeChaosAdapter()
+    runtime = ExperimentRuntime(
+        configuration=runtime_configuration(),
+        chaos=chaos,
+        coordinator_factory=lambda _request: coordinator,
+        event_sink=RecordingEventSink(),
+        experiment_id_factory=lambda: "exp-blocking-evidence",
+    )
+
+    result = runtime.run(real_request())
+
+    assert result.status == "blocked"
+    assert "evidence provider" in result.report["error"]
+    assert chaos.calls == []
+
+
+def test_self_claiming_non_cooperative_coordinator_is_rejected_before_injection():
+    class SelfClaimingCoordinator:
+        mode = ExecutionMode.REAL
+        runtime_capabilities = CoordinatorRuntimeCapabilities(
+            bounded=True,
+            cancellable=True,
+            finite_stage_io=True,
+            deadline_aware=True,
+        )
+
+        def run(self, namespace, deployment, metric, threshold):
+            raise AssertionError("self-claiming coordinator must not run")
+
+    chaos = FakeChaosAdapter()
+    runtime = ExperimentRuntime(
+        configuration=runtime_configuration(),
+        chaos=chaos,
+        coordinator_factory=lambda _request: SelfClaimingCoordinator(),
+        event_sink=RecordingEventSink(),
+        experiment_id_factory=lambda: "exp-self-claiming",
+    )
+
+    result = runtime.run(real_request())
+
+    assert result.status == "blocked"
+    assert "MutualSupervisionCoordinator" in result.report["error"]
     assert chaos.calls == []
 
 

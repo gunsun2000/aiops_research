@@ -32,10 +32,10 @@ class RuntimeStage(str, Enum):
 class CoordinatorRuntimeCapabilities:
     """Safety contract required before a coordinator may receive a fault."""
 
-    bounded: bool = True
-    cancellable: bool = True
-    finite_stage_io: bool = True
-    deadline_aware: bool = True
+    bounded: bool = False
+    cancellable: bool = False
+    finite_stage_io: bool = False
+    deadline_aware: bool = False
 
 
 @dataclass(frozen=True)

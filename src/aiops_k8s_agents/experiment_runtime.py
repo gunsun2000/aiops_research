@@ -3,17 +3,25 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from math import isfinite
 from time import monotonic
+import time
 from threading import Event
 from typing import Any, Callable, Mapping, Protocol
 from uuid import uuid4
 
 from aiops_k8s_agents.experiment_runtime_models import (
-    CoordinatorRuntimeCapabilities,
     ExperimentRuntimeRequest,
     ExperimentRuntimeResult,
     RuntimeEvent,
     RuntimeStage,
+)
+from aiops_k8s_agents.agent_adapters import (
+    AgentAdapterRegistry,
+    DeterministicApplicationAdapter,
+    DeterministicCostAdapter,
+    DeterministicHAAdapter,
+    DeterministicInfrastructureAdapter,
 )
 from aiops_k8s_agents.experiment_session import (
     ExperimentSessionStore,
@@ -23,6 +31,91 @@ from aiops_k8s_agents.executor import ExecutionMode
 from aiops_k8s_agents.mutual_supervision_models import to_serializable
 from aiops_k8s_agents.operation_lock import OperationLockError, TargetOperationLock
 from aiops_k8s_agents.real_evidence import RuntimeConfiguration
+
+
+@dataclass(frozen=True)
+class CoordinatorAdmission:
+    executor_timeout_seconds: float
+    evidence_timeout_seconds: float
+    stage_timeouts: Mapping[str, float]
+
+
+class CoordinatorAdmissionValidator:
+    """Admit only the exact registered deterministic production coordinator."""
+
+    def validate(
+        self,
+        coordinator: Any,
+        request: ExperimentRuntimeRequest,
+        configuration: RuntimeConfiguration,
+    ) -> CoordinatorAdmission:
+        from aiops_k8s_agents.kubernetes_status import collect_kubernetes_snapshot
+        from aiops_k8s_agents.mutual_supervision import MutualSupervisionCoordinator
+        from aiops_k8s_agents.prometheus import PrometheusAdapter
+        from aiops_k8s_agents.real_evidence import PrometheusKubernetesEvidenceProvider
+        from aiops_k8s_agents.recovery_monitor import KubernetesSnapshotRecoveryMonitor
+
+        if type(coordinator) is not MutualSupervisionCoordinator:
+            raise _BlockedRequest(
+                "coordinator must be the registered MutualSupervisionCoordinator"
+            )
+        for name in ("run", "_operation_context", "_check_runtime_control"):
+            if getattr(type(coordinator), name) is not getattr(MutualSupervisionCoordinator, name):
+                raise _BlockedRequest(f"coordinator stage is overridden: {name}")
+        if coordinator.mode != request.mode or coordinator.backend.value != request.backend.value:
+            raise _BlockedRequest("coordinator mode/backend does not match request")
+
+        evidence = coordinator.evidence_provider
+        if type(evidence) is not PrometheusKubernetesEvidenceProvider:
+            raise _BlockedRequest("evidence provider is not the registered production provider")
+        if type(evidence.prometheus) is not PrometheusAdapter or evidence.prometheus.fetcher is not None:
+            raise _BlockedRequest("Prometheus provider does not use the bounded production client")
+        if evidence.kubernetes_collector is not collect_kubernetes_snapshot:
+            raise _BlockedRequest("Kubernetes evidence collector is unsupported")
+
+        monitor = coordinator.recovery_monitor
+        if type(monitor) is not KubernetesSnapshotRecoveryMonitor:
+            raise _BlockedRequest("recovery monitor is unsupported")
+        if monitor.evidence_provider is not evidence or monitor.sleeper is not time.sleep:
+            raise _BlockedRequest("recovery monitor is not the bounded production monitor")
+        if monitor.max_attempts * monitor.interval_seconds > configuration.timeouts["recovery_seconds"]:
+            raise _BlockedRequest("recovery monitor exceeds the registered recovery deadline")
+
+        if type(coordinator.adapter_registry) is not AgentAdapterRegistry:
+            raise _BlockedRequest("agent registry is unsupported")
+        expected_implementations = {
+            "deterministic-ha",
+            "deterministic-application",
+            "deterministic-infrastructure",
+            "deterministic-cost",
+        }
+        if set(coordinator.adapter_registry.factories) != expected_implementations:
+            raise _BlockedRequest("agent registry is not the registered deterministic registry")
+        expected_adapters = (
+            DeterministicHAAdapter,
+            DeterministicApplicationAdapter,
+            DeterministicInfrastructureAdapter,
+            DeterministicCostAdapter,
+        )
+        if tuple(type(adapter) for adapter in coordinator.adapters.values()) != expected_adapters:
+            raise _BlockedRequest("agent stage is unsupported or overridden")
+        if coordinator.protocol.profile_id != "four-agent-role-veto-v1":
+            raise _BlockedRequest("protocol profile is not the registered deterministic profile")
+
+        stage_timeouts = {
+            key: _positive_timeout(configuration.timeouts, key)
+            for key in (
+                "preflight_seconds",
+                "fault_ready_seconds",
+                "recovery_seconds",
+                "cleanup_seconds",
+            )
+        }
+        return CoordinatorAdmission(
+            executor_timeout_seconds=15.0,
+            evidence_timeout_seconds=10.0,
+            stage_timeouts=stage_timeouts,
+        )
 
 
 class RuntimeEventSink(Protocol):
@@ -120,6 +213,7 @@ class ExperimentRuntime:
     lock_dir: str | None = None
     session_store: ExperimentSessionStore | None = None
     clock: Callable[[], float] = monotonic
+    admission_validator: Any | None = None
 
     def run(self, request: ExperimentRuntimeRequest) -> ExperimentRuntimeResult:
         experiment_id = self.experiment_id_factory()
@@ -140,9 +234,12 @@ class ExperimentRuntime:
         try:
             self._validate_request(request)
             coordinator = self.coordinator_factory(request)
-            self._validate_coordinator_capabilities(coordinator)
+            admission = (
+                self.admission_validator or CoordinatorAdmissionValidator()
+            ).validate(coordinator, request, self.configuration)
             self._validate_coordinator_mode(coordinator, request)
             coordinator.runtime_control = control
+            coordinator.admitted_stage_timeouts = admission.stage_timeouts
             if hasattr(coordinator, "operation_lock_owned_externally"):
                 coordinator.operation_lock_owned_externally = True
             control.check()
@@ -261,25 +358,6 @@ class ExperimentRuntime:
             raise _BlockedRequest(f"metric is not registered: {request.metric}")
 
     @staticmethod
-    def _validate_coordinator_capabilities(coordinator: Any) -> None:
-        capabilities = getattr(coordinator, "runtime_capabilities", None)
-        if not isinstance(capabilities, CoordinatorRuntimeCapabilities):
-            raise _BlockedRequest(
-                "coordinator capabilities are required before fault injection"
-            )
-        if not all(
-            (
-                capabilities.bounded,
-                capabilities.cancellable,
-                capabilities.finite_stage_io,
-                capabilities.deadline_aware,
-            )
-        ):
-            raise _BlockedRequest(
-                "coordinator capabilities do not provide bounded cancellation"
-            )
-
-    @staticmethod
     def _validate_coordinator_mode(coordinator: Any, request: ExperimentRuntimeRequest) -> None:
         coordinator_mode = getattr(coordinator, "mode", None)
         if coordinator_mode is None:
@@ -326,3 +404,12 @@ class _null_context:
 
 def _mapping(value: Any) -> dict[str, Any]:
     return dict(value) if isinstance(value, Mapping) else {"valid": False, "stderr": "invalid cleanup result"}
+
+
+def _positive_timeout(timeouts: Mapping[str, Any], key: str) -> float:
+    value = timeouts.get(key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise _BlockedRequest(f"registered timeout is missing or invalid: {key}")
+    if not isfinite(value) or value <= 0:
+        raise _BlockedRequest(f"registered timeout is missing or invalid: {key}")
+    return float(value)

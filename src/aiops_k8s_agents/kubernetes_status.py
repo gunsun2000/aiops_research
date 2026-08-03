@@ -14,7 +14,10 @@ def subprocess_json_runner(argv: list[str]) -> tuple[int, str, str]:
             check=False,
             capture_output=True,
             text=True,
+            timeout=15.0,
         )
+    except subprocess.TimeoutExpired as exc:
+        return 124, "", f"command timed out after 15.0s: {exc}"
     except FileNotFoundError as exc:
         return 127, "", str(exc)
     return completed.returncode, completed.stdout.strip(), completed.stderr.strip()

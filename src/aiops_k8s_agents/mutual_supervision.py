@@ -43,7 +43,6 @@ from aiops_k8s_agents.mutual_supervision_models import (
     new_trace_id,
     to_serializable,
 )
-from aiops_k8s_agents.experiment_runtime_models import CoordinatorRuntimeCapabilities
 from aiops_k8s_agents.mutual_supervision_policy import MutualSupervisionPolicy
 from aiops_k8s_agents.operation_lock import (
     OperationLockError,
@@ -149,7 +148,6 @@ class MutualSupervisionCoordinator:
     adapter_registry: AgentAdapterRegistry | None = None
     consensus_resolver: ConsensusResolver = field(default_factory=ConsensusResolver)
     adapters: dict[str, AgentAdapter] = field(init=False, repr=False)
-    runtime_capabilities = CoordinatorRuntimeCapabilities()
 
     def __post_init__(self) -> None:
         if isinstance(self.mode, str):
@@ -227,6 +225,7 @@ class MutualSupervisionCoordinator:
 
         self._check_runtime_control()
         evidence = self.evidence_provider.collect(namespace, deployment)
+        self._check_runtime_control()
         self._record("evidence", evidence.to_summary(), run_id)
         diagnosis_adapter = self._single_adapter_for("diagnose")
         try:
@@ -244,6 +243,7 @@ class MutualSupervisionCoordinator:
                 evidence_refs=_evidence_refs(evidence, metric),
                 expected_service=deployment,
             )
+            self._check_runtime_control()
         except Exception as exc:
             report = self._configuration_failure_report(
                 run_id=run_id,
@@ -255,6 +255,7 @@ class MutualSupervisionCoordinator:
             return self._finalize_report(report)
         initial_decisions = [normalized_decision]
         self._record("initial_decisions", initial_decisions[0], run_id)
+        self._check_runtime_control()
 
         if not initial_decisions[0].approved:
             missing_requested_metric = (
@@ -288,6 +289,7 @@ class MutualSupervisionCoordinator:
                 proposal_adapter,
                 proposal_adapter.propose(diagnosis, evidence),
             )
+            self._check_runtime_control()
         except Exception as exc:
             report = self._base_report(
                 run_id=run_id,
@@ -368,6 +370,7 @@ class MutualSupervisionCoordinator:
                     candidates=[candidate],
                     round_offset=len(all_rounds),
                 )
+                self._check_runtime_control()
             except NegotiationFailure as exc:
                 initial_decisions.extend(exc.decisions)
                 all_reviews.extend(exc.reviews)
@@ -436,6 +439,7 @@ class MutualSupervisionCoordinator:
             validation = self._validate_action(selected_action)
             last_validation = validation
             self._record("safety_validations", validation, run_id)
+            self._check_runtime_control()
             if not validation["valid"]:
                 report = self._base_report(
                     run_id=run_id,
