@@ -52,8 +52,19 @@
     "observing_recovery",
   ];
 
+  const PLATFORM_VIEWS = new Set([
+    "overview",
+    "experiment",
+    "agents",
+    "observability",
+    "analysis",
+    "aiopslab",
+    "history",
+  ]);
+
   const TERMINAL = new Set(["completed", "failed", "blocked", "cancelled", "interrupted"]);
   const state = {
+    activeView: "overview",
     scenarios: { ...REGISTERED_SCENARIOS },
     selectedScenario: "cpu-stress",
     selectedMode: "mock",
@@ -106,7 +117,11 @@
     "comparison-progress", "comparison-success-rate", "comparison-mean-recovery",
     "comparison-evidence", "comparison-success-chart", "comparison-recovery-chart",
     "comparison-event-count", "comparison-event-log", "comparison-artifacts",
-    "comparison-error",
+    "comparison-error", "global-experiment-id", "global-scenario",
+    "global-controller", "global-stage", "overview-job-status",
+    "overview-consensus-status", "overview-safety-status",
+    "overview-recovery-status", "observed-scenario", "observed-target",
+    "observed-metric", "observed-provider",
   ].map((id) => [id, document.getElementById(id)]));
 
   async function api(path, options) {
@@ -143,6 +158,58 @@
       const value = button.dataset.scenario || button.dataset.mode || button.dataset.agent || button.dataset.agentTab;
       button.setAttribute("aria-pressed", String(value === selected));
     });
+  }
+
+  function selectPlatformView(viewName, updateHash = true) {
+    const resolved = PLATFORM_VIEWS.has(viewName) ? viewName : "overview";
+    state.activeView = resolved;
+    document.querySelectorAll("[data-view]").forEach((button) => {
+      button.setAttribute("aria-pressed", String(button.dataset.view === resolved));
+    });
+    document.querySelectorAll("[data-view-panel]").forEach((panel) => {
+      const active = panel.dataset.viewPanel === resolved;
+      panel.hidden = !active;
+      panel.classList.toggle("is-active", active);
+    });
+    if (updateHash && window.location.hash !== `#${resolved}`) {
+      window.location.hash = resolved;
+    }
+  }
+
+  function bindPlatformNavigation() {
+    document.querySelectorAll("[data-view]").forEach((button) => {
+      button.addEventListener("click", () => selectPlatformView(button.dataset.view));
+    });
+    document.querySelectorAll("[data-view-link]").forEach((button) => {
+      button.addEventListener("click", () => selectPlatformView(button.dataset.viewLink));
+    });
+    window.addEventListener("hashchange", () => {
+      selectPlatformView(window.location.hash.slice(1), false);
+    });
+    selectPlatformView(window.location.hash.slice(1) || "overview", false);
+  }
+
+  function renderGlobalContext(job) {
+    const request = job && job.request ? job.request : {};
+    const scenarioId = request.scenario_id || state.selectedScenario;
+    const scenarioItem = state.scenarios[scenarioId] || REGISTERED_SCENARIOS[scenarioId];
+    const controller = request.controller || elements["controller-select"].value || "deterministic";
+    const stage = job && job.current_stage ? job.current_stage : "queued";
+    const experimentId = job && job.experiment_id ? job.experiment_id : "새 실험";
+
+    elements["global-experiment-id"].textContent = experimentId;
+    elements["global-experiment-id"].title = experimentId;
+    elements["global-scenario"].textContent = scenarioItem ? scenarioItem.label : scenarioId;
+    elements["global-controller"].textContent = controller === "autogen" ? "AutoGen GroupChat" : "Deterministic";
+    elements["global-stage"].textContent = stage;
+    elements["overview-job-status"].textContent = job ? jobStatusLabel(job.status) : "대기";
+    elements["observed-scenario"].textContent = scenarioItem ? scenarioItem.label : scenarioId;
+    elements["observed-target"].textContent = scenarioItem
+      ? `${scenarioItem.namespace}/${scenarioItem.deployment}`
+      : "—";
+    elements["observed-metric"].textContent = scenarioItem
+      ? `${scenarioItem.metric} · threshold ${scenarioItem.threshold}`
+      : "—";
   }
 
   function renderScenarioButtons() {
@@ -215,6 +282,7 @@
     elements["target-metric"].textContent = `${item.metric} · threshold ${item.threshold}`;
     elements["evidence-scenario"].textContent = item.label;
     elements["evidence-target"].textContent = `${item.namespace}/${item.deployment}`;
+    renderGlobalContext(null);
   }
 
   function resetEvidenceView() {
@@ -320,6 +388,7 @@
     elements["experiment-id"].textContent = job.experiment_id;
     elements["job-status"].textContent = jobStatusLabel(job.status);
     elements["current-stage"].textContent = job.current_stage;
+    renderGlobalContext(job);
     elements["run-experiment"].disabled = state.running;
     elements["cancel-experiment"].disabled = !state.running;
     const report = runtimeReport();
@@ -337,21 +406,25 @@
     const metricEntries = Object.entries(metrics);
     elements["evidence-metric"].textContent = metricEntries.length ? metricEntries.map(([key, value]) => `${key} ${formatValue(value)}`).join(" · ") : "수집 결과 없음";
     elements["evidence-source"].textContent = evidence.source || "unknown";
+    elements["observed-provider"].textContent = evidence.source || "unknown";
     const reviews = Array.isArray(report.peer_reviews) ? report.peer_reviews : [];
     elements["review-summary"].textContent = `${reviews.length}개 역할별 검토`;
     const negotiation = report.negotiation || {};
     elements["consensus-summary"].textContent = negotiation.consensus || "미합의";
     elements["consensus-status"].textContent = negotiation.consensus === "approved" ? "합의 완료" : "합의 확인 필요";
+    elements["overview-consensus-status"].textContent = negotiation.consensus || "대기";
     elements["action-summary"].textContent = actionLabel(report.selected_action);
     const safety = report.safety_validation || {};
     elements["allowlist-result"].textContent = safety.valid === true ? "통과" : "차단/대기";
     elements["validator-result"].textContent = safety.valid === true ? "VALID" : "대기";
     elements["safety-status"].textContent = safety.valid === true ? "안전 검증 통과" : "검증 미완료";
+    elements["overview-safety-status"].textContent = safety.valid === true ? "VALID" : "검증 대기";
     const cleanup = report.cleanup || {};
     elements["cleanup-result"].textContent = cleanup.valid === false ? "실패 · 검토 필요" : "완료/불필요";
     const recovery = report.recovery_monitoring || {};
     elements["result-status"].textContent = report.final_status || "완료";
     elements["result-recovery"].textContent = recovery.recovery_success === true ? "성공" : (recovery.recovery_success === false ? "실패" : "—");
+    elements["overview-recovery-status"].textContent = elements["result-recovery"].textContent;
     elements["result-mttr"].textContent = recovery.recovery_seconds == null ? "—" : `${recovery.recovery_seconds}s`;
     const contributions = Object.values(report.agent_contributions || {});
     const reward = contributions.reduce((sum, item) => sum + Number(item.reward || 0), 0);
@@ -393,6 +466,7 @@
     elements["event-log"].append(item);
     updateStage(event.stage, event.status === "failed");
     elements["current-stage"].textContent = event.stage;
+    elements["global-stage"].textContent = event.stage;
   }
 
   function connectEvents() {
@@ -912,6 +986,7 @@
   }
 
   function bindControls() {
+    bindPlatformNavigation();
     elements["mode-control"].querySelectorAll("button[data-mode]").forEach((button) => button.addEventListener("click", () => selectMode(button.dataset.mode)));
     elements["controller-select"].addEventListener("change", (event) => selectController(event.target.value));
     elements["agent-grid"].querySelectorAll("button[data-agent]").forEach((button) => button.addEventListener("click", () => selectAgent(button.dataset.agent)));

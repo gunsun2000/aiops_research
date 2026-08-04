@@ -20,8 +20,56 @@ def test_console_has_one_accessible_research_workspace():
     assert 'id="decision-inspector"' in source
     assert 'id="research-results"' in source
     assert "4-Agent AIOps 연구 운영 콘솔" in source
-    assert "styles.css?v=13" in source
-    assert "app.js?v=13" in source
+    assert "styles.css?v=14" in source
+    assert "app.js?v=14" in source
+
+
+def test_console_has_seven_focused_views_with_shared_experiment_context():
+    source = _source(INDEX_HTML)
+
+    assert 'id="platform-nav"' in source
+    for view_name in (
+        "overview",
+        "experiment",
+        "agents",
+        "observability",
+        "analysis",
+        "aiopslab",
+        "history",
+    ):
+        assert f'data-view="{view_name}"' in source
+        assert f'data-view-panel="{view_name}"' in source
+
+    for context_id in (
+        "global-experiment-id",
+        "global-scenario",
+        "global-controller",
+        "global-stage",
+    ):
+        assert f'id="{context_id}"' in source
+
+    assert source.count('id="recovery-comparison-panel"') == 1
+    assert source.count('id="aiopslab-benchmark-panel"') == 1
+    assert 'styles.css?v=14' in source
+    assert 'app.js?v=14' in source
+
+
+def test_console_navigation_preserves_jobs_and_renders_shared_context():
+    source = _source(APP_JS)
+
+    assert "function selectPlatformView(viewName" in source
+    assert 'document.querySelectorAll("[data-view]")' in source
+    assert 'document.querySelectorAll("[data-view-panel]")' in source
+    assert "window.location.hash" in source
+    assert 'window.addEventListener("hashchange"' in source
+    assert "function renderGlobalContext(job)" in source
+    for context_id in (
+        "global-experiment-id",
+        "global-scenario",
+        "global-controller",
+        "global-stage",
+    ):
+        assert f'"{context_id}"' in source
 
 
 def test_console_offers_all_registered_fault_scenarios_and_safe_modes():
@@ -90,14 +138,21 @@ def test_console_exposes_ready_gated_autogen_controller_and_model_provenance():
     assert 'report.autogen_transcript' in script
 
 
-def test_console_styles_use_three_area_desktop_layout_and_mobile_reflow():
+def test_console_styles_use_multi_view_desktop_shell_and_mobile_reflow():
     source = _source(STYLES_CSS)
 
-    assert "grid-template-columns: 220px minmax(440px, 1fr) 300px" in source
+    assert ".platform-shell" in source
+    assert ".platform-sidebar" in source
+    assert "grid-template-columns: 232px minmax(0, 1fr)" in source
+    assert ".global-context" in source
+    assert '.view-panel[hidden]' in source
+    assert ".view-panel.is-active" in source
+    assert ".experiment-workspace" in source
     assert ".experiment-controls" in source
     assert ".live-workflow" in source
     assert ".decision-inspector" in source
     assert "@media (max-width: 760px)" in source
+    assert "position: sticky" in source
     assert "overflow-wrap: anywhere" in source
     assert "letter-spacing: 0" in source
 
@@ -106,7 +161,7 @@ def test_console_adds_compact_separate_aiopslab_benchmark_job_panel():
     html = _source(INDEX_HTML)
     script = _source(APP_JS)
 
-    assert '<details class="benchmark-panel" id="aiopslab-benchmark-panel">' in html
+    assert 'id="aiopslab-benchmark-panel"' in html
     assert 'id="aiopslab-benchmark-select"' in html
     assert 'id="aiopslab-repetitions"' in html
     assert 'id="aiopslab-run"' in html
