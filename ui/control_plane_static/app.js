@@ -61,6 +61,15 @@
     "aiopslab",
     "history",
   ]);
+  const PRIMARY_VIEW_BY_PANEL = {
+    overview: "overview",
+    experiment: "experiment",
+    agents: "experiment",
+    observability: "experiment",
+    analysis: "analysis",
+    history: "analysis",
+    aiopslab: "aiopslab",
+  };
 
   const TERMINAL = new Set(["completed", "failed", "blocked", "cancelled", "interrupted"]);
   const state = {
@@ -93,8 +102,9 @@
   const elements = Object.fromEntries([
     "connection-dot", "connection-label", "connection-summary", "experiment-id",
     "job-status", "current-stage", "consensus-status", "safety-status",
-    "scenario-list", "mode-control", "controller-select", "profile-select",
-    "controller-model", "model-input", "controller-readiness",
+    "scenario-list", "mode-control", "controller-select", "controller-options",
+    "autogen-controller-state", "profile-select", "controller-model",
+    "model-input", "controller-readiness",
     "repetitions-select", "target-deployment", "target-metric", "mode-boundary",
     "run-experiment", "cancel-experiment", "control-error", "elapsed-time",
     "stage-timeline", "evidence-scenario", "evidence-target", "evidence-metric",
@@ -155,7 +165,7 @@
 
   function setPressed(container, selector, selected) {
     container.querySelectorAll(selector).forEach((button) => {
-      const value = button.dataset.scenario || button.dataset.mode || button.dataset.agent || button.dataset.agentTab;
+      const value = button.dataset.scenario || button.dataset.mode || button.dataset.controller || button.dataset.agent || button.dataset.agentTab;
       button.setAttribute("aria-pressed", String(value === selected));
     });
   }
@@ -163,8 +173,9 @@
   function selectPlatformView(viewName, updateHash = true) {
     const resolved = PLATFORM_VIEWS.has(viewName) ? viewName : "overview";
     state.activeView = resolved;
+    const primaryView = PRIMARY_VIEW_BY_PANEL[resolved] || "overview";
     document.querySelectorAll("[data-view]").forEach((button) => {
-      button.setAttribute("aria-pressed", String(button.dataset.view === resolved));
+      button.setAttribute("aria-pressed", String(button.dataset.view === primaryView));
     });
     document.querySelectorAll("[data-view-panel]").forEach((panel) => {
       const active = panel.dataset.viewPanel === resolved;
@@ -251,13 +262,11 @@
 
   function selectController(controller) {
     if (state.running) return;
+    const resolved = controller === "autogen" ? "autogen" : "deterministic";
     const autogen = state.connections.autogen || { ready: false, reason: "AutoGen 연결 정보 없음" };
-    if (controller === "autogen" && !autogen.ready) {
-      elements["controller-select"].value = "deterministic";
-      elements["control-error"].textContent = autogen.reason || "AutoGen runtime is not ready";
-      return;
-    }
-    const isAutogen = controller === "autogen";
+    const isAutogen = resolved === "autogen";
+    elements["controller-select"].value = resolved;
+    setPressed(elements["controller-options"], "button[data-controller]", resolved);
     elements["controller-model"].hidden = !isAutogen;
     elements["profile-select"].disabled = isAutogen;
     elements["profile-select"].value = isAutogen
@@ -266,7 +275,10 @@
     elements["controller-readiness"].textContent = isAutogen
       ? (autogen.reason || "AutoGen runtime 준비")
       : "Deterministic 4-Agent runtime";
-    elements["control-error"].textContent = "";
+    elements["run-experiment"].disabled = state.running || (isAutogen && !autogen.ready);
+    elements["control-error"].textContent = isAutogen && !autogen.ready
+      ? (autogen.reason || "AutoGen runtime is not ready")
+      : "";
   }
 
   function selectAgent(agent) {
@@ -380,6 +392,7 @@
     state.running = !TERMINAL.has(job.status);
     if (job.request) {
       elements["controller-select"].value = job.request.controller || "deterministic";
+      setPressed(elements["controller-options"], "button[data-controller]", elements["controller-select"].value);
       elements["model-input"].value = job.request.model || elements["model-input"].value;
       elements["profile-select"].value = job.request.protocol_profile || "four-agent-role-veto-v1";
       elements["controller-model"].hidden = job.request.controller !== "autogen";
@@ -389,7 +402,9 @@
     elements["job-status"].textContent = jobStatusLabel(job.status);
     elements["current-stage"].textContent = job.current_stage;
     renderGlobalContext(job);
-    elements["run-experiment"].disabled = state.running;
+    const unavailableAutogen = elements["controller-select"].value === "autogen"
+      && !(state.connections.autogen && state.connections.autogen.ready);
+    elements["run-experiment"].disabled = state.running || unavailableAutogen;
     elements["cancel-experiment"].disabled = !state.running;
     const report = runtimeReport();
     renderAgentCards(report);
@@ -953,15 +968,16 @@
       elements["connection-summary"].textContent = `Prometheus · Chaos Mesh · Kubernetes ${ready === required.length ? "준비" : "일부 미연결"}`;
       elements["connection-dot"].classList.toggle("ready", ready === required.length);
       const autogen = connections.autogen || { ready: false, reason: "AutoGen 연결 정보 없음" };
-      const autogenOption = elements["controller-select"].querySelector('option[value="autogen"]');
-      autogenOption.disabled = !autogen.ready;
-      autogenOption.title = autogen.reason || "";
+      elements["autogen-controller-state"].textContent = autogen.ready ? "Ready" : "설정 필요";
+      elements["autogen-controller-state"].classList.toggle("is-ready", Boolean(autogen.ready));
       elements["autogen-summary"].textContent = autogen.ready
         ? "AutoGen GroupChat 준비"
         : `AutoGen 미준비 · ${autogen.reason || "연결 필요"}`;
       elements["controller-readiness"].textContent = autogen.reason || "AutoGen 연결 상태 확인 완료";
+      selectController(elements["controller-select"].value);
     } catch (_error) {
       elements["connection-label"].textContent = "연결 정보 없음";
+      elements["autogen-controller-state"].textContent = "확인 실패";
     }
   }
 
@@ -989,6 +1005,7 @@
     bindPlatformNavigation();
     elements["mode-control"].querySelectorAll("button[data-mode]").forEach((button) => button.addEventListener("click", () => selectMode(button.dataset.mode)));
     elements["controller-select"].addEventListener("change", (event) => selectController(event.target.value));
+    elements["controller-options"].querySelectorAll("button[data-controller]").forEach((button) => button.addEventListener("click", () => selectController(button.dataset.controller)));
     elements["agent-grid"].querySelectorAll("button[data-agent]").forEach((button) => button.addEventListener("click", () => selectAgent(button.dataset.agent)));
     elements["agent-tabs"].querySelectorAll("button[data-agent-tab]").forEach((button) => button.addEventListener("click", () => selectAgent(button.dataset.agentTab)));
     elements["run-experiment"].addEventListener("click", runExperiment);

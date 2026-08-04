@@ -20,24 +20,25 @@ def test_console_has_one_accessible_research_workspace():
     assert 'id="decision-inspector"' in source
     assert 'id="research-results"' in source
     assert "4-Agent AIOps 연구 운영 콘솔" in source
-    assert "styles.css?v=14" in source
-    assert "app.js?v=14" in source
+    assert "styles.css?v=15" in source
+    assert "app.js?v=15" in source
 
 
-def test_console_has_seven_focused_views_with_shared_experiment_context():
+def test_console_has_four_primary_views_and_preserves_research_subviews():
     source = _source(INDEX_HTML)
 
     assert 'id="platform-nav"' in source
-    for view_name in (
-        "overview",
-        "experiment",
-        "agents",
-        "observability",
-        "analysis",
-        "aiopslab",
-        "history",
-    ):
+    for view_name in ("overview", "experiment", "analysis", "aiopslab"):
         assert f'data-view="{view_name}"' in source
+
+    for subview_name in ("agents", "observability", "history"):
+        assert f'data-view="{subview_name}"' not in source
+        assert f'data-view-link="{subview_name}"' in source
+
+    for view_name in (
+        "overview", "experiment", "agents", "observability",
+        "analysis", "aiopslab", "history",
+    ):
         assert f'data-view-panel="{view_name}"' in source
 
     for context_id in (
@@ -50,8 +51,8 @@ def test_console_has_seven_focused_views_with_shared_experiment_context():
 
     assert source.count('id="recovery-comparison-panel"') == 1
     assert source.count('id="aiopslab-benchmark-panel"') == 1
-    assert 'styles.css?v=14' in source
-    assert 'app.js?v=14' in source
+    assert 'styles.css?v=15' in source
+    assert 'app.js?v=15' in source
 
 
 def test_console_navigation_preserves_jobs_and_renders_shared_context():
@@ -60,6 +61,7 @@ def test_console_navigation_preserves_jobs_and_renders_shared_context():
     assert "function selectPlatformView(viewName" in source
     assert 'document.querySelectorAll("[data-view]")' in source
     assert 'document.querySelectorAll("[data-view-panel]")' in source
+    assert "PRIMARY_VIEW_BY_PANEL" in source
     assert "window.location.hash" in source
     assert 'window.addEventListener("hashchange"' in source
     assert "function renderGlobalContext(job)" in source
@@ -127,7 +129,15 @@ def test_console_exposes_ready_gated_autogen_controller_and_model_provenance():
     html = _source(INDEX_HTML)
     script = _source(APP_JS)
 
+    assert '<select id="controller-select" hidden aria-hidden="true">' in html
     assert '<option value="autogen">AutoGen GroupChat</option>' in html
+    assert 'id="controller-options"' in html
+    assert 'data-controller="deterministic"' in html
+    assert 'data-controller="autogen"' in html
+    assert 'id="autogen-controller-state"' in html
+    assert "RoundRobin GroupChat" in html
+    assert "구조화 응답" in html
+    assert "안전 검증" in html
     assert 'id="model-input"' in html
     assert 'id="controller-provenance"' in html
     assert 'id="autogen-transcript"' in html
@@ -135,6 +145,9 @@ def test_console_exposes_ready_gated_autogen_controller_and_model_provenance():
     assert 'model: elements["model-input"].value.trim()' in script
     assert 'protocol_profile: controllerProfile()' in script
     assert 'connections.autogen' in script
+    assert 'button[data-controller]' in script
+    assert 'elements["autogen-controller-state"]' in script
+    assert 'autogenOption.disabled' not in script
     assert 'report.autogen_transcript' in script
 
 
@@ -151,6 +164,9 @@ def test_console_styles_use_multi_view_desktop_shell_and_mobile_reflow():
     assert ".experiment-controls" in source
     assert ".live-workflow" in source
     assert ".decision-inspector" in source
+    assert ".section-tabs" in source
+    assert ".controller-options" in source
+    assert ".controller-option" in source
     assert "@media (max-width: 760px)" in source
     assert "position: sticky" in source
     assert "overflow-wrap: anywhere" in source

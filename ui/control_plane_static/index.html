@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="안전 제어형 4-Agent AIOps 연구 운영 콘솔" />
     <title>4-Agent AIOps 연구 운영 콘솔</title>
-    <link rel="stylesheet" href="/static/styles.css?v=14" />
-    <script defer src="/static/app.js?v=14"></script>
+    <link rel="stylesheet" href="/static/styles.css?v=15" />
+    <script defer src="/static/app.js?v=15"></script>
   </head>
   <body>
     <noscript><main class="noscript">이 연구 콘솔을 사용하려면 JavaScript가 필요합니다.</main></noscript>
@@ -22,13 +22,10 @@
         </div>
 
         <nav class="platform-nav" id="platform-nav" aria-label="연구 콘솔 화면">
-          <button type="button" data-view="overview" aria-pressed="true"><span>01</span>운영 개요</button>
+          <button type="button" data-view="overview" aria-pressed="true"><span>01</span>연구 현황</button>
           <button type="button" data-view="experiment" aria-pressed="false"><span>02</span>복구 실험</button>
-          <button type="button" data-view="agents" aria-pressed="false"><span>03</span>Agent 상호감시</button>
-          <button type="button" data-view="observability" aria-pressed="false"><span>04</span>관측 데이터</button>
-          <button type="button" data-view="analysis" aria-pressed="false"><span>05</span>비교 분석</button>
-          <button type="button" data-view="aiopslab" aria-pressed="false"><span>06</span>AIOpsLab</button>
-          <button type="button" data-view="history" aria-pressed="false"><span>07</span>실험 기록</button>
+          <button type="button" data-view="analysis" aria-pressed="false"><span>03</span>결과 분석</button>
+          <button type="button" data-view="aiopslab" aria-pressed="false"><span>04</span>AIOpsLab</button>
         </nav>
 
         <div class="sidebar-runtime" aria-live="polite">
@@ -115,6 +112,11 @@
               <div><p class="eyebrow">RECOVERY EXPERIMENT</p><h2 id="experiment-title">복구 실험</h2></div>
               <p>한 번의 실행에서 장애 주입부터 복구 평가까지 추적합니다.</p>
             </div>
+            <nav class="section-tabs" aria-label="복구 실험 세부 화면">
+              <button type="button" data-view-link="experiment" aria-pressed="true">실행 흐름</button>
+              <button type="button" data-view-link="agents" aria-pressed="false">Agent 판단</button>
+              <button type="button" data-view-link="observability" aria-pressed="false">Evidence</button>
+            </nav>
 
             <div class="experiment-workspace">
               <aside class="experiment-controls surface" id="experiment-controls" aria-labelledby="conditions-title">
@@ -136,14 +138,32 @@
                     <button type="button" data-mode="real" aria-pressed="false">Real</button>
                   </div>
                 </fieldset>
-                <label class="field-label" for="controller-select">Agent Controller</label>
-                <select id="controller-select">
+                <span class="field-label" id="controller-label">Agent Controller</span>
+                <select id="controller-select" hidden aria-hidden="true">
                   <option value="deterministic">Deterministic 4-Agent</option>
                   <option value="autogen">AutoGen GroupChat</option>
                 </select>
+                <div class="controller-options" id="controller-options" role="radiogroup" aria-labelledby="controller-label">
+                  <button type="button" class="controller-option" data-controller="deterministic" aria-pressed="true">
+                    <span class="controller-option-head"><b>규칙 기반</b><em class="controller-state is-ready">Ready</em></span>
+                    <strong>Deterministic 4-Agent</strong>
+                    <small>재현 가능한 정책 기준선</small>
+                  </button>
+                  <button type="button" class="controller-option" data-controller="autogen" aria-pressed="false">
+                    <span class="controller-option-head"><b>LLM 기반</b><em class="controller-state" id="autogen-controller-state">확인 중</em></span>
+                    <strong>AutoGen GroupChat</strong>
+                    <small>4-Agent 구조화 대화와 상호검토</small>
+                  </button>
+                </div>
                 <div class="controller-model" id="controller-model" hidden>
                   <label class="field-label" for="model-input">AutoGen model</label>
                   <input id="model-input" type="text" value="gpt-5.5" autocomplete="off" />
+                  <ol class="controller-flow" aria-label="AutoGen 실행 경로">
+                    <li>RoundRobin GroupChat</li>
+                    <li>구조화 응답</li>
+                    <li>안전 검증</li>
+                    <li>Transcript 저장</li>
+                  </ol>
                   <p id="controller-readiness">AutoGen 연결 상태 확인 중</p>
                 </div>
                 <label class="field-label" for="profile-select">연구 프로파일</label>
@@ -211,6 +231,11 @@
               <div><p class="eyebrow">MUTUAL SUPERVISION</p><h2 id="agents-title">Agent 상호감시</h2></div>
               <p>4개 Agent의 역할, 제안, 반박, 승인과 안전 근거를 분리해 검토합니다.</p>
             </div>
+            <nav class="section-tabs" aria-label="복구 실험 세부 화면">
+              <button type="button" data-view-link="experiment" aria-pressed="false">실행 흐름</button>
+              <button type="button" data-view-link="agents" aria-pressed="true">Agent 판단</button>
+              <button type="button" data-view-link="observability" aria-pressed="false">Evidence</button>
+            </nav>
             <div class="agent-role-strip" aria-label="4-Agent 역할">
               <article><b>HA</b><strong>가용성 진단</strong><span>장애 원인과 복구 필요성</span></article>
               <article><b>APP</b><strong>복구 Action</strong><span>Observe · Restart · Scale</span></article>
@@ -260,6 +285,11 @@
               <div><p class="eyebrow">EVIDENCE & TELEMETRY</p><h2 id="observability-title">관측 데이터</h2></div>
               <p>Agent 판단에 사용된 Metric, Kubernetes 상태와 Evidence 경계를 확인합니다.</p>
             </div>
+            <nav class="section-tabs" aria-label="복구 실험 세부 화면">
+              <button type="button" data-view-link="experiment" aria-pressed="false">실행 흐름</button>
+              <button type="button" data-view-link="agents" aria-pressed="false">Agent 판단</button>
+              <button type="button" data-view-link="observability" aria-pressed="true">Evidence</button>
+            </nav>
             <div class="observability-grid">
               <section class="surface evidence-overview">
                 <div class="section-heading"><div><p class="eyebrow">CURRENT EVIDENCE</p><h2>현재 세션 Evidence</h2></div></div>
@@ -293,6 +323,10 @@
               <div><p class="eyebrow">QUANTITATIVE ANALYSIS</p><h2 id="analysis-title">비교 분석</h2></div>
               <p>장애와 Action 조합을 반복 실행하고 성공률, 복구 시간, Reward를 비교합니다.</p>
             </div>
+            <nav class="section-tabs" aria-label="결과 분석 세부 화면">
+              <button type="button" data-view-link="analysis" aria-pressed="true">정량 비교</button>
+              <button type="button" data-view-link="history" aria-pressed="false">실험 기록</button>
+            </nav>
             <section class="research-results surface" id="research-results" aria-labelledby="results-title">
               <div class="section-heading"><div><p class="eyebrow">CURRENT RESULT</p><h2 id="results-title">현재 복구 결과</h2></div><span id="result-status">실행 대기</span></div>
               <div class="result-grid">
@@ -363,6 +397,10 @@
               <div><p class="eyebrow">REPRODUCIBILITY</p><h2 id="history-title">실험 기록</h2></div>
               <p>실행 로그, 통계 파일과 공식 연구 문서를 재현 가능한 근거로 관리합니다.</p>
             </div>
+            <nav class="section-tabs" aria-label="결과 분석 세부 화면">
+              <button type="button" data-view-link="analysis" aria-pressed="false">정량 비교</button>
+              <button type="button" data-view-link="history" aria-pressed="true">실험 기록</button>
+            </nav>
             <div class="history-grid">
               <section class="surface">
                 <div class="section-heading"><div><p class="eyebrow">EXPERIMENT JOBS</p><h2>서버 실행 기록</h2></div></div>
