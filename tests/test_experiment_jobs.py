@@ -49,6 +49,9 @@ def test_job_request_round_trips_through_sqlite(tmp_path):
         "repetitions": 3,
         "controller": "deterministic",
         "model": "",
+        "incident_source": "chaos_mesh",
+        "benchmark_id": "",
+        "detection_context": {},
     }
     assert loaded.status is ExperimentJobStatus.QUEUED
     assert loaded.current_stage == RuntimeStage.QUEUED.value
@@ -77,6 +80,31 @@ def test_autogen_controller_round_trips_through_sqlite(tmp_path):
     assert loaded.request.controller == "autogen"
     assert loaded.request.model == "fake-research-model"
     assert loaded.request.to_dict()["controller"] == "autogen"
+
+
+def test_aiopslab_request_round_trips_as_one_experiment_job(tmp_path):
+    store = SQLiteExperimentJobStore(tmp_path / "jobs.sqlite3")
+    request = ExperimentRuntimeRequest(
+        scenario_id="aiopslab-hotel-reservation",
+        namespace="test-hotel-reservation",
+        deployment="geo",
+        metric="availability",
+        threshold=1.0,
+        mode="mock",
+        backend="python",
+        protocol_profile="four-agent-role-veto-v1",
+        incident_source="aiopslab",
+        benchmark_id="hotel-reservation-detection-v1",
+        detection_context={"accuracy": "Synthetic"},
+    )
+
+    store.create(request, experiment_id="exp-aiopslab-unified")
+    loaded = store.get("exp-aiopslab-unified")
+
+    assert loaded is not None
+    assert loaded.request.incident_source == "aiopslab"
+    assert loaded.request.benchmark_id == "hotel-reservation-detection-v1"
+    assert loaded.request.detection_context["accuracy"] == "Synthetic"
 
 
 def test_legacy_job_without_controller_loads_as_deterministic(tmp_path):

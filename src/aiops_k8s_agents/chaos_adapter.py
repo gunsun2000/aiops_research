@@ -77,6 +77,7 @@ class ChaosMeshAdapter:
         self._scenarios = {
             self._scenario_id(key): self._registered_scenario(key, value)
             for key, value in scenarios.items()
+            if getattr(value, "incident_source", "chaos_mesh") == "chaos_mesh"
         }
 
     def preflight(self) -> ChaosPreflight:

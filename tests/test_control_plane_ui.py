@@ -21,16 +21,17 @@ def test_console_has_one_accessible_research_workspace():
     assert 'id="research-results"' in source
     assert "4-Agent AIOps 연구 운영 콘솔" in source
     assert "새 복구 실험" not in source
-    assert "styles.css?v=15" in source
-    assert "app.js?v=15" in source
+    assert "styles.css?v=19" in source
+    assert "app.js?v=19" in source
 
 
-def test_console_has_four_primary_views_and_preserves_research_subviews():
+def test_console_has_three_primary_views_and_preserves_research_subviews():
     source = _source(INDEX_HTML)
 
     assert 'id="platform-nav"' in source
-    for view_name in ("overview", "experiment", "analysis", "aiopslab"):
+    for view_name in ("overview", "experiment", "analysis"):
         assert f'data-view="{view_name}"' in source
+    assert 'data-view="aiopslab"' not in source
 
     for subview_name in ("agents", "observability", "history"):
         assert f'data-view="{subview_name}"' not in source
@@ -38,9 +39,10 @@ def test_console_has_four_primary_views_and_preserves_research_subviews():
 
     for view_name in (
         "overview", "experiment", "agents", "observability",
-        "analysis", "aiopslab", "history",
+        "analysis", "history",
     ):
         assert f'data-view-panel="{view_name}"' in source
+    assert 'data-view-panel="aiopslab"' not in source
 
     for context_id in (
         "global-experiment-id",
@@ -51,9 +53,8 @@ def test_console_has_four_primary_views_and_preserves_research_subviews():
         assert f'id="{context_id}"' in source
 
     assert source.count('id="recovery-comparison-panel"') == 1
-    assert source.count('id="aiopslab-benchmark-panel"') == 1
-    assert 'styles.css?v=15' in source
-    assert 'app.js?v=15' in source
+    assert 'styles.css?v=19' in source
+    assert 'app.js?v=19' in source
 
 
 def test_console_navigation_preserves_jobs_and_renders_shared_context():
@@ -83,6 +84,7 @@ def test_console_offers_all_registered_fault_scenarios_and_safe_modes():
         "cpu-stress",
         "memory-stress",
         "network-delay",
+        "aiopslab-hotel-reservation",
     ):
         assert scenario_id in source
     for mode in ("mock", "dry-run", "real"):
@@ -123,7 +125,7 @@ def test_console_separates_mock_dry_run_and_real_evidence_boundaries():
     assert "실제 Kubernetes" in source
     assert "CONFIRM_REAL_RUN" in source
     assert "AutoGen GroupChat은 다음 통합 단계" not in source
-    assert "AIOpsLab Detection Benchmark" in source
+    assert "AIOpsLab + Prometheus + Kubernetes" in source
 
 
 def test_console_exposes_ready_gated_autogen_controller_and_model_provenance():
@@ -148,6 +150,8 @@ def test_console_exposes_ready_gated_autogen_controller_and_model_provenance():
     assert 'connections.autogen' in script
     assert 'button[data-controller]' in script
     assert 'elements["autogen-controller-state"]' in script
+    assert 'elements["advanced-settings"].open = isAutogen' in script
+    assert 'elements["advanced-settings"].open = job.request.controller === "autogen"' in script
     assert 'autogenOption.disabled' not in script
     assert 'report.autogen_transcript' in script
 
@@ -175,27 +179,16 @@ def test_console_styles_use_multi_view_desktop_shell_and_mobile_reflow():
     assert "letter-spacing: 0" in source
 
 
-def test_console_adds_compact_separate_aiopslab_benchmark_job_panel():
+def test_console_integrates_aiopslab_into_the_primary_experiment_contract():
     html = _source(INDEX_HTML)
     script = _source(APP_JS)
 
-    assert 'id="aiopslab-benchmark-panel"' in html
-    assert 'id="aiopslab-benchmark-select"' in html
-    assert 'id="aiopslab-repetitions"' in html
-    assert 'id="aiopslab-run"' in html
-    assert 'id="aiopslab-cancel"' in html
-    assert 'id="aiopslab-accuracy"' in html
-    assert 'id="aiopslab-ttd"' in html
-    assert 'id="aiopslab-reward"' in html
-    assert 'id="aiopslab-event-log"' in html
-    assert "별도 탐지 Benchmark" in html
-
-    assert 'api("/api/benchmarks/aiopslab")' in script
-    assert 'api("/api/benchmarks/aiopslab/jobs?limit=20")' in script
-    assert 'api("/api/benchmarks/aiopslab/jobs",' in script
-    assert "new EventSource(`/api/benchmarks/aiopslab/jobs/${state.aiopslabJobId}/events`)" in script
-    assert "`/api/benchmarks/aiopslab/jobs/${state.aiopslabJobId}/cancel`" in script
-    assert "artifact_urls" in script
+    assert 'data-scenario-link="aiopslab-hotel-reservation"' in html
+    assert 'data-view-panel="aiopslab"' not in html
+    assert 'incident_source: item.incident_source' in script
+    assert 'benchmark_id: item.benchmark_id' in script
+    assert 'state.selectedScenario = job.request.scenario_id' in script
+    assert 'api("/api/experiments",' in script
 
 
 def test_console_runs_recovery_action_comparison_and_renders_graphs():
@@ -218,3 +211,27 @@ def test_console_runs_recovery_action_comparison_and_renders_graphs():
     assert "new EventSource(`/api/comparisons/recovery/jobs/${state.comparisonJobId}/events`)" in script
     assert "`/api/comparisons/recovery/jobs/${state.comparisonJobId}/cancel`" in script
     assert "EXECUTE REAL COMPARISON" in script
+
+
+def test_recovery_experiment_uses_compact_controls_and_grouped_workflow():
+    html = _source(INDEX_HTML)
+    script = _source(APP_JS)
+    styles = _source(STYLES_CSS)
+
+    assert 'class="scenario-list scenario-grid"' in html
+    assert 'id="advanced-settings"' in html
+    assert '<summary>고급 설정</summary>' in html
+    assert html.count('class="workflow-phase') == 4
+    assert 'data-stages="preflight injecting_fault collecting_evidence"' in html
+    assert 'data-stages="executing observing_recovery cleanup completed"' in html
+    assert 'id="selection-summary"' in html
+    assert 'id="safety-status"' in html
+
+    assert "const WORKFLOW_PHASES" in script
+    assert 'elements["selection-summary"]' in script
+    assert 'item.dataset.stages.split(" ")' in script
+
+    assert ".scenario-grid" in styles
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr))" in styles
+    assert ".workflow-phase" in styles
+    assert ".advanced-settings" in styles

@@ -174,6 +174,10 @@ def build_experiment_runtime(
                     kubernetes_collector or collect_kubernetes_snapshot
                 ),
                 max_sample_age_seconds=configuration.max_sample_age_seconds,
+                context_events=tuple(request.detection_context.get("events", ())),
+                context_log_summary=str(
+                    request.detection_context.get("log_summary", "")
+                ),
             )
             recovery_monitor = KubernetesSnapshotRecoveryMonitor(
                 evidence_provider=evidence,
@@ -275,6 +279,8 @@ def _deterministic_evidence_provider(
         if availability_fault
         else request.threshold + max(abs(request.threshold) * 0.1, 1.0)
     )
+    context_events = tuple(request.detection_context.get("events", ()))
+    context_log_summary = str(request.detection_context.get("log_summary", ""))
     return FakeEvidenceProvider(
         EvidenceSnapshot(
             namespace=request.namespace,
@@ -283,7 +289,11 @@ def _deterministic_evidence_provider(
             desired_replicas=1,
             available_replicas=0 if availability_fault else 1,
             pod_statuses=("Pending",) if availability_fault else ("Running",),
-            events=(f"{request.mode.value} deterministic factory evidence",),
+            events=(
+                f"{request.mode.value} deterministic factory evidence",
+                *context_events,
+            ),
+            log_summary=context_log_summary,
             source=f"factory-{request.mode.value}",
         )
     )
@@ -305,6 +315,8 @@ def runtime_scenario_catalog(
                 "metric": scenario.metric,
                 "threshold": scenario.threshold,
                 "manifest": scenario.manifest,
+                "incident_source": scenario.incident_source,
+                "benchmark_id": scenario.benchmark_id,
                 "mode": "mock",
                 "ui_fallback": bool(fallback),
             }

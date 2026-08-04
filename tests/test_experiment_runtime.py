@@ -225,6 +225,65 @@ def test_runtime_does_not_inject_fault_for_mock_mode():
     assert result.session.mode == "mock"
 
 
+def test_real_aiopslab_detection_flows_to_agents_without_duplicate_chaos_injection():
+    base = runtime_configuration()
+    configuration = RuntimeConfiguration(
+        version=base.version,
+        allowed_namespaces=base.allowed_namespaces + ("test-hotel-reservation",),
+        allowed_deployments=base.allowed_deployments + ("geo",),
+        min_replicas=base.min_replicas,
+        max_replicas=base.max_replicas,
+        timeouts=base.timeouts,
+        metric_queries={
+            **dict(base.metric_queries),
+            "availability": MetricQueryDefinition("availability", "up"),
+        },
+        scenarios={
+            **dict(base.scenarios),
+            "aiopslab-hotel-reservation": {
+                "id": "aiopslab-hotel-reservation",
+                "namespace": "test-hotel-reservation",
+                "deployment": "geo",
+                "metric": "availability",
+                "threshold": 1.0,
+                "manifest": "aiopslab:hotel-reservation-detection-v1",
+                "incident_source": "aiopslab",
+                "benchmark_id": "hotel-reservation-detection-v1",
+            },
+        },
+    )
+    chaos = FakeChaosAdapter()
+    coordinator = FakeCoordinator(approved_report("exp-runtime-1"))
+    runtime = ExperimentRuntime(
+        configuration=configuration,
+        chaos=chaos,
+        coordinator_factory=lambda _request: coordinator,
+        event_sink=RecordingEventSink(),
+        experiment_id_factory=lambda: "exp-runtime-1",
+        admission_validator=TestAdmissionValidator(),
+    )
+    request = ExperimentRuntimeRequest(
+        scenario_id="aiopslab-hotel-reservation",
+        namespace="test-hotel-reservation",
+        deployment="geo",
+        metric="availability",
+        threshold=1.0,
+        mode="real",
+        backend="python",
+        protocol_profile="four-agent-role-veto-v1",
+        incident_source="aiopslab",
+        benchmark_id="hotel-reservation-detection-v1",
+        detection_context={"accuracy": "Correct", "anomaly_detected": True},
+    )
+
+    result = runtime.run(request)
+
+    assert result.status == "recovered"
+    assert chaos.calls == []
+    assert result.report["incident_source"] == "aiopslab"
+    assert result.report["detection"]["accuracy"] == "Correct"
+
+
 def test_runtime_rejects_target_outside_allowlist_before_fault_injection():
     chaos = FakeChaosAdapter()
     result = runtime_with(chaos=chaos).run(

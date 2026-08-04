@@ -51,6 +51,9 @@ class ExperimentRuntimeRequest:
     repetitions: int = 1
     controller: str = "deterministic"
     model: str = ""
+    incident_source: str = "chaos_mesh"
+    benchmark_id: str = ""
+    detection_context: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         for name in (
@@ -73,6 +76,21 @@ class ExperimentRuntimeRequest:
         if not isinstance(self.model, str):
             raise TypeError("model must be a string")
         object.__setattr__(self, "model", self.model.strip())
+        incident_source = _strip_identifier(
+            "incident_source", self.incident_source
+        ).lower().replace("-", "_")
+        if incident_source not in {"chaos_mesh", "aiopslab"}:
+            raise ValueError(f"invalid incident_source: {self.incident_source!r}")
+        object.__setattr__(self, "incident_source", incident_source)
+        if not isinstance(self.benchmark_id, str):
+            raise TypeError("benchmark_id must be a string")
+        benchmark_id = self.benchmark_id.strip()
+        if incident_source == "aiopslab" and not benchmark_id:
+            raise ValueError("benchmark_id is required for aiopslab incident source")
+        object.__setattr__(self, "benchmark_id", benchmark_id)
+        if not isinstance(self.detection_context, Mapping):
+            raise TypeError("detection_context must be a mapping")
+        object.__setattr__(self, "detection_context", _freeze(self.detection_context))
 
         if isinstance(self.repetitions, bool) or not isinstance(self.repetitions, int):
             raise ValueError("repetitions must be an integer >= 1")
@@ -97,6 +115,9 @@ class ExperimentRuntimeRequest:
             "repetitions": self.repetitions,
             "controller": self.controller,
             "model": self.model,
+            "incident_source": self.incident_source,
+            "benchmark_id": self.benchmark_id,
+            "detection_context": self.detection_context,
         })
 
 

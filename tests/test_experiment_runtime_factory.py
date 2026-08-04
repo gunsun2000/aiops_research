@@ -56,6 +56,7 @@ def test_runtime_factory_builds_real_dependencies_from_registered_config(tmp_pat
     )
     assert runtime.configuration.version == "1.0.0"
     assert runtime.chaos.scenario_ids == (
+        "aiopslab-hotel-reservation",
         "cpu-stress",
         "memory-stress",
         "network-delay",
@@ -198,6 +199,7 @@ def test_runtime_scenario_catalog_uses_registered_manifest_and_ui_fallback(tmp_p
         "cpu-stress",
         "memory-stress",
         "network-delay",
+        "aiopslab-hotel-reservation",
     ]
     assert catalog[1]["manifest"] == "k8s/chaos/paymentservice-cpu-stress.yaml"
     assert catalog[1]["namespace"] == "online-boutique"
@@ -205,6 +207,40 @@ def test_runtime_scenario_catalog_uses_registered_manifest_and_ui_fallback(tmp_p
     assert catalog[1]["metric"] == "cpu"
     assert catalog[1]["threshold"] == 80.0
     assert catalog[1]["ui_fallback"] is True
+    assert catalog[-1]["incident_source"] == "aiopslab"
+    assert catalog[-1]["benchmark_id"] == "hotel-reservation-detection-v1"
+
+
+def test_aiopslab_detection_context_is_added_to_agent_evidence(tmp_path):
+    runtime = build_experiment_runtime(
+        configuration_path=write_runtime_config(tmp_path),
+        prometheus_url="http://127.0.0.1:9091",
+        event_sink=RecordingEventSink(),
+    )
+    request = ExperimentRuntimeRequest(
+        scenario_id="aiopslab-hotel-reservation",
+        namespace="test-hotel-reservation",
+        deployment="geo",
+        metric="availability",
+        threshold=1.0,
+        mode="mock",
+        backend="python",
+        protocol_profile="four-agent-role-veto-v1",
+        incident_source="aiopslab",
+        benchmark_id="hotel-reservation-detection-v1",
+        detection_context={
+            "events": ("AIOpsLab detected a target-port misconfiguration",),
+            "log_summary": "Detection Accuracy=Correct; TTD=3.6",
+            "anomaly_detected": True,
+        },
+    )
+
+    evidence = runtime.coordinator_factory(request).evidence_provider.collect(
+        request.namespace, request.deployment
+    )
+
+    assert "AIOpsLab detected a target-port misconfiguration" in evidence.events
+    assert "Detection Accuracy=Correct" in evidence.log_summary
 
 
 def test_runtime_scenario_catalog_accepts_configuration_only_scenario(tmp_path):

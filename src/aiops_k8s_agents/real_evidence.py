@@ -59,12 +59,24 @@ class ScenarioConfiguration:
     metric: str | None = None
     threshold: float | None = None
     manifest: str = ""
+    incident_source: str = "chaos_mesh"
+    benchmark_id: str = ""
 
     def __post_init__(self) -> None:
         scenario_id = _strip_scenario_identifier("scenario id", self.scenario_id)
         manifest = _strip_scenario_identifier("scenario manifest", self.manifest)
         object.__setattr__(self, "scenario_id", scenario_id)
         object.__setattr__(self, "manifest", manifest)
+        incident_source = _strip_scenario_identifier(
+            "scenario incident source", self.incident_source
+        ).lower().replace("-", "_")
+        if incident_source not in {"chaos_mesh", "aiopslab"}:
+            raise ValueError(f"invalid scenario incident source: {incident_source}")
+        benchmark_id = str(self.benchmark_id or "").strip()
+        if incident_source == "aiopslab" and not benchmark_id:
+            raise ValueError("AIOpsLab scenario benchmark id must not be empty")
+        object.__setattr__(self, "incident_source", incident_source)
+        object.__setattr__(self, "benchmark_id", benchmark_id)
         if self.namespace is None:
             return
         namespace = _validate_kubernetes_name("scenario namespace", self.namespace)
@@ -141,6 +153,8 @@ class RuntimeConfiguration:
                     metric=value["metric"],
                     threshold=value["threshold"],
                     manifest=value["manifest"],
+                    incident_source=value.get("incident_source", "chaos_mesh"),
+                    benchmark_id=value.get("benchmark_id", ""),
                 )
             elif isinstance(value, str):
                 # Preserve direct-construction compatibility for older tests;
@@ -214,6 +228,8 @@ class PrometheusKubernetesEvidenceProvider:
     requested_metric: str
     kubernetes_collector: KubernetesSnapshotCollector = collect_kubernetes_snapshot
     max_sample_age_seconds: float = 300.0
+    context_events: tuple[str, ...] = ()
+    context_log_summary: str = ""
 
     def __post_init__(self) -> None:
         metric = self.requested_metric.strip().lower().replace("-", "_")
@@ -230,6 +246,12 @@ class PrometheusKubernetesEvidenceProvider:
         object.__setattr__(self, "requested_metric", metric)
         object.__setattr__(self, "metric_queries", MappingProxyType(definitions))
         object.__setattr__(self, "max_sample_age_seconds", float(self.max_sample_age_seconds))
+        object.__setattr__(self, "context_events", tuple(
+            _sanitize_text(str(event)) for event in self.context_events
+        ))
+        object.__setattr__(
+            self, "context_log_summary", _sanitize_text(self.context_log_summary)
+        )
 
     def collect(self, namespace: str, deployment: str) -> EvidenceSnapshot:
         query = self.metric_queries[self.requested_metric].render(namespace, deployment)
@@ -290,8 +312,13 @@ class PrometheusKubernetesEvidenceProvider:
             restart_count=restart_count,
             pod_statuses=pod_statuses,
             pod_identities=pod_identities,
-            events=(event,),
-            source="prometheus+kubernetes",
+            events=(event, *self.context_events),
+            log_summary=self.context_log_summary,
+            source=(
+                "aiopslab+prometheus+kubernetes"
+                if self.context_events or self.context_log_summary
+                else "prometheus+kubernetes"
+            ),
         )
 
     def _usable_sample(self, samples: tuple[PrometheusSample, ...]) -> PrometheusSample:

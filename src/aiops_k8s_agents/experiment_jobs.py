@@ -381,6 +381,9 @@ def _request_from_dict(data: Mapping[str, Any]) -> ExperimentRuntimeRequest:
         repetitions=data["repetitions"],
         controller=data.get("controller", "deterministic"),
         model=data.get("model", ""),
+        incident_source=data.get("incident_source", "chaos_mesh"),
+        benchmark_id=data.get("benchmark_id", ""),
+        detection_context=data.get("detection_context", {}),
     )
 
 

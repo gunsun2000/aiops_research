@@ -213,3 +213,93 @@ def test_shutdown_cancels_running_jobs_before_waiting(tmp_path):
 
     assert cancellation_seen.is_set()
     assert store.get(job.experiment_id).status is ExperimentJobStatus.CANCELLED
+
+
+def test_aiopslab_detection_and_recovery_share_one_experiment_job(tmp_path):
+    store = SQLiteExperimentJobStore(tmp_path / "jobs.sqlite3")
+    received_requests = []
+
+    class IncidentAdapter:
+        def prepare(self, request, *, experiment_id, repetition, cancellation, event_sink):
+            assert experiment_id == "exp-unified-aiopslab"
+            assert repetition == 1
+            event_sink.emit(
+                RuntimeEvent(
+                    experiment_id=experiment_id,
+                    sequence=0,
+                    stage=RuntimeStage.COLLECTING_EVIDENCE,
+                    status="completed",
+                    message="AIOpsLab detection normalized",
+                    created_at="2026-08-04T00:00:00+00:00",
+                    payload={"benchmark_id": request.benchmark_id},
+                )
+            )
+            return {
+                "source": "aiopslab",
+                "accuracy": "Synthetic",
+                "anomaly_detected": True,
+                "ttd_seconds": 0.0,
+            }
+
+    class CapturingRuntime(_ImmediateRuntime):
+        def run(self, request):
+            received_requests.append(request)
+            return super().run(request)
+
+    runner = ExperimentJobRunner(
+        store,
+        runtime_factory=lambda sink, _cancel, experiment_id: CapturingRuntime(
+            sink, experiment_id
+        ),
+        experiment_id_factory=lambda: "exp-unified-aiopslab",
+        incident_adapter=IncidentAdapter(),
+    )
+    request = ExperimentRuntimeRequest(
+        scenario_id="aiopslab-hotel-reservation",
+        namespace="test-hotel-reservation",
+        deployment="geo",
+        metric="availability",
+        threshold=1.0,
+        mode="mock",
+        backend="python",
+        protocol_profile="four-agent-role-veto-v1",
+        incident_source="aiopslab",
+        benchmark_id="hotel-reservation-detection-v1",
+    )
+
+    job = runner.submit(request)
+    finished = _wait_for_terminal(store, job.experiment_id)
+    runner.shutdown()
+
+    assert finished.experiment_id == "exp-unified-aiopslab"
+    assert finished.result["incident_source"] == "aiopslab"
+    assert finished.result["attempts"][0]["detection"]["source"] == "aiopslab"
+    assert received_requests[0].detection_context["anomaly_detected"] is True
+    assert [event.experiment_id for event in store.events_after(job.experiment_id)] == [
+        "exp-unified-aiopslab",
+        "exp-unified-aiopslab",
+    ]
+
+
+def test_safe_failure_is_persisted_as_safety_block_not_runtime_failure(tmp_path):
+    store = SQLiteExperimentJobStore(tmp_path / "jobs.sqlite3")
+
+    class SafetyBlockedRuntime(_ImmediateRuntime):
+        def run(self, request):
+            result = super().run(request)
+            return _Result(result.experiment_id, "safe_failure")
+
+    runner = ExperimentJobRunner(
+        store,
+        runtime_factory=lambda sink, _cancel, experiment_id: SafetyBlockedRuntime(
+            sink, experiment_id
+        ),
+        experiment_id_factory=lambda: "exp-safe-failure",
+    )
+
+    job = runner.submit(_request())
+    finished = _wait_for_terminal(store, job.experiment_id)
+    runner.shutdown()
+
+    assert finished.status is ExperimentJobStatus.BLOCKED
+    assert finished.result["attempts"][0]["status"] == "safe_failure"

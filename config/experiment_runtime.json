@@ -1,7 +1,7 @@
 {
   "version": "1.0.0",
-  "allowed_namespaces": ["online-boutique"],
-  "allowed_deployments": ["paymentservice", "checkoutservice"],
+  "allowed_namespaces": ["online-boutique", "test-hotel-reservation"],
+  "allowed_deployments": ["paymentservice", "checkoutservice", "geo"],
   "min_replicas": 1,
   "max_replicas": 5,
   "experiment_seconds": 300,
@@ -49,6 +49,16 @@
       "metric": "latency",
       "threshold": 0.1,
       "manifest": "k8s/chaos/paymentservice-network-delay.yaml"
+    },
+    "aiopslab-hotel-reservation": {
+      "id": "aiopslab-hotel-reservation",
+      "namespace": "test-hotel-reservation",
+      "deployment": "geo",
+      "metric": "availability",
+      "threshold": 1.0,
+      "manifest": "aiopslab:hotel-reservation-detection-v1",
+      "incident_source": "aiopslab",
+      "benchmark_id": "hotel-reservation-detection-v1"
     }
   }
 }

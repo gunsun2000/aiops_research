@@ -6,6 +6,15 @@
     "memory-stress": { label: "Memory Stress", namespace: "online-boutique", deployment: "checkoutservice", metric: "memory", threshold: 80 },
     "network-delay": { label: "Network Delay", namespace: "online-boutique", deployment: "paymentservice", metric: "latency", threshold: 0.1 },
     "pod-kill": { label: "Pod Kill", namespace: "online-boutique", deployment: "paymentservice", metric: "availability", threshold: 1 },
+    "aiopslab-hotel-reservation": {
+      label: "AIOpsLab Hotel Detection",
+      namespace: "test-hotel-reservation",
+      deployment: "geo",
+      metric: "availability",
+      threshold: 1,
+      incident_source: "aiopslab",
+      benchmark_id: "hotel-reservation-detection-v1",
+    },
   };
 
   const AGENTS = {
@@ -21,7 +30,6 @@
     real: "Real은 CONFIRM_REAL_RUN 환경 Gate와 확인 문구가 모두 통과한 경우에만 실제 Kubernetes를 제어합니다.",
   };
 
-  const AIOPSLAB_BOUNDARY_NOTE = "AIOpsLab Detection Benchmark는 Kubernetes 복구 실험과 별도로 기록됩니다.";
   const COMPARISON_BOUNDARY_NOTE = "Mock 비교는 합성 데이터이며 Ubuntu Real 비교만 실제 클러스터 연구 근거입니다.";
 
   const RESEARCH_DOCUMENTS = [
@@ -42,14 +50,11 @@
     },
   ];
 
-  const STAGE_ORDER = [
-    "preflight",
-    "injecting_fault",
-    "collecting_evidence",
-    "agent_reasoning",
-    "validating",
-    "executing",
-    "observing_recovery",
+  const WORKFLOW_PHASES = [
+    ["preflight", "injecting_fault", "collecting_evidence"],
+    ["agent_reasoning"],
+    ["validating"],
+    ["executing", "observing_recovery", "cleanup", "completed"],
   ];
 
   const PLATFORM_VIEWS = new Set([
@@ -58,7 +63,6 @@
     "agents",
     "observability",
     "analysis",
-    "aiopslab",
     "history",
   ]);
   const PRIMARY_VIEW_BY_PANEL = {
@@ -68,7 +72,6 @@
     observability: "experiment",
     analysis: "analysis",
     history: "analysis",
-    aiopslab: "aiopslab",
   };
 
   const TERMINAL = new Set(["completed", "failed", "blocked", "cancelled", "interrupted"]);
@@ -86,12 +89,6 @@
     timer: null,
     running: false,
     connections: {},
-    aiopslabCatalog: [],
-    aiopslabRuntimeReady: false,
-    aiopslabJobId: "",
-    aiopslabJob: null,
-    aiopslabEventSource: null,
-    aiopslabEvents: [],
     comparisonRuntime: {},
     comparisonJobId: "",
     comparisonJob: null,
@@ -105,7 +102,8 @@
     "scenario-list", "mode-control", "controller-select", "controller-options",
     "autogen-controller-state", "profile-select", "controller-model",
     "model-input", "controller-readiness",
-    "repetitions-select", "target-deployment", "target-metric", "mode-boundary",
+    "advanced-settings", "repetitions-select", "selection-summary",
+    "target-deployment", "target-metric", "mode-boundary",
     "run-experiment", "cancel-experiment", "control-error", "elapsed-time",
     "stage-timeline", "evidence-scenario", "evidence-target", "evidence-metric",
     "evidence-source", "agent-grid", "review-summary", "consensus-summary",
@@ -115,12 +113,7 @@
     "autogen-transcript", "allowlist-result", "validator-result", "cleanup-result",
     "result-status", "result-recovery", "result-mttr", "result-reward",
     "result-reviews", "result-artifacts", "research-documents", "autogen-summary",
-    "aiopslab-summary", "aiopslab-benchmark-panel", "aiopslab-runtime-status",
-    "aiopslab-benchmark-select", "aiopslab-repetitions", "aiopslab-run",
-    "aiopslab-cancel", "aiopslab-job-status", "aiopslab-accuracy",
-    "aiopslab-ttd", "aiopslab-steps", "aiopslab-reward",
-    "aiopslab-event-count", "aiopslab-event-log", "aiopslab-artifacts",
-    "aiopslab-error",
+    "aiopslab-summary",
     "recovery-comparison-panel", "comparison-runtime-status", "comparison-mode",
     "comparison-repetitions", "comparison-guard", "comparison-run",
     "comparison-cancel", "comparison-boundary", "comparison-job-status",
@@ -160,6 +153,8 @@
       deployment: item.deployment || fallback.deployment,
       metric: item.metric || fallback.metric,
       threshold: item.threshold == null ? fallback.threshold : item.threshold,
+      incident_source: item.incident_source || fallback.incident_source || "chaos_mesh",
+      benchmark_id: item.benchmark_id || fallback.benchmark_id || "",
     };
   }
 
@@ -192,7 +187,11 @@
       button.addEventListener("click", () => selectPlatformView(button.dataset.view));
     });
     document.querySelectorAll("[data-view-link]").forEach((button) => {
-      button.addEventListener("click", () => selectPlatformView(button.dataset.viewLink));
+      button.addEventListener("click", () => {
+        const scenarioId = button.dataset.scenarioLink;
+        if (scenarioId && state.scenarios[scenarioId]) selectScenario(scenarioId);
+        selectPlatformView(button.dataset.viewLink);
+      });
     });
     window.addEventListener("hashchange", () => {
       selectPlatformView(window.location.hash.slice(1), false);
@@ -232,7 +231,9 @@
       const title = document.createElement("strong");
       title.textContent = item.label;
       const metadata = document.createElement("span");
-      metadata.textContent = `${item.deployment} · ${item.metric}`;
+      metadata.textContent = item.incident_source === "aiopslab"
+        ? `AIOpsLab · ${item.deployment}`
+        : `Chaos Mesh · ${item.deployment} · ${item.metric}`;
       button.append(title, metadata);
       button.addEventListener("click", () => selectScenario(id));
       return button;
@@ -252,6 +253,8 @@
     state.selectedMode = mode;
     setPressed(elements["mode-control"], "button", mode);
     elements["mode-boundary"].textContent = MODE_BOUNDARIES[mode];
+    renderSelectionSummary();
+    resetEvidenceView();
   }
 
   function controllerProfile() {
@@ -268,6 +271,7 @@
     elements["controller-select"].value = resolved;
     setPressed(elements["controller-options"], "button[data-controller]", resolved);
     elements["controller-model"].hidden = !isAutogen;
+    elements["advanced-settings"].open = isAutogen;
     elements["profile-select"].disabled = isAutogen;
     elements["profile-select"].value = isAutogen
       ? "four-agent-autogen-v1"
@@ -279,6 +283,7 @@
     elements["control-error"].textContent = isAutogen && !autogen.ready
       ? (autogen.reason || "AutoGen runtime is not ready")
       : "";
+    renderSelectionSummary();
   }
 
   function selectAgent(agent) {
@@ -294,12 +299,23 @@
     elements["target-metric"].textContent = `${item.metric} · threshold ${item.threshold}`;
     elements["evidence-scenario"].textContent = item.label;
     elements["evidence-target"].textContent = `${item.namespace}/${item.deployment}`;
+    renderSelectionSummary();
     renderGlobalContext(null);
+  }
+
+  function renderSelectionSummary() {
+    const item = scenario();
+    const mode = ({ mock: "Mock", "dry-run": "Dry-run", real: "Real" })[state.selectedMode] || state.selectedMode;
+    const controller = elements["controller-select"].value === "autogen" ? "AutoGen" : "Deterministic";
+    elements["selection-summary"].textContent = `${item.label} · ${mode} · ${controller}`;
   }
 
   function resetEvidenceView() {
     elements["evidence-metric"].textContent = "실험 Evidence 수집 후 표시";
-    elements["evidence-source"].textContent = state.selectedMode === "real" ? "Prometheus + Kubernetes" : "FakeEvidenceProvider";
+    const item = scenario();
+    elements["evidence-source"].textContent = item.incident_source === "aiopslab"
+      ? (state.selectedMode === "real" ? "AIOpsLab + Prometheus + Kubernetes" : "AIOpsLab synthetic evidence")
+      : (state.selectedMode === "real" ? "Chaos Mesh + Prometheus + Kubernetes" : "FakeEvidenceProvider");
     elements["review-summary"].textContent = "역할별 의견 수집 대기";
     elements["consensus-summary"].textContent = "대기";
     elements["action-summary"].textContent = "선택 전";
@@ -313,6 +329,13 @@
     const attempts = state.job && state.job.result && state.job.result.attempts;
     if (!Array.isArray(attempts) || attempts.length === 0) return null;
     return attempts[attempts.length - 1].report || null;
+  }
+
+  function runtimeDetection() {
+    const attempts = state.job && state.job.result && state.job.result.attempts;
+    if (!Array.isArray(attempts) || attempts.length === 0) return null;
+    const attempt = attempts[attempts.length - 1];
+    return attempt.detection || (attempt.report && attempt.report.detection) || null;
   }
 
   function initialDecision(agent, report) {
@@ -391,13 +414,20 @@
     state.experimentId = job.experiment_id;
     state.running = !TERMINAL.has(job.status);
     if (job.request) {
+      if (state.scenarios[job.request.scenario_id]) {
+        state.selectedScenario = job.request.scenario_id;
+        setPressed(elements["scenario-list"], "button", state.selectedScenario);
+        renderCondition();
+      }
       elements["controller-select"].value = job.request.controller || "deterministic";
       setPressed(elements["controller-options"], "button[data-controller]", elements["controller-select"].value);
       elements["model-input"].value = job.request.model || elements["model-input"].value;
       elements["profile-select"].value = job.request.protocol_profile || "four-agent-role-veto-v1";
       elements["controller-model"].hidden = job.request.controller !== "autogen";
+      elements["advanced-settings"].open = job.request.controller === "autogen";
       elements["profile-select"].disabled = job.request.controller === "autogen";
     }
+    renderSelectionSummary();
     elements["experiment-id"].textContent = job.experiment_id;
     elements["job-status"].textContent = jobStatusLabel(job.status);
     elements["current-stage"].textContent = job.current_stage;
@@ -417,11 +447,17 @@
   function renderReport(report) {
     if (!report) return;
     const evidence = report.evidence || {};
+    const detection = runtimeDetection();
     const metrics = evidence.metric_values || {};
     const metricEntries = Object.entries(metrics);
-    elements["evidence-metric"].textContent = metricEntries.length ? metricEntries.map(([key, value]) => `${key} ${formatValue(value)}`).join(" · ") : "수집 결과 없음";
-    elements["evidence-source"].textContent = evidence.source || "unknown";
-    elements["observed-provider"].textContent = evidence.source || "unknown";
+    elements["evidence-metric"].textContent = detection && detection.source === "aiopslab"
+      ? `Accuracy ${formatAccuracy(detection.accuracy)} · TTD ${formatSeconds(detection.ttd_seconds)} · ${formatValue(detection.steps)} steps`
+      : (metricEntries.length ? metricEntries.map(([key, value]) => `${key} ${formatValue(value)}`).join(" · ") : "수집 결과 없음");
+    const evidenceSource = detection && detection.source === "aiopslab"
+      ? `AIOpsLab · ${detection.evidence_boundary || evidence.source || "evidence"}`
+      : (evidence.source || "unknown");
+    elements["evidence-source"].textContent = evidenceSource;
+    elements["observed-provider"].textContent = evidenceSource;
     const reviews = Array.isArray(report.peer_reviews) ? report.peer_reviews : [];
     elements["review-summary"].textContent = `${reviews.length}개 역할별 검토`;
     const negotiation = report.negotiation || {};
@@ -432,13 +468,19 @@
     const safety = report.safety_validation || {};
     elements["allowlist-result"].textContent = safety.valid === true ? "통과" : "차단/대기";
     elements["validator-result"].textContent = safety.valid === true ? "VALID" : "대기";
-    elements["safety-status"].textContent = safety.valid === true ? "안전 검증 통과" : "검증 미완료";
-    elements["overview-safety-status"].textContent = safety.valid === true ? "VALID" : "검증 대기";
+    elements["safety-status"].textContent = report.final_status === "safe_failure"
+      ? "명령 검증 통과 · 사후검토 중단"
+      : (safety.valid === true ? "안전 검증 통과" : "검증 미완료");
+    elements["overview-safety-status"].textContent = report.final_status === "safe_failure"
+      ? "POST-REVIEW BLOCKED"
+      : (safety.valid === true ? "VALID" : "검증 대기");
     const cleanup = report.cleanup || {};
     elements["cleanup-result"].textContent = cleanup.valid === false ? "실패 · 검토 필요" : "완료/불필요";
     const recovery = report.recovery_monitoring || {};
     elements["result-status"].textContent = report.final_status || "완료";
-    elements["result-recovery"].textContent = recovery.recovery_success === true ? "성공" : (recovery.recovery_success === false ? "실패" : "—");
+    elements["result-recovery"].textContent = report.final_status === "safe_failure"
+      ? "안전 중단"
+      : (recovery.recovery_success === true ? "성공" : (recovery.recovery_success === false ? "실패" : "—"));
     elements["overview-recovery-status"].textContent = elements["result-recovery"].textContent;
     elements["result-mttr"].textContent = recovery.recovery_seconds == null ? "—" : `${recovery.recovery_seconds}s`;
     const contributions = Object.values(report.agent_contributions || {});
@@ -446,7 +488,9 @@
     elements["result-reward"].textContent = contributions.length ? reward.toFixed(3) : "—";
     elements["result-reviews"].textContent = String(reviews.length);
     const artifacts = Object.keys(report.artifacts || {});
-    elements["result-artifacts"].textContent = artifacts.length ? `${artifacts.length}개` : "Job DB 저장";
+    elements["result-artifacts"].textContent = detection && detection.report_path
+      ? "AIOpsLab report + Job DB"
+      : (artifacts.length ? `${artifacts.length}개` : "Job DB 저장");
   }
 
   function formatValue(value) {
@@ -454,17 +498,30 @@
     return String(value);
   }
 
+  function formatAccuracy(value) {
+    if (value == null) return "-";
+    if (Number.isNaN(Number(value))) return String(value);
+    return `${(Number(value) * 100).toFixed(1)}%`;
+  }
+
+  function formatSeconds(value) {
+    if (value == null || Number.isNaN(Number(value))) return "-";
+    return `${Number(value).toFixed(3)}s`;
+  }
+
   function jobStatusLabel(status) {
     return ({ queued: "대기", running: "실행 중", cancelling: "취소 중", completed: "완료", failed: "실패", blocked: "안전 차단", cancelled: "취소됨", interrupted: "서버 재시작으로 중단" })[status] || status;
   }
 
   function updateStage(stage, failed) {
-    let index = STAGE_ORDER.indexOf(stage);
-    if (stage === "cleanup" || stage === "completed") index = STAGE_ORDER.length - 1;
+    let index = WORKFLOW_PHASES.findIndex((phase) => phase.includes(stage));
+    if (index < 0) index = 0;
     elements["stage-timeline"].querySelectorAll("li").forEach((item, itemIndex) => {
+      const phaseStages = item.dataset.stages.split(" ");
+      const isCurrentPhase = phaseStages.includes(stage) || itemIndex === index;
       item.classList.toggle("done", itemIndex < index);
-      item.classList.toggle("active", itemIndex === index && !failed);
-      item.classList.toggle("failed", itemIndex === index && failed);
+      item.classList.toggle("active", isCurrentPhase && !failed);
+      item.classList.toggle("failed", isCurrentPhase && failed);
     });
   }
 
@@ -539,6 +596,8 @@
       repetitions: Number(elements["repetitions-select"].value),
       controller: elements["controller-select"].value,
       model: elements["model-input"].value.trim(),
+      incident_source: item.incident_source || "chaos_mesh",
+      benchmark_id: item.benchmark_id || "",
     };
     if (state.selectedMode === "real") {
       const confirmation = window.prompt("실제 Kubernetes 장애 주입과 복구를 실행하려면 EXECUTE REAL EXPERIMENT를 입력하세요.");
@@ -1010,8 +1069,6 @@
     elements["agent-tabs"].querySelectorAll("button[data-agent-tab]").forEach((button) => button.addEventListener("click", () => selectAgent(button.dataset.agentTab)));
     elements["run-experiment"].addEventListener("click", runExperiment);
     elements["cancel-experiment"].addEventListener("click", cancelExperiment);
-    elements["aiopslab-run"].addEventListener("click", runAIOpsLabBenchmark);
-    elements["aiopslab-cancel"].addEventListener("click", cancelAIOpsLabBenchmark);
     elements["comparison-mode"].addEventListener("change", updateComparisonModeBoundary);
     elements["comparison-run"].addEventListener("click", runRecoveryComparison);
     elements["comparison-cancel"].addEventListener("click", cancelRecoveryComparison);
@@ -1020,26 +1077,22 @@
   async function boot() {
     bindControls();
     renderResearchDocuments();
-    elements["result-artifacts"].title = AIOPSLAB_BOUNDARY_NOTE;
     elements["comparison-artifacts"].title = COMPARISON_BOUNDARY_NOTE;
     renderCondition();
     resetEvidenceView();
     await Promise.all([
       loadScenarios(),
       loadConnections(),
-      loadAIOpsLabBenchmarks(),
       loadRecoveryComparison(),
     ]);
     await Promise.all([
       restoreLatestJob(),
-      restoreLatestAIOpsLabJob(),
       restoreLatestRecoveryComparison(),
     ]);
   }
 
   window.addEventListener("beforeunload", () => {
     closeEvents();
-    closeAIOpsLabEvents();
     closeComparisonEvents();
   });
   boot();

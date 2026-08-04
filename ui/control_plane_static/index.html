@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="description" content="안전 제어형 4-Agent AIOps 연구 운영 콘솔" />
     <title>4-Agent AIOps 연구 운영 콘솔</title>
-    <link rel="stylesheet" href="/static/styles.css?v=15" />
-    <script defer src="/static/app.js?v=15"></script>
+    <link rel="stylesheet" href="/static/styles.css?v=19" />
+    <script defer src="/static/app.js?v=19"></script>
   </head>
   <body>
     <noscript><main class="noscript">이 연구 콘솔을 사용하려면 JavaScript가 필요합니다.</main></noscript>
@@ -25,7 +25,6 @@
           <button type="button" data-view="overview" aria-pressed="true"><span>01</span>연구 현황</button>
           <button type="button" data-view="experiment" aria-pressed="false"><span>02</span>복구 실험</button>
           <button type="button" data-view="analysis" aria-pressed="false"><span>03</span>결과 분석</button>
-          <button type="button" data-view="aiopslab" aria-pressed="false"><span>04</span>AIOpsLab</button>
         </nav>
 
         <div class="sidebar-runtime" aria-live="polite">
@@ -54,7 +53,6 @@
           <div class="context-runtime"><span id="experiment-id">새 실험</span><strong id="job-status">대기</strong></div>
           <span class="visually-hidden" id="current-stage">queued</span>
           <span class="visually-hidden" id="consensus-status">Evidence 대기</span>
-          <span class="visually-hidden" id="safety-status">검증 대기</span>
         </section>
 
         <main class="view-container">
@@ -75,8 +73,8 @@
               <section class="surface overview-flow" aria-labelledby="flow-title">
                 <div class="section-heading"><div><p class="eyebrow">FRAMEWORK FLOW</p><h2 id="flow-title">하나의 폐쇄 루프</h2></div></div>
                 <ol class="framework-flow">
-                  <li><b>01</b><span>장애 주입<small>Chaos Mesh / AIOpsLab</small></span></li>
-                  <li><b>02</b><span>Evidence 수집<small>Prometheus / Kubernetes</small></span></li>
+                  <li><b>01</b><span>장애·탐지 시작<small>Chaos Mesh 또는 AIOpsLab</small></span></li>
+                  <li><b>02</b><span>Evidence 통합<small>AIOpsLab / Prometheus / Kubernetes</small></span></li>
                   <li><b>03</b><span>4-Agent 판단<small>역할별 진단과 제안</small></span></li>
                   <li><b>04</b><span>상호검토·합의<small>반박과 재협상</small></span></li>
                   <li><b>05</b><span>안전 검증·실행<small>Validator / Kubernetes</small></span></li>
@@ -101,7 +99,7 @@
                 <button type="button" data-view-link="experiment"><strong>복구 실험 구성</strong><span>장애·Controller·합의 정책을 선택합니다.</span></button>
                 <button type="button" data-view-link="agents"><strong>Agent 판단 검토</strong><span>반박·승인·재협상 근거를 확인합니다.</span></button>
                 <button type="button" data-view-link="analysis"><strong>정량 비교</strong><span>Action별 성공률과 복구 시간을 비교합니다.</span></button>
-                <button type="button" data-view-link="aiopslab"><strong>AIOpsLab Benchmark</strong><span>장애 탐지 성능을 별도 평가합니다.</span></button>
+                <button type="button" data-view-link="experiment" data-scenario-link="aiopslab-hotel-reservation"><strong>AIOpsLab 통합 실험</strong><span>탐지 결과를 4-Agent 복구 흐름으로 이어갑니다.</span></button>
               </div>
             </section>
           </section>
@@ -109,7 +107,7 @@
           <section class="view-panel" data-view-panel="experiment" aria-labelledby="experiment-title" hidden>
             <div class="page-heading">
               <div><p class="eyebrow">RECOVERY EXPERIMENT</p><h2 id="experiment-title">복구 실험</h2></div>
-              <p>한 번의 실행에서 장애 주입부터 복구 평가까지 추적합니다.</p>
+              <p>핵심 조건을 선택하고 4-Agent 판단부터 안전한 복구까지 한 흐름으로 확인합니다.</p>
             </div>
             <nav class="section-tabs" aria-label="복구 실험 세부 화면">
               <button type="button" data-view-link="experiment" aria-pressed="true">실행 흐름</button>
@@ -119,10 +117,10 @@
 
             <div class="experiment-workspace">
               <aside class="experiment-controls surface" id="experiment-controls" aria-labelledby="conditions-title">
-                <div class="section-heading"><div><p class="eyebrow">CONDITIONS</p><h2 id="conditions-title">실험 조건</h2></div><span class="section-code">01</span></div>
+                <div class="section-heading"><div><p class="eyebrow">CONDITIONS</p><h2 id="conditions-title">실험 조건</h2></div></div>
                 <fieldset class="scenario-fieldset">
                   <legend>장애 시나리오</legend>
-                  <div class="scenario-list" id="scenario-list">
+                  <div class="scenario-list scenario-grid" id="scenario-list">
                     <button type="button" data-scenario="cpu-stress" aria-pressed="true"><strong>CPU Stress</strong><span>paymentservice · cpu</span></button>
                     <button type="button" data-scenario="memory-stress" aria-pressed="false"><strong>Memory Stress</strong><span>checkoutservice · memory</span></button>
                     <button type="button" data-scenario="network-delay" aria-pressed="false"><strong>Network Delay</strong><span>paymentservice · latency</span></button>
@@ -144,36 +142,40 @@
                 </select>
                 <div class="controller-options" id="controller-options" role="radiogroup" aria-labelledby="controller-label">
                   <button type="button" class="controller-option" data-controller="deterministic" aria-pressed="true">
-                    <span class="controller-option-head"><b>규칙 기반</b><em class="controller-state is-ready">Ready</em></span>
-                    <strong>Deterministic 4-Agent</strong>
-                    <small>재현 가능한 정책 기준선</small>
+                    <strong>Deterministic</strong>
+                    <em class="controller-state is-ready">Ready</em>
                   </button>
                   <button type="button" class="controller-option" data-controller="autogen" aria-pressed="false">
-                    <span class="controller-option-head"><b>LLM 기반</b><em class="controller-state" id="autogen-controller-state">확인 중</em></span>
-                    <strong>AutoGen GroupChat</strong>
-                    <small>4-Agent 구조화 대화와 상호검토</small>
+                    <strong>AutoGen</strong>
+                    <em class="controller-state" id="autogen-controller-state">확인 중</em>
                   </button>
                 </div>
-                <div class="controller-model" id="controller-model" hidden>
-                  <label class="field-label" for="model-input">AutoGen model</label>
-                  <input id="model-input" type="text" value="gpt-5.5" autocomplete="off" />
-                  <ol class="controller-flow" aria-label="AutoGen 실행 경로">
-                    <li>RoundRobin GroupChat</li>
-                    <li>구조화 응답</li>
-                    <li>안전 검증</li>
-                    <li>Transcript 저장</li>
-                  </ol>
-                  <p id="controller-readiness">AutoGen 연결 상태 확인 중</p>
-                </div>
-                <label class="field-label" for="profile-select">연구 프로파일</label>
-                <select id="profile-select">
-                  <option value="four-agent-role-veto-v1">Role-based veto · 2 rounds</option>
-                  <option value="four-agent-unanimous-v1">Unanimous veto</option>
-                  <option value="four-agent-weighted-v1">Weighted majority</option>
-                  <option value="four-agent-autogen-v1">AutoGen role-based veto</option>
-                </select>
-                <label class="field-label" for="repetitions-select">반복 횟수</label>
-                <select id="repetitions-select"><option value="1">1회</option><option value="3" selected>3회</option><option value="10">10회</option></select>
+                <details class="advanced-settings" id="advanced-settings">
+                  <summary>고급 설정</summary>
+                  <div class="controller-model" id="controller-model" hidden>
+                    <label class="field-label" for="model-input">AutoGen model</label>
+                    <input id="model-input" type="text" value="gpt-5.5" autocomplete="off" />
+                    <ol class="controller-flow" aria-label="AutoGen 실행 경로">
+                      <li>RoundRobin GroupChat</li>
+                      <li>구조화 응답</li>
+                      <li>안전 검증</li>
+                      <li>Transcript 저장</li>
+                    </ol>
+                    <p id="controller-readiness">AutoGen 연결 상태 확인 중</p>
+                  </div>
+                  <div class="advanced-settings-grid">
+                    <label for="profile-select">연구 프로파일</label>
+                    <select id="profile-select">
+                      <option value="four-agent-role-veto-v1">Role-based veto · 2 rounds</option>
+                      <option value="four-agent-unanimous-v1">Unanimous veto</option>
+                      <option value="four-agent-weighted-v1">Weighted majority</option>
+                      <option value="four-agent-autogen-v1">AutoGen role-based veto</option>
+                    </select>
+                    <label for="repetitions-select">반복 횟수</label>
+                    <select id="repetitions-select"><option value="1">1회</option><option value="3" selected>3회</option><option value="10">10회</option></select>
+                  </div>
+                </details>
+                <p class="selection-summary" id="selection-summary">CPU Stress · Mock · Deterministic</p>
                 <div class="target-summary">
                   <span>대상</span><strong id="target-deployment">online-boutique / paymentservice</strong>
                   <span>관측</span><strong id="target-metric">cpu · threshold 80</strong>
@@ -191,14 +193,11 @@
                   <div><p class="eyebrow">LIVE 4-AGENT WORKFLOW</p><h2 id="workflow-title">상호감시와 복구 흐름</h2></div>
                   <span class="elapsed" id="elapsed-time">00:00</span>
                 </div>
-                <ol class="stage-timeline" id="stage-timeline">
-                  <li data-stage="preflight" class="active"><span>1</span>Preflight</li>
-                  <li data-stage="injecting_fault"><span>2</span>장애 주입</li>
-                  <li data-stage="collecting_evidence"><span>3</span>Evidence</li>
-                  <li data-stage="agent_reasoning"><span>4</span>Agent 판단</li>
-                  <li data-stage="validating"><span>5</span>안전 검증</li>
-                  <li data-stage="executing"><span>6</span>복구 실행</li>
-                  <li data-stage="observing_recovery"><span>7</span>복구 평가</li>
+                <ol class="stage-timeline workflow-phase-strip" id="stage-timeline">
+                  <li class="workflow-phase active" data-stages="preflight injecting_fault collecting_evidence"><span>01</span><div><strong>관측</strong><small>Preflight · 장애 · Evidence</small></div></li>
+                  <li class="workflow-phase" data-stages="agent_reasoning"><span>02</span><div><strong>Agent 판단</strong><small>역할별 진단과 복구 제안</small></div></li>
+                  <li class="workflow-phase" data-stages="validating"><span>03</span><div><strong>합의·검증</strong><small>상호검토 · Validator</small></div></li>
+                  <li class="workflow-phase" data-stages="executing observing_recovery cleanup completed"><span>04</span><div><strong>복구·평가</strong><small>Kubernetes · MTTR · Reward</small></div></li>
                 </ol>
                 <div class="evidence-band">
                   <div><span>Scenario</span><strong id="evidence-scenario">CPU Stress</strong></div>
@@ -207,15 +206,16 @@
                   <div><span>Source</span><strong id="evidence-source">FakeEvidenceProvider</strong></div>
                 </div>
                 <div class="agent-grid" id="agent-grid" aria-label="4-Agent 상호감시">
-                  <button type="button" data-agent="AIServiceHASupportAgent" aria-pressed="true"><span>HA</span><strong>HA Agent</strong><small>가용성 진단 대기</small></button>
-                  <button type="button" data-agent="AIApplicationManagementAgent" aria-pressed="false"><span>APP</span><strong>Application</strong><small>복구 제안 대기</small></button>
-                  <button type="button" data-agent="AISemiconductorInfraOpsAgent" aria-pressed="false"><span>INF</span><strong>Infrastructure</strong><small>자원 검토 대기</small></button>
-                  <button type="button" data-agent="CostOptimizationAgent" aria-pressed="false"><span>CST</span><strong>Cost</strong><small>비용 검토 대기</small></button>
+                  <button type="button" data-agent="AIServiceHASupportAgent" aria-pressed="true"><span>HA · 진단</span><strong>가용성 판단</strong><small>Evidence 대기</small></button>
+                  <button type="button" data-agent="AIApplicationManagementAgent" aria-pressed="false"><span>APP · 제안</span><strong>복구 Action</strong><small>Evidence 대기</small></button>
+                  <button type="button" data-agent="AISemiconductorInfraOpsAgent" aria-pressed="false"><span>INF · 검토</span><strong>자원 안전성</strong><small>Evidence 대기</small></button>
+                  <button type="button" data-agent="CostOptimizationAgent" aria-pressed="false"><span>CST · 검토</span><strong>비용 경계</strong><small>Evidence 대기</small></button>
                 </div>
                 <div class="consensus-band">
-                  <div><span>상호검토</span><strong id="review-summary">역할별 의견 수집 대기</strong></div><span aria-hidden="true">→</span>
-                  <div><span>합의</span><strong id="consensus-summary">대기</strong></div><span aria-hidden="true">→</span>
+                  <div><span>상호검토</span><strong id="review-summary">의견 수집 대기</strong></div>
+                  <div><span>합의</span><strong id="consensus-summary">대기</strong></div>
                   <div><span>최종 Action</span><strong id="action-summary">선택 전</strong></div>
+                  <div><span>안전 경계</span><strong id="safety-status">검증 대기</strong></div>
                 </div>
                 <details class="event-panel">
                   <summary>타임라인과 이벤트 로그 <span id="event-count">0 events</span></summary>
@@ -361,32 +361,6 @@
                 <details class="benchmark-events"><summary>실행 이벤트 <span id="comparison-event-count">0 events</span></summary><ol id="comparison-event-log"><li>비교 실험 실행 기록 대기</li></ol></details>
                 <nav class="benchmark-artifacts" id="comparison-artifacts" aria-label="Recovery 비교 실험 산출물"></nav>
                 <p class="inline-error" id="comparison-error" role="alert"></p>
-              </div>
-            </details>
-          </section>
-
-          <section class="view-panel" data-view-panel="aiopslab" aria-labelledby="aiopslab-title" hidden>
-            <div class="page-heading">
-              <div><p class="eyebrow">DETECTION BENCHMARK</p><h2 id="aiopslab-title">AIOpsLab</h2></div>
-              <p>Hotel Reservation 장애 탐지 성능을 Kubernetes 복구 실험과 분리해 평가합니다.</p>
-            </div>
-            <details class="benchmark-panel surface" id="aiopslab-benchmark-panel" open>
-              <summary><span><b>AIOpsLab Detection Benchmark</b><small>별도 탐지 Benchmark · 복구 실험과 분리</small></span><strong id="aiopslab-runtime-status">연결 확인 중</strong></summary>
-              <div class="benchmark-body">
-                <div class="benchmark-controls">
-                  <label for="aiopslab-benchmark-select">등록 Benchmark</label><select id="aiopslab-benchmark-select"></select>
-                  <label for="aiopslab-repetitions">반복</label><select id="aiopslab-repetitions"><option value="1">1회</option><option value="3" selected>3회</option><option value="12">12회</option></select>
-                  <button type="button" id="aiopslab-run">Benchmark 실행</button><button type="button" id="aiopslab-cancel" disabled>취소</button>
-                </div>
-                <p class="benchmark-boundary">AIOpsLab Hotel Reservation 장애 탐지 성능을 측정합니다. Chaos Mesh 기반 Kubernetes 복구 실험과 결과를 혼합하지 않습니다.</p>
-                <div class="benchmark-metrics" aria-live="polite">
-                  <div><span>Job</span><strong id="aiopslab-job-status">대기</strong></div><div><span>Accuracy</span><strong id="aiopslab-accuracy">—</strong></div>
-                  <div><span>Average TTD</span><strong id="aiopslab-ttd">—</strong></div><div><span>Average steps</span><strong id="aiopslab-steps">—</strong></div>
-                  <div><span>Average reward</span><strong id="aiopslab-reward">—</strong></div>
-                </div>
-                <details class="benchmark-events"><summary>실행 이벤트 <span id="aiopslab-event-count">0 events</span></summary><ol id="aiopslab-event-log"><li>Benchmark 실행 기록 대기</li></ol></details>
-                <nav class="benchmark-artifacts" id="aiopslab-artifacts" aria-label="AIOpsLab Benchmark 산출물"></nav>
-                <p class="inline-error" id="aiopslab-error" role="alert"></p>
               </div>
             </details>
           </section>

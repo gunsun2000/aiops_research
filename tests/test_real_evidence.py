@@ -252,6 +252,9 @@ def test_runtime_configuration_loads_registered_defaults():
 
     assert isinstance(configuration, RuntimeConfiguration)
     assert configuration.version == "1.0.0"
-    assert configuration.allowed_namespaces == ("online-boutique",)
+    assert configuration.allowed_namespaces == (
+        "online-boutique",
+        "test-hotel-reservation",
+    )
     assert configuration.metric_queries["cpu"].render("online-boutique", "paymentservice")
     assert configuration.scenarios["pod-kill"].manifest == "k8s/paymentservice-pod-kill.yaml"

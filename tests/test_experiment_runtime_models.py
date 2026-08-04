@@ -80,6 +80,42 @@ def test_runtime_request_normalizes_explicit_autogen_controller():
     assert request.to_dict()["model"] == "fake-research-model"
 
 
+def test_runtime_request_carries_aiopslab_detection_in_one_experiment_contract():
+    request = ExperimentRuntimeRequest(
+        scenario_id="aiopslab-hotel-reservation",
+        namespace="test-hotel-reservation",
+        deployment="geo",
+        metric="availability",
+        threshold=1.0,
+        mode="mock",
+        backend="python",
+        protocol_profile="four-agent-role-veto-v1",
+        incident_source="aiopslab",
+        benchmark_id="hotel-reservation-detection-v1",
+        detection_context={"accuracy": "Correct", "ttd_seconds": 3.6},
+    )
+
+    assert request.incident_source == "aiopslab"
+    assert request.benchmark_id == "hotel-reservation-detection-v1"
+    assert request.detection_context["accuracy"] == "Correct"
+    assert request.to_dict()["detection_context"]["ttd_seconds"] == 3.6
+
+
+def test_runtime_request_requires_registered_benchmark_for_aiopslab_source():
+    with pytest.raises(ValueError, match="benchmark_id"):
+        ExperimentRuntimeRequest(
+            "aiopslab-hotel-reservation",
+            "test-hotel-reservation",
+            "geo",
+            "availability",
+            1.0,
+            "mock",
+            "python",
+            "four-agent-role-veto-v1",
+            incident_source="aiopslab",
+        )
+
+
 def test_runtime_request_rejects_unknown_controller():
     with pytest.raises(ValueError, match="controller"):
         ExperimentRuntimeRequest(

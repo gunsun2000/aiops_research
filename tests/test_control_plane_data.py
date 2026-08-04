@@ -178,8 +178,11 @@ def test_scenario_catalog_exposes_all_registered_faults():
         "cpu-stress",
         "memory-stress",
         "network-delay",
+        "aiopslab-hotel-reservation",
     ]
     assert all(item["mode"] == "mock" for item in catalog)
+    assert catalog[-1]["incident_source"] == "aiopslab"
+    assert catalog[-1]["benchmark_id"] == "hotel-reservation-detection-v1"
 
 
 def test_scenario_catalog_accepts_registered_runtime_configuration(tmp_path: Path):

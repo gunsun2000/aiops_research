@@ -266,33 +266,35 @@ class ExperimentRuntime:
         if request.mode != ExecutionMode.REAL:
             return RuntimePreflightResult(True, request.scenario_id, manifest)
 
-        try:
-            checker = getattr(self.chaos, "preflight_scenario", None)
-            chaos_result = (
-                checker(request.scenario_id)
-                if callable(checker)
-                else self.chaos.preflight()
-            )
-        except Exception:
-            return RuntimePreflightResult(
-                False,
-                request.scenario_id,
-                manifest,
-                missing_prerequisites=(f"chaos_mesh:{request.scenario_id}",),
-            )
+        resource_kind = "AIOpsLabDetection" if request.incident_source == "aiopslab" else None
+        if request.incident_source == "chaos_mesh":
+            try:
+                checker = getattr(self.chaos, "preflight_scenario", None)
+                chaos_result = (
+                    checker(request.scenario_id)
+                    if callable(checker)
+                    else self.chaos.preflight()
+                )
+            except Exception:
+                return RuntimePreflightResult(
+                    False,
+                    request.scenario_id,
+                    manifest,
+                    missing_prerequisites=(f"chaos_mesh:{request.scenario_id}",),
+                )
 
-        resource_kind = getattr(chaos_result, "resource_kind", None)
-        if not bool(getattr(chaos_result, "valid", False)):
-            missing = tuple(getattr(chaos_result, "missing_prerequisites", ()) or ())
-            if not missing:
-                missing = (f"chaos_mesh:{request.scenario_id}",)
-            return RuntimePreflightResult(
-                False,
-                request.scenario_id,
-                manifest,
-                resource_kind=resource_kind,
-                missing_prerequisites=missing,
-            )
+            resource_kind = getattr(chaos_result, "resource_kind", None)
+            if not bool(getattr(chaos_result, "valid", False)):
+                missing = tuple(getattr(chaos_result, "missing_prerequisites", ()) or ())
+                if not missing:
+                    missing = (f"chaos_mesh:{request.scenario_id}",)
+                return RuntimePreflightResult(
+                    False,
+                    request.scenario_id,
+                    manifest,
+                    resource_kind=resource_kind,
+                    missing_prerequisites=missing,
+                )
 
         try:
             coordinator = self.coordinator_factory(request)
@@ -348,7 +350,10 @@ class ExperimentRuntime:
             lock_context.__enter__()
             lock_acquired = True
             bridge.emit(RuntimeStage.PREFLIGHT, "runtime preflight")
-            if request.mode == ExecutionMode.REAL:
+            if (
+                request.mode == ExecutionMode.REAL
+                and request.incident_source == "chaos_mesh"
+            ):
                 control.check()
                 preflight = self.chaos.preflight()
                 if not bool(getattr(preflight, "valid", False)):
@@ -380,6 +385,9 @@ class ExperimentRuntime:
             report["mode"] = request.mode.value
             report["controller"] = request.controller
             report["model"] = request.model
+            report["incident_source"] = request.incident_source
+            report["benchmark_id"] = request.benchmark_id
+            report["detection"] = deepcopy(dict(request.detection_context))
             transcript = _coordinator_transcript(coordinator)
             if transcript:
                 report["autogen_transcript"] = transcript
@@ -442,6 +450,9 @@ class ExperimentRuntime:
             "mode": request.mode.value,
             "controller": request.controller,
             "model": request.model,
+            "incident_source": request.incident_source,
+            "benchmark_id": request.benchmark_id,
+            "detection": deepcopy(dict(request.detection_context)),
             "final_status": status,
             "cleanup": deepcopy(dict(cleanup)),
         })
@@ -466,6 +477,14 @@ class ExperimentRuntime:
         if request.metric not in self.configuration.metric_queries:
             raise _BlockedRequest(f"metric is not registered: {request.metric}")
         scenario = self.configuration.scenarios[request.scenario_id]
+        if request.incident_source != scenario.incident_source:
+            raise _BlockedRequest(
+                f"request incident source does not match scenario {request.scenario_id}"
+            )
+        if request.benchmark_id != scenario.benchmark_id:
+            raise _BlockedRequest(
+                f"request benchmark does not match scenario {request.scenario_id}"
+            )
         for field in ("namespace", "deployment", "metric", "threshold"):
             expected = getattr(scenario, field, None)
             if expected is None:
@@ -502,6 +521,9 @@ class ExperimentRuntime:
             "mode": request.mode.value,
             "controller": request.controller,
             "model": request.model,
+            "incident_source": request.incident_source,
+            "benchmark_id": request.benchmark_id,
+            "detection": deepcopy(dict(request.detection_context)),
             "final_status": "failed",
             "evidence": {},
             "diagnosis": {},

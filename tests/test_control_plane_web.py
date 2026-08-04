@@ -400,6 +400,24 @@ def _job_payload(**overrides):
     return payload
 
 
+def _aiopslab_experiment_payload(**overrides):
+    payload = {
+        "scenario_id": "aiopslab-hotel-reservation",
+        "namespace": "test-hotel-reservation",
+        "deployment": "geo",
+        "metric": "availability",
+        "threshold": 1.0,
+        "mode": "mock",
+        "backend": "python",
+        "protocol_profile": "four-agent-role-veto-v1",
+        "repetitions": 1,
+        "incident_source": "aiopslab",
+        "benchmark_id": "hotel-reservation-detection-v1",
+    }
+    payload.update(overrides)
+    return payload
+
+
 def _wait_for_job(client, experiment_id, timeout=2.0):
     deadline = monotonic() + timeout
     while monotonic() < deadline:
@@ -484,6 +502,64 @@ def test_create_experiment_runs_in_background_and_lists_job(tmp_path):
     assert finished["result"]["successful_attempts"] == 1
     assert listed.status_code == 200
     assert listed.json()["jobs"][0]["experiment_id"] == experiment_id
+
+
+def test_aiopslab_detection_and_four_agent_recovery_use_same_experiment_api(tmp_path):
+    test_app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        job_runtime_factory=lambda sink, cancellation, experiment_id: _JobRuntime(
+            sink, cancellation, experiment_id
+        ),
+        aiopslab_executor=_ApiAIOpsLabExecutor(),
+        aiopslab_artifact_root=tmp_path / "integrated-runs",
+    )
+    test_client = TestClient(test_app)
+
+    created = test_client.post(
+        "/api/experiments", json=_aiopslab_experiment_payload()
+    )
+
+    assert created.status_code == 202
+    finished = _wait_for_job(test_client, created.json()["experiment_id"])
+    assert finished["request"]["incident_source"] == "aiopslab"
+    assert finished["request"]["benchmark_id"] == "hotel-reservation-detection-v1"
+    assert finished["result"]["incident_source"] == "aiopslab"
+    detection = finished["result"]["attempts"][0]["detection"]
+    assert detection["evidence_boundary"] == "synthetic_mock"
+    assert detection["benchmark_id"] == "hotel-reservation-detection-v1"
+    assert {event["experiment_id"] for event in finished["events"]} == {
+        created.json()["experiment_id"]
+    }
+
+
+def test_real_aiopslab_validation_requires_aiopslab_not_chaos_mesh(tmp_path):
+    probes = _all_ready_probes()
+    probes["chaos_mesh"] = lambda: {"ready": False}
+
+    class Runtime:
+        def preflight(self, request):
+            return RuntimePreflightResult(
+                valid=True,
+                scenario_id=request.scenario_id,
+                manifest="aiopslab:hotel-reservation-detection-v1",
+                resource_kind="AIOpsLabDetection",
+            )
+
+    test_app = create_app(
+        runtime_factory=lambda: Runtime(),
+        connection_probes=probes,
+        aiopslab_executor=_ApiAIOpsLabExecutor(),
+        aiopslab_artifact_root=tmp_path / "integrated-runs",
+    )
+
+    response = TestClient(test_app).post(
+        "/api/experiments/validate",
+        json=_aiopslab_experiment_payload(mode="real"),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["resolved"]["incident_source"] == "aiopslab"
+    assert response.json()["missing_prerequisites"] == []
 
 
 def test_create_autogen_experiment_runs_registered_bounded_runtime(tmp_path):

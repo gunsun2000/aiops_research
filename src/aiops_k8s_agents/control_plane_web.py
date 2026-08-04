@@ -36,6 +36,7 @@ from aiops_k8s_agents.aiopslab_jobs import (
 from aiops_k8s_agents.experiment_runtime_factory import build_experiment_runtime
 from aiops_k8s_agents.experiment_runtime import RuntimePreflightResult
 from aiops_k8s_agents.experiment_job_runner import ExperimentJobRunner
+from aiops_k8s_agents.integrated_incident import AIOpsLabIncidentAdapter
 from aiops_k8s_agents.experiment_jobs import SQLiteExperimentJobStore
 from aiops_k8s_agents.experiment_runtime_models import ExperimentRuntimeRequest
 from aiops_k8s_agents.executor import ExecutionBackend, ExecutionMode
@@ -122,6 +123,8 @@ class ExperimentValidationRequest(BaseModel):
     repetitions: int = Field(default=1, ge=1)
     controller: Literal["deterministic", "autogen"] = "deterministic"
     model: str = ""
+    incident_source: Literal["chaos_mesh", "aiopslab"] = "chaos_mesh"
+    benchmark_id: str = ""
 
 
 class ExperimentCreateRequest(ExperimentValidationRequest):
@@ -720,6 +723,16 @@ def api_validate_experiment(
         raise HTTPException(status_code=400, detail="metric does not match the registered scenario")
     if request.threshold != scenario.threshold:
         raise HTTPException(status_code=400, detail="threshold does not match the registered scenario")
+    if request.incident_source != scenario.incident_source:
+        raise HTTPException(
+            status_code=400,
+            detail="incident source does not match the registered scenario",
+        )
+    if request.benchmark_id.strip() != scenario.benchmark_id:
+        raise HTTPException(
+            status_code=400,
+            detail="benchmark does not match the registered scenario",
+        )
     if request.protocol_profile.strip() not in state.protocol_profiles:
         raise HTTPException(status_code=400, detail="protocol profile is not registered")
     profile = state.protocol_profiles[request.protocol_profile.strip()]
@@ -767,6 +780,8 @@ def api_validate_experiment(
             repetitions=request.repetitions,
             controller=request.controller,
             model=request.model,
+            incident_source=request.incident_source,
+            benchmark_id=request.benchmark_id,
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -775,7 +790,14 @@ def api_validate_experiment(
     preflight_payload: dict[str, object] | None = None
     if runtime_request.mode is ExecutionMode.REAL:
         connection_result = api_connections(http_request)
-        missing = list(connection_result["missing_prerequisites"])
+        required_connections = _required_real_connections(
+            state, runtime_request.incident_source
+        )
+        missing = [
+            name
+            for name in required_connections
+            if not connection_result["connections"].get(name, {}).get("ready")
+        ]
         try:
             runtime = state.runtime_factory()
         except Exception as exc:
@@ -821,6 +843,8 @@ def api_validate_experiment(
             "metric": scenario.metric,
             "threshold": scenario.threshold,
             "manifest": scenario.manifest,
+            "incident_source": scenario.incident_source,
+            "benchmark_id": scenario.benchmark_id,
         },
         "mode": runtime_request.mode.value,
         "controller": "mutual_supervision",
@@ -838,13 +862,12 @@ def _connection_names(state: RuntimeApiState) -> tuple[str, ...]:
     return tuple(state.connection_probes)
 
 
-def _required_real_connections(state: RuntimeApiState) -> tuple[str, ...]:
-    required = (
-        "kubernetes",
-        "prometheus",
-        "chaos_mesh",
-        "artifact_directory",
-    )
+def _required_real_connections(
+    state: RuntimeApiState,
+    incident_source: str = "chaos_mesh",
+) -> tuple[str, ...]:
+    source_connection = "aiopslab" if incident_source == "aiopslab" else "chaos_mesh"
+    required = ("kubernetes", "prometheus", source_connection, "artifact_directory")
     return tuple(name for name in required if name in state.connection_probes)
 
 
@@ -861,6 +884,9 @@ def _runtime_request(data: Mapping[str, Any]) -> ExperimentRuntimeRequest:
         repetitions=data["repetitions"],
         controller=data.get("controller", "deterministic"),
         model=data.get("model", ""),
+        incident_source=data.get("incident_source", "chaos_mesh"),
+        benchmark_id=data.get("benchmark_id", ""),
+        detection_context=data.get("detection_context", {}),
     )
 
 
@@ -1095,7 +1121,6 @@ def create_app(
             autogen_model_client_factory=autogen_model_client_factory,
         )
     )
-    job_runner = ExperimentJobRunner(job_store, runtime_builder)
     benchmark_catalog = AIOpsLabBenchmarkCatalog.from_path(
         aiopslab_catalog_path or root / "config" / "aiopslab_benchmarks.json"
     )
@@ -1115,6 +1140,16 @@ def create_app(
         aiopslab_artifact_root
         or root / "runs" / "control-plane" / "aiopslab"
     ).expanduser().resolve()
+    integrated_incident_adapter = AIOpsLabIncidentAdapter(
+        benchmark_catalog,
+        benchmark_executor,
+        artifact_root=benchmark_artifact_root,
+    )
+    job_runner = ExperimentJobRunner(
+        job_store,
+        runtime_builder,
+        incident_adapter=integrated_incident_adapter,
+    )
     aiopslab_job_store = SQLiteAIOpsLabJobStore(database_path)
     aiopslab_job_runner = AIOpsLabJobRunner(
         aiopslab_job_store,

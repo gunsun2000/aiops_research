@@ -28,10 +28,12 @@ class ExperimentJobRunner:
         runtime_factory: RuntimeFactory,
         *,
         experiment_id_factory: Callable[[], str] = default_experiment_id,
+        incident_adapter: Any | None = None,
     ) -> None:
         self.store = store
         self.runtime_factory = runtime_factory
         self.experiment_id_factory = experiment_id_factory
+        self.incident_adapter = incident_adapter
         self._lock = RLock()
         self._condition = Condition(self._lock)
         self._threads: dict[str, Thread] = {}
@@ -97,14 +99,14 @@ class ExperimentJobRunner:
                 for experiment_id, cancellation in self._cancellations.items()
                 if experiment_id in self._threads
             )
+            for experiment_id, _, _ in active:
+                try:
+                    self.store.request_cancel(experiment_id)
+                except KeyError:
+                    continue
             for _, _, cancellation in active:
                 cancellation.set()
             self._condition.notify_all()
-        for experiment_id, _, _ in active:
-            try:
-                self.store.request_cancel(experiment_id)
-            except KeyError:
-                continue
         if wait:
             for _, thread, _ in active:
                 thread.join(timeout=5.0)
@@ -130,9 +132,27 @@ class ExperimentJobRunner:
                     break
                 sink.attempt = attempt
                 attempt_id = f"{experiment_id}-r{attempt:02d}"
+                attempt_request = request
+                detection: dict[str, Any] = {}
+                if request.incident_source == "aiopslab":
+                    if self.incident_adapter is None:
+                        raise RuntimeError("AIOpsLab incident adapter is unavailable")
+                    detection = dict(self.incident_adapter.prepare(
+                        request,
+                        experiment_id=experiment_id,
+                        repetition=attempt,
+                        cancellation=cancellation,
+                        event_sink=sink,
+                    ))
+                    attempt_request = replace(
+                        request,
+                        detection_context=detection,
+                    )
                 runtime = self.runtime_factory(sink, cancellation, attempt_id)
-                result = runtime.run(request)
+                result = runtime.run(attempt_request)
                 serialized = _result_dict(result)
+                if detection:
+                    serialized["detection"] = detection
                 attempts.append(serialized)
                 result_status = str(serialized.get("status", "failed"))
                 mapped = _job_status(result_status)
@@ -156,6 +176,8 @@ class ExperimentJobRunner:
             aggregate = {
                 "experiment_id": experiment_id,
                 "status": terminal_status.value,
+                "incident_source": job.request.incident_source,
+                "benchmark_id": job.request.benchmark_id,
                 "attempts": attempts,
                 "successful_attempts": sum(
                     1 for attempt in attempts if _job_status(str(attempt.get("status")))
@@ -240,6 +262,7 @@ def _job_status(runtime_status: str) -> ExperimentJobStatus:
         return ExperimentJobStatus.CANCELLED
     if normalized in {
         "blocked",
+        "safe_failure",
         "safe_stopped",
         "consensus_rejected",
         "configuration_rejected",
