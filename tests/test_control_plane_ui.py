@@ -20,6 +20,7 @@ def test_console_has_one_accessible_research_workspace():
     assert 'id="decision-inspector"' in source
     assert 'id="research-results"' in source
     assert "4-Agent AIOps 연구 운영 콘솔" in source
+    assert "새 복구 실험" not in source
     assert "styles.css?v=15" in source
     assert "app.js?v=15" in source
 
@@ -167,6 +168,7 @@ def test_console_styles_use_multi_view_desktop_shell_and_mobile_reflow():
     assert ".section-tabs" in source
     assert ".controller-options" in source
     assert ".controller-option" in source
+    assert ".header-run" not in source
     assert "@media (max-width: 760px)" in source
     assert "position: sticky" in source
     assert "overflow-wrap: anywhere" in source

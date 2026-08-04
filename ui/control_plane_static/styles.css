@@ -130,18 +130,18 @@ select, input {
 }
 .platform-header h1 { margin-top: 3px; }
 .platform-header > div > p:last-child { margin-top: 4px; color: var(--muted); font-size: 0.8rem; }
-.header-run, .primary-action, .benchmark-controls button, .quick-action-grid button {
+.primary-action, .benchmark-controls button, .quick-action-grid button {
   min-height: 38px;
   border-radius: 4px;
 }
-.header-run, .primary-action, .benchmark-controls button:first-of-type {
+.primary-action, .benchmark-controls button:first-of-type {
   padding: 8px 14px;
   color: #fff;
   background: var(--navy);
   border: 1px solid var(--navy);
   font-weight: 700;
 }
-.header-run:hover, .primary-action:hover, .benchmark-controls button:first-of-type:hover { background: var(--navy-hover); }
+.primary-action:hover, .benchmark-controls button:first-of-type:hover { background: var(--navy-hover); }
 
 .global-context {
   display: grid;
@@ -396,8 +396,6 @@ select, input {
   .platform-header { align-items: flex-start; }
   .platform-header > div > p:last-child { display: none; }
   .platform-header h1 { font-size: 1.15rem; }
-  .header-run { min-width: 42px; padding: 8px 10px; font-size: 0; }
-  .header-run::before { content: "+"; font-size: 1.2rem; }
   .global-context { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .global-context > div:nth-child(2) { border-right: 0; }
   .global-context > div:nth-child(-n + 2) { border-bottom: 1px solid var(--line); }
