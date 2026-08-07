@@ -6,6 +6,7 @@ APP = ROOT / "ui" / "control_plane_static" / "app.js"
 REFERENCE = ROOT / "ui" / "control_plane_static" / "reference-ui.js"
 BULK = ROOT / "ui" / "control_plane_static" / "bulk-delete-ui.js"
 POLISH = ROOT / "ui" / "control_plane_static" / "research-console-polish.js"
+FLOW = ROOT / "ui" / "control_plane_static" / "stage-flow-ui.js"
 
 
 def source(path: Path) -> str:
@@ -74,6 +75,29 @@ def test_data_first_polish_keeps_aiopslab_metrics_to_supported_schema():
         assert metric in polish
     for unsupported in ("F1-Score", "Precision", "Recall", "AUC"):
         assert unsupported not in polish
+
+
+def test_recovery_flow_exposes_all_four_agents_in_eight_steps():
+    bulk = source(BULK)
+    flow = source(FLOW)
+    assert "/static/stage-flow-ui.js?v=1" in bulk
+    expected = (
+        "장애 조건 확인",
+        "Evidence 수집",
+        "HA Agent 진단",
+        "APP Agent 복구 Action 제안",
+        "Infra Agent 검토",
+        "Cost Agent 검토",
+        "안전 명령 검증",
+        "복구 실행 · 결과 확인",
+    )
+    for label in expected:
+        assert label in flow
+    assert "Infra · Cost 검토" not in flow
+    assert "MutationObserver" not in flow
+    assert "overview-stage-timeline" in flow
+    assert "stage-timeline" in flow
+    assert "mini-stage-list" in flow
 
 
 def test_experiment_results_sync_filters_to_url_and_paginate():
