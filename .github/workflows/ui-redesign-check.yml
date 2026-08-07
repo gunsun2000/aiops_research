@@ -10,6 +10,7 @@ on:
     paths:
       - 'ui/control_plane_static/**'
       - 'tests/test_control_plane_ui.py'
+      - 'tests/test_complete_research_console_ui.py'
       - '.github/workflows/ui-redesign-check.yml'
 
 jobs:
@@ -32,7 +33,8 @@ jobs:
           sudo apt-get install -y -qq fonts-noto-cjk
           fc-cache -f
       - name: Run UI contract tests
-        run: python -m pytest tests/test_control_plane_ui.py -q
+        run: |
+          python -m pytest tests/test_control_plane_ui.py tests/test_complete_research_console_ui.py -q
       - name: Check JavaScript syntax
         run: |
           node --check ui/control_plane_static/app.js
@@ -60,12 +62,14 @@ jobs:
             echo "No headless Chrome/Chromium found"
             exit 1
           fi
-          FLAGS="--headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1672,941 --virtual-time-budget=3500"
+          FLAGS="--headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1672,941 --virtual-time-budget=4500"
           "$BROWSER" $FLAGS --screenshot=ui-preview/01-system-overview.png 'http://127.0.0.1:18180/#overview'
           "$BROWSER" $FLAGS --screenshot=ui-preview/02-recovery-experiment.png 'http://127.0.0.1:18180/#experiment'
-          "$BROWSER" $FLAGS --screenshot=ui-preview/03-aiopslab-benchmark.png 'http://127.0.0.1:18180/#aiopslab'
-          "$BROWSER" $FLAGS --screenshot=ui-preview/04-experiment-results.png 'http://127.0.0.1:18180/#analysis'
-          "$BROWSER" $FLAGS --screenshot=ui-preview/05-experiment-detail.png 'http://127.0.0.1:18180/#history'
+          "$BROWSER" $FLAGS --screenshot=ui-preview/03-aiopslab-evaluation.png 'http://127.0.0.1:18180/?aiopslab_tab=evaluation#aiopslab'
+          "$BROWSER" $FLAGS --screenshot=ui-preview/04-aiopslab-comparison.png 'http://127.0.0.1:18180/?aiopslab_tab=comparison#aiopslab'
+          "$BROWSER" $FLAGS --screenshot=ui-preview/05-aiopslab-history.png 'http://127.0.0.1:18180/?aiopslab_tab=history#aiopslab'
+          "$BROWSER" $FLAGS --screenshot=ui-preview/06-experiment-results.png 'http://127.0.0.1:18180/#analysis'
+          "$BROWSER" $FLAGS --screenshot=ui-preview/07-experiment-detail.png 'http://127.0.0.1:18180/#history'
           ls -lh ui-preview
       - name: Upload UI preview
         uses: actions/upload-artifact@v4
