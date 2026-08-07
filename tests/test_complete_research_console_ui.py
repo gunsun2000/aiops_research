@@ -58,8 +58,9 @@ def test_data_first_visual_polish_is_loaded_without_fabricated_values():
     assert "renderRecentBenchmarkResults" in polish
     assert "experiment-id-search" in polish
     assert "data-first" in polish
-    assert "MutationObserver" in polish
+    assert "No broad MutationObserver" in polish
     assert "experiment-history-body" in polish
+    assert 'document.readyState === "loading"' in polish
     lowered = polish.lower()
     for forbidden in ("0.842", "0.831", "0.863", "0.901", "14.32", "4.12"):
         assert forbidden not in lowered
