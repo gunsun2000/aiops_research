@@ -41,13 +41,13 @@ def test_aiopslab_history_has_filters_pagination_detail_events_and_artifacts():
     assert "artifact_urls" in script
 
 
-def test_aiopslab_sync_does_not_observe_and_mutate_the_whole_panel():
+def test_reference_ui_is_event_driven_and_has_no_mutation_observers():
     script = source(REFERENCE)
-    # Regression: observing the whole AIOpsLab panel while syncAll() rebuilds
-    # scenario cards caused a MutationObserver feedback loop that froze every click.
-    assert "new MutationObserver(syncAll)" not in script
-    assert "document.querySelector('[data-view-panel=\"aiopslab\"]'),$('dashboard-total')" not in script
+    # Regression: DOM observers that also rewrite the observed DOM created feedback
+    # loops in Chrome, consuming the main thread and making every button appear frozen.
+    assert "MutationObserver" not in script
     assert "bindAIOpsLabTabs" in script
+    assert "addEventListener" in script
 
 
 def test_experiment_results_sync_filters_to_url_and_paginate():
