@@ -39,6 +39,7 @@ jobs:
         run: |
           node --check ui/control_plane_static/app.js
           node --check ui/control_plane_static/reference-ui.js
+          node --check ui/control_plane_static/bulk-delete-ui.js
       - name: Start control plane
         env:
           AIOPS_REPO_ROOT: ${{ github.workspace }}
@@ -71,6 +72,9 @@ jobs:
           "$BROWSER" $FLAGS --screenshot=ui-preview/06-experiment-results.png 'http://127.0.0.1:18180/#analysis'
           "$BROWSER" $FLAGS --screenshot=ui-preview/07-experiment-detail.png 'http://127.0.0.1:18180/#history'
           "$BROWSER" $FLAGS --dump-dom 'http://127.0.0.1:18180/?aiopslab_tab=evaluation#aiopslab' > ui-preview/aiopslab-evaluation-dom.html
+          "$BROWSER" $FLAGS --dump-dom 'http://127.0.0.1:18180/#analysis' > ui-preview/experiment-results-dom.html
+          grep -q 'id="delete-all-experiments"' ui-preview/experiment-results-dom.html
+          grep -q '>전체 삭제<' ui-preview/experiment-results-dom.html
           ls -lh ui-preview
       - name: Upload UI preview
         uses: actions/upload-artifact@v4
