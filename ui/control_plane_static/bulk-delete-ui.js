@@ -135,9 +135,19 @@
     document.head.append(style);
   }
 
+  function ensurePolishScript() {
+    if (document.querySelector('script[data-research-console-polish]')) return;
+    const script = document.createElement("script");
+    script.src = "/static/research-console-polish.js?v=1";
+    script.defer = true;
+    script.dataset.researchConsolePolish = "1";
+    document.head.append(script);
+  }
+
   function bootstrap() {
     injectBulkDeleteStyles();
     ensureBulkDeleteControl();
+    ensurePolishScript();
     document.querySelector('[data-view="analysis"]')?.addEventListener("click", () => setTimeout(refreshDeleteButtonState, 0));
     window.addEventListener("aiops:history-updated", () => setTimeout(refreshDeleteButtonState, 0));
   }
