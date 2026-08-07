@@ -14,6 +14,27 @@
 
   const ROLE_CLASSES = ["stage-neutral", "stage-ha", "stage-app", "stage-infra", "stage-cost"];
 
+  function ensureRoleStyles() {
+    if (document.getElementById("agent-stage-role-colors")) return;
+    const style = document.createElement("style");
+    style.id = "agent-stage-role-colors";
+    style.textContent = `
+      .reference-flow li.stage-ha b{border-color:var(--blue);color:var(--blue);background:#edf4ff}
+      .reference-flow li.stage-ha span,.reference-flow li.stage-ha small{color:var(--blue)}
+      .reference-flow li.stage-app b{border-color:var(--green);color:var(--green);background:#ecfbf4}
+      .reference-flow li.stage-app span,.reference-flow li.stage-app small{color:var(--green)}
+      .reference-flow li.stage-infra b{border-color:var(--purple);color:var(--purple);background:#f3efff}
+      .reference-flow li.stage-infra span,.reference-flow li.stage-infra small{color:var(--purple)}
+      .reference-flow li.stage-cost b{border-color:var(--orange);color:var(--orange);background:#fff6e8}
+      .reference-flow li.stage-cost span,.reference-flow li.stage-cost small{color:var(--orange)}
+      .mini-stage-list li.stage-ha,#stage-timeline li.stage-ha{color:var(--blue)}
+      .mini-stage-list li.stage-app,#stage-timeline li.stage-app{color:var(--green)}
+      .mini-stage-list li.stage-infra,#stage-timeline li.stage-infra{color:var(--purple)}
+      .mini-stage-list li.stage-cost,#stage-timeline li.stage-cost{color:var(--orange)}
+    `;
+    document.head.append(style);
+  }
+
   function applyRoleClass(item, roleClass) {
     if (!item) return;
     item.classList.remove(...ROLE_CLASSES);
@@ -67,6 +88,7 @@
   }
 
   function renderFourAgentFlow() {
+    ensureRoleStyles();
     renderOverviewFlow();
     renderMiniFlow();
     renderLiveFlow();
