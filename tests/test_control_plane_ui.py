@@ -10,6 +10,10 @@ def _source(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def _compact(source: str) -> str:
+    return "".join(source.split())
+
+
 def test_console_has_four_primary_research_views():
     html = _source(INDEX_HTML)
     assert '<html lang="ko">' in html
@@ -32,14 +36,14 @@ def test_sidebar_exposes_runtime_connection_statuses():
 
 
 def test_recovery_scenarios_are_separate_from_aiopslab():
-    script = _source(APP_JS)
-    assert "const RECOVERY_SCENARIOS" in script
+    script = _compact(_source(APP_JS))
+    assert "constRECOVERY_SCENARIOS" in script
     for scenario in ("cpu-stress", "memory-stress", "network-delay", "pod-kill"):
         assert f'"{scenario}"' in script
-    assert 'id !== "aiopslab-hotel-reservation"' in script
-    assert '(item.incident_source || "chaos_mesh") !== "aiopslab"' in script
-    assert 'incident_source: "chaos_mesh"' in script
-    assert 'benchmark_id: ""' in script
+    assert 'id!=="aiopslab-hotel-reservation"' in script
+    assert '(item.incident_source||"chaos_mesh")!=="aiopslab"' in script
+    assert 'incident_source:"chaos_mesh"' in script
+    assert 'benchmark_id:""' in script
 
 
 def test_recovery_ui_has_eight_stage_workflow_and_safe_modes():
@@ -67,15 +71,15 @@ def test_console_preserves_experiment_job_sse_cancel_and_real_gate():
 
 def test_autogen_is_readiness_gated_and_model_only_used_for_autogen():
     html = _source(INDEX_HTML)
-    script = _source(APP_JS)
+    script = _compact(_source(APP_JS))
     assert 'data-controller="autogen"' in html
     assert 'id="autogen-controller-state"' in html
-    assert "autoButton.disabled = !autogen.ready" in script
-    assert 'controller === "autogen" ? $("model-input").value.trim() : ""' in script
-    assert "controllerLabel(controller, model)" in script
-    assert "Deterministic Mutual Supervision" in script
-    assert "AutoGen Round-Robin" in script
-    assert "deterministic ·" not in script
+    assert "autoButton.disabled=!autogen.ready" in script
+    assert 'controller==="autogen"?$("model-input").value.trim():""' in script
+    assert "controllerLabel(controller,model)" in script
+    assert "DeterministicMutualSupervision" in script
+    assert "AutoGenRound-Robin" in script
+    assert "deterministic·" not in script
 
 
 def test_console_has_four_agents_and_no_fake_precomputed_decisions():
@@ -91,13 +95,13 @@ def test_console_has_four_agents_and_no_fake_precomputed_decisions():
 
 
 def test_evidence_boundaries_do_not_mix_aiopslab_into_recovery():
-    script = _source(APP_JS)
-    assert '"Chaos Mesh Simulation"' in script
-    assert '"Chaos Mesh"' in script
-    assert 'return "SyntheticEvidenceProvider"' in script
-    assert 'return "Kubernetes Snapshot"' in script
-    assert 'return "Kubernetes + Prometheus"' in script
-    assert "AIOpsLab + Prometheus + Kubernetes" not in script
+    script = _compact(_source(APP_JS))
+    assert '"ChaosMeshSimulation"' in script
+    assert '"ChaosMesh"' in script
+    assert 'return"SyntheticEvidenceProvider"' in script
+    assert 'return"KubernetesSnapshot"' in script
+    assert 'return"Kubernetes+Prometheus"' in script
+    assert "AIOpsLab+Prometheus+Kubernetes" not in script
 
 
 def test_aiopslab_has_its_own_benchmark_runtime_and_sse():
@@ -142,15 +146,15 @@ def test_experiment_detail_has_six_research_tabs_and_artifacts():
 
 
 def test_styles_match_reference_shell_and_responsive_layout():
-    css = _source(STYLES_CSS)
+    css = _compact(_source(STYLES_CSS))
     assert ".platform-shell" in css
-    assert "grid-template-columns: 248px minmax(0,1fr)" in css
+    assert "grid-template-columns:248pxminmax(0,1fr)" in css
     assert ".platform-sidebar" in css
     assert ".eight-stage" in css
-    assert "grid-template-columns: repeat(8,minmax(0,1fr))" in css
+    assert "grid-template-columns:repeat(8,minmax(0,1fr))" in css
     assert ".mode-badge.mock" in css
     assert ".mode-badge.real" in css
     assert ".synthetic-warning" in css
-    assert "@media (max-width: 760px)" in css
-    assert "position: sticky" in css
-    assert "overflow-wrap: anywhere" in css
+    assert "@media(max-width:760px)" in css
+    assert "position:sticky" in css
+    assert "overflow-wrap:anywhere" in css
