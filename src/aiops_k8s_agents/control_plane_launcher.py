@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from aiops_k8s_agents.control_plane_web import main as _control_plane_main
+from aiops_k8s_agents import experiment_bulk_delete as _experiment_bulk_delete  # noqa: F401
 
 
 DEFAULT_CONTROL_PLANE_PORT = "18180"
