@@ -1,0 +1,30 @@
+name: UI Redesign Check
+
+on:
+  push:
+    branches:
+      - feat/ui-research-console-redesign
+  pull_request:
+    branches:
+      - master
+    paths:
+      - 'ui/control_plane_static/**'
+      - 'tests/test_control_plane_ui.py'
+      - '.github/workflows/ui-redesign-check.yml'
+
+jobs:
+  ui-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install pytest
+        run: python -m pip install --disable-pip-version-check pytest
+      - name: Run UI contract tests
+        run: python -m pytest tests/test_control_plane_ui.py -q
+      - name: Check JavaScript syntax
+        run: node --check ui/control_plane_static/app.js
