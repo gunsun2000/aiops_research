@@ -36,7 +36,8 @@ def test_aiopslab_history_has_filters_pagination_detail_events_and_artifacts():
         "aiopslab-job-detail",
     ):
         assert token in script
-    assert "/events" in script
+    assert "/api/benchmarks/aiopslab/jobs/${encodeURIComponent(jobId)}" in script
+    assert "job.events" in script
     assert "artifact_urls" in script
 
 
