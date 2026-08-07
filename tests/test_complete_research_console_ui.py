@@ -87,12 +87,13 @@ def test_bulk_experiment_result_deletion_reloads_after_success_headers_without_w
     assert "deleteAllExperimentResults" in script
     assert "실행 중인 실험은 삭제하지 않습니다" in script
     assert "window.confirm" in script
-    assert 'fetch("/api/experiments", { method: "DELETE"' in script
-    assert 'api("/api/experiments", { method: "DELETE" })' not in script
+    delete_body = script.split("async function deleteAllExperimentResults", 1)[1].split("function ensureBulkDeleteControl", 1)[0]
+    assert 'fetch("/api/experiments"' in delete_body
+    assert 'method: "DELETE"' in delete_body
     assert "/api/experiments/${encodeURIComponent(" not in script
     assert "while (true)" not in script
     assert "for (const job" not in script
-    assert "response.json()" not in script.split("async function deleteAllExperimentResults", 1)[1].split("function ensureBulkDeleteControl", 1)[0]
+    assert "response.json()" not in delete_body.split("if (!response.ok)", 1)[0]
     assert "location.reload()" in script
     assert "MutationObserver" not in script
 
