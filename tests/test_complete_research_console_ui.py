@@ -43,8 +43,6 @@ def test_aiopslab_history_has_filters_pagination_detail_events_and_artifacts():
 
 def test_reference_ui_is_event_driven_and_has_no_mutation_observers():
     script = source(REFERENCE)
-    # Regression: DOM observers that also rewrite the observed DOM created feedback
-    # loops in Chrome, consuming the main thread and making every button appear frozen.
     assert "MutationObserver" not in script
     assert "bindAIOpsLabTabs" in script
     assert "addEventListener" in script
@@ -77,6 +75,22 @@ def test_experiment_result_deletion_requires_confirmation_and_refreshes_history(
     assert "aiops:history-updated" in app
     assert "실행 중인 실험은 삭제할 수 없습니다." in app
     assert "MutationObserver" not in reference
+
+
+def test_bulk_experiment_result_deletion_is_visible_safe_and_refreshes_results():
+    script = source(REFERENCE)
+    assert "delete-all-experiments" in script
+    assert "전체 삭제" in script
+    assert "deleteAllExperimentResults" in script
+    assert "/api/experiments?limit=100" in script
+    assert "completed" in script and "failed" in script and "blocked" in script
+    assert "cancelled" in script and "interrupted" in script
+    assert "queued" in script and "running" in script and "cancelling" in script
+    assert "실행 중인 실험은 삭제하지 않습니다" in script
+    assert "window.confirm" in script
+    assert 'method: "DELETE"' in script or "method:'DELETE'" in script or 'method:"DELETE"' in script
+    assert "aiops:history-updated" in script
+    assert "MutationObserver" not in script
 
 
 def test_experiment_detail_has_copy_download_rerun_url_tabs_logs_and_events():
