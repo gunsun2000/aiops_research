@@ -24,6 +24,11 @@ class AIOpsLabBenchmarkSpec:
     max_steps: int
     timeout_seconds: int
     max_repetitions: int
+    subtitle: str = ""
+    tag: str = "AIOpsLab"
+    description: str = ""
+    dataset_label: str = "AIOpsLab Dataset"
+    icon: str = "▦"
 
     def validate_request(
         self,
@@ -52,6 +57,11 @@ class AIOpsLabBenchmarkSpec:
             "namespace": self.namespace,
             "service": self.service,
             "max_repetitions": self.max_repetitions,
+            "subtitle": self.subtitle,
+            "tag": self.tag,
+            "description": self.description,
+            "dataset_label": self.dataset_label,
+            "icon": self.icon,
         }
 
 
@@ -259,6 +269,11 @@ def _spec_from_dict(data: Mapping[str, Any]) -> AIOpsLabBenchmarkSpec:
         max_steps=int(data["max_steps"]),
         timeout_seconds=int(data["timeout_seconds"]),
         max_repetitions=int(data["max_repetitions"]),
+        subtitle=str(data.get("subtitle", "")).strip(),
+        tag=str(data.get("tag", "AIOpsLab")).strip(),
+        description=str(data.get("description", "")).strip(),
+        dataset_label=str(data.get("dataset_label", "AIOpsLab Dataset")).strip(),
+        icon=str(data.get("icon", "▦")).strip(),
     )
 
 
@@ -269,4 +284,3 @@ def _terminate(process: subprocess.Popen[str]) -> None:
     except subprocess.TimeoutExpired:
         process.kill()
         process.communicate(timeout=5)
-
