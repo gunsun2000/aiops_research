@@ -144,10 +144,20 @@
     document.head.append(script);
   }
 
+  function ensureStageFlowScript() {
+    if (document.querySelector('script[data-stage-flow-ui]')) return;
+    const script = document.createElement("script");
+    script.src = "/static/stage-flow-ui.js?v=1";
+    script.defer = true;
+    script.dataset.stageFlowUi = "1";
+    document.head.append(script);
+  }
+
   function bootstrap() {
     injectBulkDeleteStyles();
     ensureBulkDeleteControl();
     ensurePolishScript();
+    ensureStageFlowScript();
     document.querySelector('[data-view="analysis"]')?.addEventListener("click", () => setTimeout(refreshDeleteButtonState, 0));
     window.addEventListener("aiops:history-updated", () => setTimeout(refreshDeleteButtonState, 0));
   }
