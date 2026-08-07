@@ -70,10 +70,11 @@ jobs:
           "$BROWSER" $FLAGS --screenshot=ui-preview/05-aiopslab-history.png 'http://127.0.0.1:18180/?aiopslab_tab=history#aiopslab'
           "$BROWSER" $FLAGS --screenshot=ui-preview/06-experiment-results.png 'http://127.0.0.1:18180/#analysis'
           "$BROWSER" $FLAGS --screenshot=ui-preview/07-experiment-detail.png 'http://127.0.0.1:18180/#history'
+          "$BROWSER" $FLAGS --dump-dom 'http://127.0.0.1:18180/?aiopslab_tab=evaluation#aiopslab' > ui-preview/aiopslab-evaluation-dom.html
           ls -lh ui-preview
       - name: Upload UI preview
         uses: actions/upload-artifact@v4
         with:
           name: ui-redesign-preview
-          path: ui-preview/*.png
+          path: ui-preview/*
           if-no-files-found: error
