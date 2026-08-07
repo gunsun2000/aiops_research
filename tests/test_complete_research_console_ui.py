@@ -17,7 +17,7 @@ def test_aiopslab_three_tabs_are_functional_and_use_persisted_jobs():
     for label in ("벤치마크 평가", "모델 성능 비교", "실행 이력"):
         assert label in script
     for tab in ("evaluation", "comparison", "history"):
-        assert f'"{tab}"' in script or f"'{tab}'" in script
+        assert f'"{tab}"' in script or f"'{tab}'"' in script
     assert "/api/benchmarks/aiopslab/jobs?limit=100" in script
     assert "renderAIOpsLabComparison" in script
     assert "renderAIOpsLabHistory" in script
@@ -61,6 +61,8 @@ def test_data_first_visual_polish_is_loaded_without_fabricated_values():
     assert "No broad MutationObserver" in polish
     assert "experiment-history-body" in polish
     assert 'document.readyState === "loading"' in polish
+    assert ".aiopslab-tool-panel table{width:100%;border-collapse:collapse}" in polish
+    assert ".detail-header{display:grid;grid-template-columns:42px auto minmax(0,1fr) auto" in polish
     lowered = polish.lower()
     for forbidden in ("0.842", "0.831", "0.863", "0.901", "14.32", "4.12"):
         assert forbidden not in lowered
