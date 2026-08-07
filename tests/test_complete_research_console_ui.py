@@ -17,7 +17,7 @@ def test_aiopslab_three_tabs_are_functional_and_use_persisted_jobs():
     for label in ("벤치마크 평가", "모델 성능 비교", "실행 이력"):
         assert label in script
     for tab in ("evaluation", "comparison", "history"):
-        assert f'"{tab}"' in script or f"'{tab}'"' in script
+        assert f'"{tab}"' in script or f"'{tab}'" in script
     assert "/api/benchmarks/aiopslab/jobs?limit=100" in script
     assert "renderAIOpsLabComparison" in script
     assert "renderAIOpsLabHistory" in script
