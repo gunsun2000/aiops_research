@@ -26,6 +26,11 @@ def _write_catalog(path: Path) -> None:
                         "max_steps": 8,
                         "timeout_seconds": 1800,
                         "max_repetitions": 12,
+                        "subtitle": "호텔 예약 시스템",
+                        "tag": "AIOpsLab",
+                        "description": "호텔 예약 마이크로서비스 환경의 이상 탐지 성능을 평가합니다.",
+                        "dataset_label": "AIOpsLab Dataset",
+                        "icon": "▦",
                     }
                 ]
             }
@@ -46,6 +51,21 @@ def test_catalog_resolves_only_registered_benchmark_ids(tmp_path):
     assert catalog.to_public_list()[0]["id"] == spec.benchmark_id
     with pytest.raises(KeyError, match="not registered"):
         catalog.resolve("unknown-benchmark")
+
+
+def test_catalog_exposes_hotel_reservation_ui_metadata_without_metrics(tmp_path):
+    path = tmp_path / "benchmarks.json"
+    _write_catalog(path)
+
+    public = AIOpsLabBenchmarkCatalog.from_path(path).to_public_list()[0]
+
+    assert public["subtitle"] == "호텔 예약 시스템"
+    assert public["tag"] == "AIOpsLab"
+    assert public["description"] == "호텔 예약 마이크로서비스 환경의 이상 탐지 성능을 평가합니다."
+    assert public["dataset_label"] == "AIOpsLab Dataset"
+    assert public["icon"] == "▦"
+    for fabricated_metric in ("f1_score", "precision", "recall", "auc", "ui_metrics", "recent_result"):
+        assert fabricated_metric not in public
 
 
 def test_executor_builds_bounded_argv_from_server_owned_paths(tmp_path):
@@ -127,4 +147,3 @@ def test_sanitize_benchmark_output_redacts_credentials_and_paths():
     assert "sk-secret-value" not in sanitized
     assert "researcher" not in sanitized
     assert "[REDACTED]" in sanitized
-
