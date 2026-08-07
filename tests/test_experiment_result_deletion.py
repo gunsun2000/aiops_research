@@ -117,3 +117,60 @@ def test_delete_experiment_never_removes_artifact_outside_allowed_root(tmp_path)
     assert "outside the allowed root" in response.json()["detail"]
     assert outside.read_text(encoding="utf-8") == "must remain"
     assert app.state.runtime_api.job_store.get("exp-unsafe") is not None
+
+
+def test_bulk_delete_experiments_removes_terminal_jobs_and_preserves_active_jobs(tmp_path):
+    artifact_root = tmp_path / "experiment-artifacts"
+    artifact_root.mkdir()
+    app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        experiment_artifact_root=artifact_root,
+    )
+    first = artifact_root / "exp-one" / "report.json"
+    first.parent.mkdir()
+    first.write_text("one", encoding="utf-8")
+    second = artifact_root / "exp-two" / "report.json"
+    second.parent.mkdir()
+    second.write_text("two", encoding="utf-8")
+    _completed_job(app, "exp-one", str(first))
+    _completed_job(app, "exp-two", str(second))
+    store = app.state.runtime_api.job_store
+    store.create(_request(), experiment_id="exp-running")
+    store.transition("exp-running", ExperimentJobStatus.RUNNING)
+
+    with TestClient(app) as client:
+        response = client.delete("/api/experiments")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["deleted"] == 2
+    assert payload["artifacts_deleted"] == 2
+    assert payload["protected_active"] == 1
+    assert set(payload["deleted_experiment_ids"]) == {"exp-one", "exp-two"}
+    assert store.get("exp-one") is None
+    assert store.get("exp-two") is None
+    assert store.get("exp-running") is not None
+    assert not first.exists()
+    assert not second.exists()
+
+
+def test_bulk_delete_experiments_returns_immediately_when_only_active_jobs_exist(tmp_path):
+    app = create_app(
+        job_database_path=tmp_path / "jobs.sqlite3",
+        experiment_artifact_root=tmp_path / "experiment-artifacts",
+    )
+    store = app.state.runtime_api.job_store
+    store.create(_request(), experiment_id="exp-running")
+    store.transition("exp-running", ExperimentJobStatus.RUNNING)
+
+    with TestClient(app) as client:
+        response = client.delete("/api/experiments")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "deleted": 0,
+        "artifacts_deleted": 0,
+        "protected_active": 1,
+        "deleted_experiment_ids": [],
+    }
+    assert store.get("exp-running") is not None
