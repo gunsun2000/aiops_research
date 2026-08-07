@@ -47,15 +47,6 @@ AIOpsLab / Chaos Mesh 장애 주입
 | Agent Registry | Agent 역할과 허용 action 관리 |
 | AutoGen GroupChat | structured multi-agent 보조 경로 |
 
-## 4-Agent 역할
-
-| Agent | 역할 |
-| --- | --- |
-| `AIServiceHASupportAgent` | 서비스 장애 진단, 가용성 판단, 복구 필요성 평가 |
-| `AIApplicationManagementAgent` | `observe_only`, `rollout_restart`, `scale_out` 복구 action 제안 |
-| `AISemiconductorInfraOpsAgent` | Kubernetes replica/deployment 안전성 및 인프라 수용성 검토 |
-| `CostOptimizationAgent` | 비용 증가, 과잉 action, replica 증가 정책 검토 |
-
 Agent 등록 정보는 [config/agent_registry.json](config/agent_registry.json)에 있습니다.
 
 ## 빠른 실행
@@ -116,10 +107,13 @@ python -m pip install -e ".[ui,dev,autogen]"
 aiops-control-plane
 ```
 
+Control Plane은 다른 로컬 프로젝트와 포트가 겹치지 않도록 기본적으로 `18180` 포트를 사용합니다.
+`PORT` 환경변수를 명시하면 다른 포트로 덮어쓸 수 있습니다.
+
 브라우저:
 
 ```text
-http://127.0.0.1:18080/
+http://127.0.0.1:18180/
 ```
 
 상세 UI 가이드는 [docs/submission/control_plane_ui_guide.md](docs/submission/control_plane_ui_guide.md)에,
@@ -217,99 +211,3 @@ aiops-k8s-agents mutual-supervision-run \
   --allowed-deployment paymentservice \
   --no-save
 ```
-
-`four-agent-autogen-v1` declares the registered `autogen-round-robin` runtime.
-The mutual-supervision CLI does not create a model client from environment
-variables or credentials. Selecting that profile without an explicitly
-injected model client or decision provider returns `runtime_unavailable`,
-performs no execution, and requires human review. Provider output is accepted
-only through the structured schema, is rebound to the configured Agent
-identity and run/policy metadata, and remains subject to the Python Validator.
-
-The persistent web Job can now select the registered AutoGen controller, store
-controller/model provenance, and render the structured GroupChat transcript.
-The connection probe enables this option only when the AutoGen dependencies and
-an OpenAI credential are available. Offline fake-provider tests verify this
-integration without making a model call; they are not evidence of a completed
-networked AutoGen experiment or a real Kubernetes experiment. The existing
-`autogen-run` and `autogen-prometheus-run` commands remain available as
-standalone model-client paths.
-
-이 명령은 역할별 초기 판단, 동료 Agent의 `approve/revise/veto`,
-제한된 재합의 라운드, 안전 검증, 실행 후 4-Agent 재평가를 수행합니다.
-실험 기록은 기본적으로 `runs/mutual-supervision/` 아래 JSONL, JSON,
-CSV, Markdown으로 저장됩니다. 현재 상호감시 엔진은 재현 가능한
-deterministic 정책 경로이며, AutoGen 기반 자유형 다중 라운드 상호감시는
-후속 비교 실험으로 분리합니다.
-
-현재 deterministic v1에서는 응용관리 Agent가 제안한 실행 Action을
-HA·인프라·비용 Agent가 독립적으로 교차 검토하고, 실행 후에는 4개 Agent가
-각 역할 기준으로 결과를 다시 평가합니다. 모든 Agent 판단을 다시 완전 연결형으로
-검토하는 일반화된 메시지 그래프는 후속 연구 범위입니다.
-
-`real` 모드는 fake evidence를 허용하지 않습니다. 반드시
-`--evidence-source kubernetes`를 사용하며, deployment readiness와 Pod identity
-변화를 보수적으로 확인한 경우에만 복구 성공으로 판정합니다. 동일
-namespace/deployment에 대한 동시 real 제어는 target lock으로 차단합니다.
-Prometheus·로그까지 결합한 full evidence fusion은 후속 확장 범위입니다.
-
-Recovery action 비교 실험:
-
-```bash
-GUARD_BACKEND=go \
-MODE=real \
-REPETITIONS=3 \
-PROMETHEUS_URL=http://127.0.0.1:9091 \
-NETWORK_LATENCY_QUERY='max(probe_duration_seconds{target="paymentservice"})' \
-bash scripts/server_recovery_action_pilot.sh
-```
-
-실험 구성:
-
-```text
-4개 장애 x 3개 action x 3회 = 36회
-
-장애: pod-kill, cpu-stress, memory-stress, network-delay
-Action: observe_only, rollout_restart, scale_out
-```
-
-정량 분석:
-
-```bash
-bash scripts/server_recovery_statistics.sh
-```
-
-## 문서 바로가기
-
-| 목적 | 문서 |
-| --- | --- |
-| 전체 요약 | [docs/core_submission_summary.md](docs/core_submission_summary.md) |
-| 문서 지도 | [docs/README.md](docs/README.md) |
-| 요구사항 정의 | [docs/submission/requirements_definition.md](docs/submission/requirements_definition.md) |
-| 설치 및 실행 | [docs/submission/install_and_run_guide.md](docs/submission/install_and_run_guide.md) |
-| 실행 코드 | [docs/submission/execution_code_guide.md](docs/submission/execution_code_guide.md) |
-| 시험 가이드 | [docs/submission/test_guide.md](docs/submission/test_guide.md) |
-| Agent Registry | [docs/design/agent_registry_guide.md](docs/design/agent_registry_guide.md) |
-| Action / Reward 정책 | [docs/design/agent_action_reward_policy.md](docs/design/agent_action_reward_policy.md) |
-| Core real runtime 검증 | [docs/experiments/platform_real_runtime_guide.md](docs/experiments/platform_real_runtime_guide.md) |
-| Recovery 실험 | [docs/experiments/recovery_action_experiment_guide.md](docs/experiments/recovery_action_experiment_guide.md) |
-| 정량 분석 | [docs/experiments/recovery_quantitative_analysis_guide.md](docs/experiments/recovery_quantitative_analysis_guide.md) |
-
-## 현재 연구 단계
-
-현재 저장소는 mock-safe 검증, bounded core runtime, CLI real 경로와 영속형 웹
-실험 Job을 제공하는 **1차 연구 프레임워크**입니다. 이 Windows worktree에서는
-실제 Kubernetes/Chaos Mesh/Prometheus 실험을 수행하지 않았으므로 테스트 통과와
-웹 mock 결과를 real evidence로 해석하지 않습니다.
-
-다음 단계는 이 구조를 고정한 뒤, 다음 비교 실험을 추가하는 것입니다.
-
-- single-agent baseline 비교
-- Agent 제거 ablation 실험
-- reward 민감도 분석
-- AutoGen 웹 Job을 Ubuntu의 실제 model client와 real 장애에 연결해 비교 실험 수행
-- AIOpsLab 웹 Job을 Ubuntu 외부 AIOpsLab 환경에서 반복 검증하고 복구 실험과 교차 분석
-- Prometheus metric, log enrichment, full real-cluster evidence fusion
-
-초기 `CPU 95%` 입력은 smoke test입니다. Chaos Mesh/AIOpsLab 기반 실제 장애
-결과는 별도의 승인된 Ubuntu 환경 실행과 artifact 검토가 있어야 주장할 수 있습니다.
