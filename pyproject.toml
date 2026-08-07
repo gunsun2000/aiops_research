@@ -31,7 +31,7 @@ docs = [
 
 [project.scripts]
 aiops-k8s-agents = "aiops_k8s_agents.cli:main"
-aiops-control-plane = "aiops_k8s_agents.control_plane_web:main"
+aiops-control-plane = "aiops_k8s_agents.control_plane_launcher:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
