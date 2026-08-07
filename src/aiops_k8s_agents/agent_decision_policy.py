@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Any
 
 
-DEFAULT_AGENT_DECISION_POLICY = Path("config/agent_decision_policy.json")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_AGENT_DECISION_POLICY = PROJECT_ROOT / "config" / "agent_decision_policy.json"
 
 
 class AgentDecisionPolicyError(ValueError):
