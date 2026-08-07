@@ -42,7 +42,7 @@ def test_reference_images_define_the_page_structure():
     ):
         assert marker in html
     assert "최근 시나리오" in html
-    assert "선택한 실험 요약" in html
+    assert "선택된 실험 요약" in html
     assert "벤치마크 평가" in html
     assert "결과 분포" in html
     assert "복구 전 / 후 Evidence" in html
