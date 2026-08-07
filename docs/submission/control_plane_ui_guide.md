@@ -52,6 +52,9 @@ SSE로 표시되며 완료 후 정확도, 평균 TTD, 평균 step, 평균 reward
 
 ## 3. 설치와 실행
 
+Control Plane의 프로젝트 기본 포트는 다른 로컬 서비스와 겹치지 않도록 `18180`입니다.
+`PORT` 환경변수를 직접 지정하면 다른 포트로 덮어쓸 수 있습니다.
+
 ```bash
 cd ~/geonhae/aiops_research
 conda activate aiops_research
@@ -59,7 +62,7 @@ python -m pip install -e ".[ui,dev,autogen]"
 
 export AIOPS_REPO_ROOT="$(pwd)"
 export AIOPS_BIND_ADDRESS="127.0.0.1"
-export PORT=18080
+export PORT=18180
 
 # AIOpsLab Benchmark를 웹에서 실제 실행할 때만 설정
 export AIOPSLAB_ROOT="$HOME/geonhae/external/AIOpsLab"
@@ -83,7 +86,7 @@ UI에서 `AutoGen GroupChat`을 선택하면 `four-agent-autogen-v1` 프로파�
 브라우저:
 
 ```text
-http://127.0.0.1:18080/
+http://127.0.0.1:18180/
 ```
 
 Windows PowerShell:
@@ -93,7 +96,7 @@ cd C:\Users\geonhae\Documents\aiops_research
 python -m pip install -e ".[ui,dev,autogen]"
 $env:AIOPS_REPO_ROOT=(Get-Location).Path
 $env:AIOPS_BIND_ADDRESS="127.0.0.1"
-$env:PORT="18080"
+$env:PORT="18180"
 aiops-control-plane
 ```
 
@@ -170,7 +173,7 @@ allowlist, replica 최소·최대, target lock, Python Validator와 cleanup은 �
 FastAPI 문서:
 
 ```text
-http://127.0.0.1:18080/api/docs
+http://127.0.0.1:18180/api/docs
 ```
 
 ## 7. 연구 결과 해석
