@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
+from aiops_k8s_agents import experiment_bulk_delete as _experiment_bulk_delete  # noqa: F401
 from aiops_k8s_agents.control_plane_web import create_app
 from aiops_k8s_agents.experiment_jobs import ExperimentJobStatus
 from aiops_k8s_agents.experiment_runtime_models import ExperimentRuntimeRequest
