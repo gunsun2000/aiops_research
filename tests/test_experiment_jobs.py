@@ -3,6 +3,8 @@ from __future__ import annotations
 import json
 import sqlite3
 
+import pytest
+
 from aiops_k8s_agents.experiment_jobs import (
     ExperimentJobStatus,
     SQLiteExperimentJobStore,
@@ -205,3 +207,47 @@ def test_restart_interrupts_only_nonterminal_jobs(tmp_path):
     assert store.get("exp-running").status is ExperimentJobStatus.INTERRUPTED
     assert store.get("exp-finished").status is ExperimentJobStatus.COMPLETED
     assert store.get("exp-finished").result == {"status": "recovered"}
+
+
+def test_delete_terminal_job_removes_job_and_events(tmp_path):
+    database = tmp_path / "jobs.sqlite3"
+    store = SQLiteExperimentJobStore(database)
+    store.create(_request(), experiment_id="exp-delete")
+    store.append_event(
+        RuntimeEvent(
+            experiment_id="exp-delete",
+            sequence=1,
+            stage=RuntimeStage.PREFLIGHT,
+            status="running",
+            message="preflight recorded before completion",
+            created_at="2026-08-07T01:00:00+00:00",
+        )
+    )
+    store.set_result(
+        "exp-delete",
+        status=ExperimentJobStatus.COMPLETED,
+        result={"status": "recovered"},
+    )
+
+    deleted = store.delete("exp-delete")
+
+    assert deleted.experiment_id == "exp-delete"
+    assert deleted.status is ExperimentJobStatus.COMPLETED
+    assert store.get("exp-delete") is None
+    with sqlite3.connect(database) as connection:
+        count = connection.execute(
+            "SELECT COUNT(*) FROM experiment_events WHERE experiment_id = ?",
+            ("exp-delete",),
+        ).fetchone()[0]
+    assert count == 0
+
+
+def test_delete_rejects_nonterminal_job(tmp_path):
+    store = SQLiteExperimentJobStore(tmp_path / "jobs.sqlite3")
+    store.create(_request(), experiment_id="exp-running-delete")
+    store.transition("exp-running-delete", ExperimentJobStatus.RUNNING)
+
+    with pytest.raises(ValueError, match="terminal"):
+        store.delete("exp-running-delete")
+
+    assert store.get("exp-running-delete") is not None
