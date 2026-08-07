@@ -4,11 +4,8 @@
   const TERMINAL = new Set(["completed", "failed", "blocked", "cancelled", "interrupted"]);
   const $ = (id) => document.getElementById(id);
 
-  async function api(path, options = {}) {
-    const response = await fetch(path, {
-      headers: { Accept: "application/json", "Content-Type": "application/json", ...(options.headers || {}) },
-      ...options,
-    });
+  async function api(path) {
+    const response = await fetch(path, { headers: { Accept: "application/json" } });
     const payload = await response.json().catch(() => null);
     if (!response.ok) throw new Error(payload?.detail || `요청 실패 (${response.status})`);
     return payload;
@@ -56,19 +53,30 @@
     setStatus("서버에서 완료된 실험 결과를 일괄 삭제하고 있습니다.", "warning");
 
     try {
-      const result = await api("/api/experiments", { method: "DELETE" });
-      const deleted = Number(result?.deleted || 0);
-      const artifactsDeleted = Number(result?.artifacts_deleted || 0);
-      const protectedActive = Number(result?.protected_active || 0);
-      const message = deleted
-        ? `전체 삭제 완료: 실험 ${deleted}개, Artifact ${artifactsDeleted}개 삭제${protectedActive ? ` · 실행 중 ${protectedActive}개 보호` : ""}`
-        : `삭제할 완료 상태 실험이 없습니다.${protectedActive ? ` 실행 중 ${protectedActive}개는 보호했습니다.` : ""}`;
+      const response = await fetch("/api/experiments", {
+        method: "DELETE",
+        headers: { Accept: "application/json" },
+      });
+      if (!response.ok) {
+        let detail = `요청 실패 (${response.status})`;
+        try {
+          const payload = await response.json();
+          if (payload?.detail) detail = payload.detail;
+        } catch (_error) {
+          // Keep the HTTP status fallback when an error body cannot be parsed.
+        }
+        throw new Error(detail);
+      }
 
-      sessionStorage.setItem("aiops-bulk-delete-message", message);
+      sessionStorage.setItem(
+        "aiops-bulk-delete-message",
+        "전체 삭제가 완료되었습니다. 실행 중인 실험은 보호되었습니다."
+      );
       const url = new URL(location.href);
       url.searchParams.delete("page");
       url.hash = "analysis";
-      location.replace(`${url.pathname}${url.search}${url.hash}`);
+      history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
+      location.reload();
     } catch (error) {
       setStatus(`전체 삭제 실패: ${error instanceof Error ? error.message : String(error)}`, "danger");
       button.dataset.busy = "0";
