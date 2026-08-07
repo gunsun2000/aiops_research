@@ -5,6 +5,7 @@ INDEX = ROOT / "ui" / "control_plane_static" / "index.html"
 APP = ROOT / "ui" / "control_plane_static" / "app.js"
 REFERENCE = ROOT / "ui" / "control_plane_static" / "reference-ui.js"
 BULK = ROOT / "ui" / "control_plane_static" / "bulk-delete-ui.js"
+POLISH = ROOT / "ui" / "control_plane_static" / "research-console-polish.js"
 
 
 def source(path: Path) -> str:
@@ -47,6 +48,29 @@ def test_reference_ui_is_event_driven_and_has_no_mutation_observers():
     assert "MutationObserver" not in script
     assert "bindAIOpsLabTabs" in script
     assert "addEventListener" in script
+
+
+def test_data_first_visual_polish_is_loaded_without_fabricated_values():
+    bulk = source(BULK)
+    polish = source(POLISH)
+    assert "/static/research-console-polish.js?v=1" in bulk
+    assert "/api/benchmarks/aiopslab/jobs?limit=6" in polish
+    assert "renderRecentBenchmarkResults" in polish
+    assert "experiment-id-search" in polish
+    assert "data-first" in polish
+    assert "MutationObserver" in polish
+    assert "experiment-history-body" in polish
+    lowered = polish.lower()
+    for forbidden in ("0.842", "0.831", "0.863", "0.901", "14.32", "4.12"):
+        assert forbidden not in lowered
+
+
+def test_data_first_polish_keeps_aiopslab_metrics_to_supported_schema():
+    polish = source(POLISH)
+    for metric in ("Accuracy", "Average TTD", "Average Steps", "Average Reward"):
+        assert metric in polish
+    for unsupported in ("F1-Score", "Precision", "Recall", "AUC"):
+        assert unsupported not in polish
 
 
 def test_experiment_results_sync_filters_to_url_and_paginate():
