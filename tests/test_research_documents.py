@@ -32,5 +32,6 @@ def test_control_plane_prioritizes_docx_research_documents():
     for filename in EXPECTED_DOCUMENTS:
         assert f"docs/deliverables/{filename}" in source
 
-    assert 'text: "DOCX"' in source
-    assert "sourcePath" in source
+    assert "RESEARCH_DOCUMENTS" in source
+    assert "renderResearchDocuments" in source
+    assert "/api/artifacts/" in source
