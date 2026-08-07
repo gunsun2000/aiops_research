@@ -41,6 +41,15 @@ def test_aiopslab_history_has_filters_pagination_detail_events_and_artifacts():
     assert "artifact_urls" in script
 
 
+def test_aiopslab_sync_does_not_observe_and_mutate_the_whole_panel():
+    script = source(REFERENCE)
+    # Regression: observing the whole AIOpsLab panel while syncAll() rebuilds
+    # scenario cards caused a MutationObserver feedback loop that froze every click.
+    assert "new MutationObserver(syncAll)" not in script
+    assert "document.querySelector('[data-view-panel=\"aiopslab\"]'),$('dashboard-total')" not in script
+    assert "bindAIOpsLabTabs" in script
+
+
 def test_experiment_results_sync_filters_to_url_and_paginate():
     script = source(REFERENCE)
     for name in ("period", "scenario", "controller", "mode", "status", "q", "page", "page_size"):
