@@ -2,7 +2,6 @@
   "use strict";
 
   const TERMINAL = new Set(["completed", "failed", "blocked", "cancelled", "interrupted"]);
-  const ACTIVE = new Set(["queued", "running", "cancelling"]);
   const $ = (id) => document.getElementById(id);
 
   async function api(path, options = {}) {
@@ -22,21 +21,16 @@
     node.dataset.kind = kind;
   }
 
-  async function fetchExperimentBatch() {
-    const payload = await api("/api/experiments?limit=100");
-    return Array.isArray(payload.jobs) ? payload.jobs : [];
-  }
-
   async function refreshDeleteButtonState() {
     const button = $("delete-all-experiments");
     if (!button || button.dataset.busy === "1") return;
     try {
-      const jobs = await fetchExperimentBatch();
+      const payload = await api("/api/experiments?limit=100");
+      const jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
       const terminalCount = jobs.filter((job) => TERMINAL.has(job.status)).length;
-      const activeCount = jobs.filter((job) => ACTIVE.has(job.status)).length;
       button.disabled = terminalCount === 0;
       button.title = terminalCount
-        ? `삭제 가능한 완료 상태 실험 ${terminalCount}개${activeCount ? ` · 활성 실험 ${activeCount}개는 보호됨` : ""}`
+        ? `삭제 가능한 완료 상태 실험 ${terminalCount}개 이상`
         : "삭제 가능한 완료 상태 실험이 없습니다.";
     } catch (_error) {
       button.disabled = true;
@@ -58,40 +52,40 @@
 
     button.dataset.busy = "1";
     button.disabled = true;
-    button.textContent = "삭제 중...";
-    setStatus("완료된 실험 결과를 안전하게 삭제하고 있습니다.", "warning");
-
-    let deleted = 0;
-    let artifactsDeleted = 0;
-    const protectedActive = new Set();
-    const deletedIds = [];
+    button.textContent = "전체 삭제 중...";
+    setStatus("서버에서 완료된 실험 결과를 일괄 삭제하고 있습니다.", "warning");
 
     try {
-      while (true) {
-        const jobs = await fetchExperimentBatch();
-        jobs.filter((job) => ACTIVE.has(job.status)).forEach((job) => protectedActive.add(job.experiment_id));
-        const terminalJobs = jobs.filter((job) => TERMINAL.has(job.status));
-        if (!terminalJobs.length) break;
-
-        for (const job of terminalJobs) {
-          const result = await api(`/api/experiments/${encodeURIComponent(job.experiment_id)}`, { method: "DELETE" });
-          deleted += result?.deleted ? 1 : 0;
-          artifactsDeleted += Number(result?.artifacts_deleted || 0);
-          deletedIds.push(job.experiment_id);
-        }
-      }
+      const result = await api("/api/experiments", { method: "DELETE" });
+      const deleted = Number(result?.deleted || 0);
+      const artifactsDeleted = Number(result?.artifacts_deleted || 0);
+      const protectedActive = Number(result?.protected_active || 0);
+      const deletedIds = Array.isArray(result?.deleted_experiment_ids)
+        ? result.deleted_experiment_ids
+        : [];
 
       const message = deleted
-        ? `전체 삭제 완료: 실험 ${deleted}개, Artifact ${artifactsDeleted}개 삭제${protectedActive.size ? ` · 실행 중 ${protectedActive.size}개 보호` : ""}`
-        : `삭제할 완료 상태 실험이 없습니다.${protectedActive.size ? ` 실행 중 ${protectedActive.size}개는 보호했습니다.` : ""}`;
-      sessionStorage.setItem("aiops-bulk-delete-message", message);
+        ? `전체 삭제 완료: 실험 ${deleted}개, Artifact ${artifactsDeleted}개 삭제${protectedActive ? ` · 실행 중 ${protectedActive}개 보호` : ""}`
+        : `삭제할 완료 상태 실험이 없습니다.${protectedActive ? ` 실행 중 ${protectedActive}개는 보호했습니다.` : ""}`;
+      setStatus(message, "success");
+      button.dataset.busy = "0";
+      button.textContent = "전체 삭제";
+
       document.dispatchEvent(new CustomEvent("aiops:history-updated", {
-        detail: { deleted, artifactsDeleted, protectedActive: protectedActive.size, deletedExperimentIds: deletedIds },
+        detail: {
+          deleted,
+          artifactsDeleted,
+          protectedActive,
+          deletedExperimentIds: deletedIds,
+          bulk: true,
+        },
       }));
-      const url = new URL(location.href);
-      url.searchParams.delete("page");
-      url.hash = "analysis";
-      location.replace(`${url.pathname}${url.search}${url.hash}`);
+
+      // Existing app.js owns the experiment table and summary cards. Trigger a
+      // lightweight refresh by revisiting the results view instead of reloading
+      // the whole document or issuing one DELETE request per row.
+      document.querySelector('[data-view="analysis"]')?.click();
+      window.setTimeout(refreshDeleteButtonState, 50);
     } catch (error) {
       setStatus(`전체 삭제 실패: ${error instanceof Error ? error.message : String(error)}`, "danger");
       button.dataset.busy = "0";
@@ -126,12 +120,6 @@
     button.addEventListener("click", deleteAllExperimentResults);
 
     actions.append(status, button);
-
-    const saved = sessionStorage.getItem("aiops-bulk-delete-message");
-    if (saved) {
-      sessionStorage.removeItem("aiops-bulk-delete-message");
-      setStatus(saved, "success");
-    }
     refreshDeleteButtonState();
   }
 
