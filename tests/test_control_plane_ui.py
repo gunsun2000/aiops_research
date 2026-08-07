@@ -3,6 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 INDEX_HTML = ROOT / "ui" / "control_plane_static" / "index.html"
 APP_JS = ROOT / "ui" / "control_plane_static" / "app.js"
+REFERENCE_JS = ROOT / "ui" / "control_plane_static" / "reference-ui.js"
 STYLES_CSS = ROOT / "ui" / "control_plane_static" / "styles.css"
 
 
@@ -24,8 +25,27 @@ def test_console_has_four_primary_research_views():
     assert "복구 실험" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=20" in html
+    assert "styles.css?v=21" in html
     assert "app.js?v=20" in html
+    assert "reference-ui.js?v=1" in html
+
+
+def test_reference_images_define_the_page_structure():
+    html = _source(INDEX_HTML)
+    for marker in (
+        "reference-overview",
+        "recovery-stepper",
+        "reference-recovery-setup",
+        "aiopslab-reference-grid",
+        "results-reference-grid",
+        "detail-reference-layout",
+    ):
+        assert marker in html
+    assert "현재 시나리오" in html
+    assert "선택한 실험 요약" in html
+    assert "벤치마크 평가" in html
+    assert "결과 분포" in html
+    assert "복구 전 / 후 Evidence" in html
 
 
 def test_sidebar_exposes_runtime_connection_statuses():
@@ -56,7 +76,7 @@ def test_recovery_ui_has_eight_stage_workflow_and_safe_modes():
         assert stage_text in html
     for mode in ("mock", "dry-run", "real"):
         assert f'data-mode="{mode}"' in html
-    assert "MOCK" in html
+    assert "Mock" in html
     assert "DRY-RUN" in _source(APP_JS)
 
 
@@ -111,7 +131,7 @@ def test_aiopslab_has_its_own_benchmark_runtime_and_sse():
     for element_id in (
         "aiopslab-benchmark-select", "aiopslab-repetitions", "aiopslab-run",
         "aiopslab-cancel", "aiopslab-accuracy", "aiopslab-ttd",
-        "aiopslab-steps", "aiopslab-reward",
+        "aiopslab-steps", "aiopslab-reward", "aiopslab-scenario-list",
     ):
         assert f'id="{element_id}"' in html
     assert 'api("/api/benchmarks/aiopslab")' in script
@@ -129,6 +149,7 @@ def test_results_include_history_comparison_dashboard_and_mock_warning():
     assert 'id="synthetic-warning"' in html
     assert "합성 데이터 기반 결과입니다." in html
     assert 'id="experiment-history-body"' in html
+    assert 'id="dashboard-donut"' in html
     assert 'api("/api/comparisons/recovery")' in script
     assert 'api("/api/comparisons/recovery/jobs",' in script
     assert "EXECUTE REAL COMPARISON" in script
@@ -143,18 +164,31 @@ def test_experiment_detail_has_six_research_tabs_and_artifacts():
     assert 'id="allowlist-result"' in html
     assert 'id="validator-result"' in html
     assert 'id="cleanup-result"' in html
+    assert 'id="detail-download-button"' in html
+    assert 'id="detail-rerun-button"' in html
 
 
-def test_styles_match_reference_shell_and_responsive_layout():
+def test_styles_match_reference_shell_and_desktop_density():
     css = _compact(_source(STYLES_CSS))
     assert ".platform-shell" in css
-    assert "grid-template-columns:248pxminmax(0,1fr)" in css
+    assert "grid-template-columns:232pxminmax(0,1fr)" in css
     assert ".platform-sidebar" in css
-    assert ".eight-stage" in css
-    assert "grid-template-columns:repeat(8,minmax(0,1fr))" in css
-    assert ".mode-badge.mock" in css
-    assert ".mode-badge.real" in css
-    assert ".synthetic-warning" in css
+    assert ".reference-overview" in css
+    assert ".recovery-stepper" in css
+    assert ".scenario-grid" in css
+    assert "grid-template-columns:repeat(4,minmax(0,1fr))" in css
+    assert ".aiopslab-reference-grid" in css
+    assert ".results-reference-grid" in css
+    assert ".dashboard-donut" in css
+    assert ".detail-reference-layout" in css
     assert "@media(max-width:760px)" in css
     assert "position:sticky" in css
     assert "overflow-wrap:anywhere" in css
+
+
+def test_reference_ui_script_builds_catalog_cards_donut_and_detail_actions():
+    script = _source(REFERENCE_JS)
+    assert "aiopslab-scenario-list" in script
+    assert "dashboard-donut" in script
+    assert "detail-download-button" in script
+    assert "detail-rerun-button" in script
