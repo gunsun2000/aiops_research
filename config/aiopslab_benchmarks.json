@@ -2,14 +2,19 @@
   "benchmarks": [
     {
       "id": "hotel-reservation-detection-v1",
-      "title": "Hotel Reservation Detection",
+      "title": "Hotel Reservation",
       "problem_id": "misconfig_app_hotel_res-detection-1",
       "namespace": "test-hotel-reservation",
       "service": "geo",
       "metrics_duration_minutes": 10,
       "max_steps": 8,
       "timeout_seconds": 1800,
-      "max_repetitions": 12
+      "max_repetitions": 12,
+      "subtitle": "호텔 예약 시스템",
+      "tag": "AIOpsLab",
+      "description": "호텔 예약 마이크로서비스 환경에서 발생하는 이상 상황을 대상으로 Agent의 탐지 성능을 평가합니다.",
+      "dataset_label": "AIOpsLab Dataset",
+      "icon": "▦"
     }
   ]
 }
