@@ -34,11 +34,11 @@ jobs:
         env:
           AIOPS_REPO_ROOT: ${{ github.workspace }}
           AIOPS_BIND_ADDRESS: 127.0.0.1
-          PORT: '18080'
+          PORT: '18180'
         run: |
           nohup aiops-control-plane > /tmp/aiops-control-plane.log 2>&1 &
           for i in $(seq 1 30); do
-            if curl -fsS http://127.0.0.1:18080/healthz >/dev/null; then
+            if curl -fsS http://127.0.0.1:18180/healthz >/dev/null; then
               exit 0
             fi
             sleep 1
@@ -53,10 +53,10 @@ jobs:
             echo "No headless Chrome/Chromium found"
             exit 1
           fi
-          "$BROWSER" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1440,1200 --virtual-time-budget=3500 --screenshot=ui-preview/01-system-overview.png 'http://127.0.0.1:18080/#overview'
-          "$BROWSER" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1440,1200 --virtual-time-budget=3500 --screenshot=ui-preview/02-recovery-experiment.png 'http://127.0.0.1:18080/#experiment'
-          "$BROWSER" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1440,1200 --virtual-time-budget=3500 --screenshot=ui-preview/03-aiopslab-benchmark.png 'http://127.0.0.1:18080/#aiopslab'
-          "$BROWSER" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1440,1200 --virtual-time-budget=3500 --screenshot=ui-preview/04-experiment-results.png 'http://127.0.0.1:18080/#analysis'
+          "$BROWSER" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1440,1200 --virtual-time-budget=3500 --screenshot=ui-preview/01-system-overview.png 'http://127.0.0.1:18180/#overview'
+          "$BROWSER" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1440,1200 --virtual-time-budget=3500 --screenshot=ui-preview/02-recovery-experiment.png 'http://127.0.0.1:18180/#experiment'
+          "$BROWSER" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1440,1200 --virtual-time-budget=3500 --screenshot=ui-preview/03-aiopslab-benchmark.png 'http://127.0.0.1:18180/#aiopslab'
+          "$BROWSER" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --window-size=1440,1200 --virtual-time-budget=3500 --screenshot=ui-preview/04-experiment-results.png 'http://127.0.0.1:18180/#analysis'
           ls -lh ui-preview
       - name: Upload UI preview
         uses: actions/upload-artifact@v4
