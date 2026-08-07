@@ -76,6 +76,7 @@ class RuntimeApiState:
     connection_probes: Mapping[str, RuntimeProbe]
     job_store: SQLiteExperimentJobStore
     job_runner: ExperimentJobRunner
+    experiment_artifact_root: Path
     aiopslab_catalog: AIOpsLabBenchmarkCatalog
     aiopslab_executor: Any
     aiopslab_job_store: SQLiteAIOpsLabJobStore
@@ -280,6 +281,48 @@ def api_experiment(experiment_id: str, request: Request) -> dict[str, object]:
     if session is None:
         raise HTTPException(status_code=404, detail="experiment not found")
     return session.to_dict()
+
+
+@router.delete("/api/experiments/{experiment_id}")
+def api_delete_experiment(experiment_id: str, request: Request) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    job = state.job_store.get(experiment_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="experiment not found")
+    if not job.status.terminal:
+        raise HTTPException(status_code=409, detail="experiment is not terminal")
+    try:
+        artifacts = _experiment_artifact_paths(state, job)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    deleted_count = 0
+    for path in artifacts:
+        if not path.exists() and not path.is_symlink():
+            continue
+        if not path.is_file() and not path.is_symlink():
+            raise HTTPException(
+                status_code=409,
+                detail="experiment artifact is not a file",
+            )
+        try:
+            path.unlink()
+        except OSError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail="experiment artifact could not be deleted",
+            ) from exc
+        deleted_count += 1
+    try:
+        state.job_store.delete(experiment_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="experiment not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail="experiment is not terminal") from exc
+    return {
+        "deleted": True,
+        "experiment_id": experiment_id,
+        "artifacts_deleted": deleted_count,
+    }
 
 
 @router.post("/api/experiments/{experiment_id}/cancel", status_code=202)
@@ -642,6 +685,7 @@ def api_platform(request: Request) -> dict[str, object]:
             "kubernetes_mutation": True,
             "sse_events": True,
             "cancellation": True,
+            "deletion": True,
             "restart_recovery": "interrupt_nonterminal",
         },
         "runtime_modes": {
@@ -901,6 +945,44 @@ def _sse(event: str, payload: Mapping[str, Any], event_id: int | None = None) ->
     return "\n".join(lines) + "\n\n"
 
 
+def _experiment_artifact_paths(state: RuntimeApiState, job: Any) -> tuple[Path, ...]:
+    if job.result is None:
+        return ()
+    result = dict(job.result)
+    attempts = result.get("attempts", [])
+    if not isinstance(attempts, (list, tuple)):
+        return ()
+    candidates: list[str] = []
+    for attempt in attempts:
+        if not isinstance(attempt, Mapping):
+            continue
+        report = attempt.get("report", {})
+        if not isinstance(report, Mapping):
+            continue
+        artifacts = report.get("artifacts", {})
+        if not isinstance(artifacts, Mapping):
+            continue
+        for candidate in artifacts.values():
+            if isinstance(candidate, (str, Path)) and str(candidate).strip():
+                candidates.append(str(candidate).strip())
+
+    allowed_root = state.experiment_artifact_root.expanduser().resolve()
+    repo_root = project_root().resolve()
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        raw = Path(candidate).expanduser()
+        path = (raw if raw.is_absolute() else repo_root / raw).resolve()
+        try:
+            path.relative_to(allowed_root)
+        except ValueError as exc:
+            raise ValueError("experiment artifact is outside the allowed root") from exc
+        if path not in seen:
+            paths.append(path)
+            seen.add(path)
+    return tuple(paths)
+
+
 def _aiopslab_job_payload(state: RuntimeApiState, job: Any) -> dict[str, Any]:
     payload = job.to_dict()
     result = payload.get("result")
@@ -1075,6 +1157,7 @@ def create_app(
     runtime_factory: Callable[[], Any] | None = None,
     job_runtime_factory: Callable[[Any, Any, str], Any] | None = None,
     job_database_path: str | Path | None = None,
+    experiment_artifact_root: str | Path | None = None,
     connection_probes: Mapping[str, RuntimeProbe] | None = None,
     configuration_path: str | Path | None = None,
     prometheus_url: str | None = None,
@@ -1108,6 +1191,9 @@ def create_app(
             root / "runs" / "control-plane" / "experiment-jobs.sqlite3",
         )
     )
+    experiment_artifacts = Path(
+        experiment_artifact_root or root / "runs"
+    ).expanduser().resolve()
     job_store = SQLiteExperimentJobStore(database_path)
     runtime_builder = job_runtime_factory or (
         lambda event_sink, cancellation_event, experiment_id: build_experiment_runtime(
@@ -1215,6 +1301,7 @@ def create_app(
         connection_probes=probes,
         job_store=job_store,
         job_runner=job_runner,
+        experiment_artifact_root=experiment_artifacts,
         aiopslab_catalog=benchmark_catalog,
         aiopslab_executor=benchmark_executor,
         aiopslab_job_store=aiopslab_job_store,
