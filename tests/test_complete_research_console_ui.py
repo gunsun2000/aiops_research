@@ -78,21 +78,20 @@ def test_experiment_result_deletion_requires_confirmation_and_refreshes_history(
     assert "MutationObserver" not in reference
 
 
-def test_bulk_experiment_result_deletion_is_visible_safe_and_refreshes_results():
+def test_bulk_experiment_result_deletion_uses_one_server_request():
     html = source(INDEX)
     script = source(BULK)
     assert "/static/bulk-delete-ui.js?v=1" in html
     assert "delete-all-experiments" in script
     assert "전체 삭제" in script
     assert "deleteAllExperimentResults" in script
-    assert "/api/experiments?limit=100" in script
-    assert "completed" in script and "failed" in script and "blocked" in script
-    assert "cancelled" in script and "interrupted" in script
-    assert "queued" in script and "running" in script and "cancelling" in script
     assert "실행 중인 실험은 삭제하지 않습니다" in script
     assert "window.confirm" in script
-    assert 'method: "DELETE"' in script or "method:'DELETE'" in script or 'method:"DELETE"' in script
-    assert "aiops:history-updated" in script
+    assert 'api("/api/experiments", { method: "DELETE" })' in script
+    assert "/api/experiments/${encodeURIComponent(" not in script
+    assert "while (true)" not in script
+    assert "for (const job" not in script
+    assert "location.replace" in script
     assert "MutationObserver" not in script
 
 
