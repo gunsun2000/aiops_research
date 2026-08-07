@@ -63,6 +63,23 @@ def test_experiment_results_sync_filters_to_url_and_paginate():
     assert "300" in script
 
 
+def test_experiment_result_deletion_requires_confirmation_and_refreshes_history():
+    html = source(INDEX)
+    app = source(APP)
+    reference = source(REFERENCE)
+    assert 'id="detail-delete-button"' in html
+    assert 'id="result-delete-status"' in html
+    assert "deleteExperimentResult" in app
+    assert "window.confirm" in app
+    assert "Job, 이벤트, 생성된 결과 파일이 영구적으로 삭제됩니다." in app
+    assert 'method:"DELETE"' in app or 'method: "DELETE"' in app
+    assert "/api/experiments/${encodeURIComponent(experimentId)}" in app
+    assert "loadExperimentHistory" in app
+    assert "aiops:history-updated" in app
+    assert "실행 중인 실험은 삭제할 수 없습니다." in app
+    assert "MutationObserver" not in reference
+
+
 def test_experiment_detail_has_copy_download_rerun_url_tabs_logs_and_events():
     html = source(INDEX)
     script = source(REFERENCE)
