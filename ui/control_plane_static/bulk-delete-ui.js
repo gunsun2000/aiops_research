@@ -60,32 +60,15 @@
       const deleted = Number(result?.deleted || 0);
       const artifactsDeleted = Number(result?.artifacts_deleted || 0);
       const protectedActive = Number(result?.protected_active || 0);
-      const deletedIds = Array.isArray(result?.deleted_experiment_ids)
-        ? result.deleted_experiment_ids
-        : [];
-
       const message = deleted
         ? `전체 삭제 완료: 실험 ${deleted}개, Artifact ${artifactsDeleted}개 삭제${protectedActive ? ` · 실행 중 ${protectedActive}개 보호` : ""}`
         : `삭제할 완료 상태 실험이 없습니다.${protectedActive ? ` 실행 중 ${protectedActive}개는 보호했습니다.` : ""}`;
-      setStatus(message, "success");
-      button.dataset.busy = "0";
-      button.textContent = "전체 삭제";
 
-      document.dispatchEvent(new CustomEvent("aiops:history-updated", {
-        detail: {
-          deleted,
-          artifactsDeleted,
-          protectedActive,
-          deletedExperimentIds: deletedIds,
-          bulk: true,
-        },
-      }));
-
-      // Existing app.js owns the experiment table and summary cards. Trigger a
-      // lightweight refresh by revisiting the results view instead of reloading
-      // the whole document or issuing one DELETE request per row.
-      document.querySelector('[data-view="analysis"]')?.click();
-      window.setTimeout(refreshDeleteButtonState, 50);
+      sessionStorage.setItem("aiops-bulk-delete-message", message);
+      const url = new URL(location.href);
+      url.searchParams.delete("page");
+      url.hash = "analysis";
+      location.replace(`${url.pathname}${url.search}${url.hash}`);
     } catch (error) {
       setStatus(`전체 삭제 실패: ${error instanceof Error ? error.message : String(error)}`, "danger");
       button.dataset.busy = "0";
@@ -120,6 +103,12 @@
     button.addEventListener("click", deleteAllExperimentResults);
 
     actions.append(status, button);
+
+    const saved = sessionStorage.getItem("aiops-bulk-delete-message");
+    if (saved) {
+      sessionStorage.removeItem("aiops-bulk-delete-message");
+      setStatus(saved, "success");
+    }
     refreshDeleteButtonState();
   }
 
@@ -142,7 +131,7 @@
     injectBulkDeleteStyles();
     ensureBulkDeleteControl();
     document.querySelector('[data-view="analysis"]')?.addEventListener("click", () => setTimeout(refreshDeleteButtonState, 0));
-    document.addEventListener("aiops:history-updated", () => setTimeout(refreshDeleteButtonState, 0));
+    window.addEventListener("aiops:history-updated", () => setTimeout(refreshDeleteButtonState, 0));
   }
 
   document.addEventListener("DOMContentLoaded", bootstrap);
