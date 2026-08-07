@@ -41,7 +41,7 @@ def test_reference_images_define_the_page_structure():
         "detail-reference-layout",
     ):
         assert marker in html
-    assert "현재 시나리오" in html
+    assert "최근 시나리오" in html
     assert "선택한 실험 요약" in html
     assert "벤치마크 평가" in html
     assert "결과 분포" in html
@@ -174,7 +174,7 @@ def test_styles_match_reference_shell_and_desktop_density():
     assert "grid-template-columns:232pxminmax(0,1fr)" in css
     assert ".platform-sidebar" in css
     assert ".reference-overview" in css
-    assert ".recovery-stepper" in css
+    assert ".recovery-step" in css
     assert ".scenario-grid" in css
     assert "grid-template-columns:repeat(4,minmax(0,1fr))" in css
     assert ".aiopslab-reference-grid" in css
