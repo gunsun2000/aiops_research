@@ -7,6 +7,7 @@ REFERENCE = ROOT / "ui" / "control_plane_static" / "reference-ui.js"
 BULK = ROOT / "ui" / "control_plane_static" / "bulk-delete-ui.js"
 POLISH = ROOT / "ui" / "control_plane_static" / "research-console-polish.js"
 FLOW = ROOT / "ui" / "control_plane_static" / "stage-flow-ui.js"
+STYLES = ROOT / "ui" / "control_plane_static" / "styles.css"
 
 
 def source(path: Path) -> str:
@@ -98,6 +99,18 @@ def test_recovery_flow_exposes_all_four_agents_in_eight_steps():
     assert "overview-stage-timeline" in flow
     assert "stage-timeline" in flow
     assert "mini-stage-list" in flow
+
+
+def test_recovery_flow_agent_steps_match_agent_card_colors():
+    flow = source(FLOW)
+    styles = source(STYLES)
+    for role_class in ("stage-ha", "stage-app", "stage-infra", "stage-cost"):
+        assert role_class in flow
+        assert f".reference-flow li.{role_class}" in styles
+    assert "var(--blue)" in styles
+    assert "var(--green)" in styles
+    assert "var(--purple)" in styles
+    assert "var(--orange)" in styles
 
 
 def test_experiment_results_sync_filters_to_url_and_paginate():
