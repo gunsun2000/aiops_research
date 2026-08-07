@@ -1,52 +1,694 @@
-(function(){
-"use strict";
-const $=id=>document.getElementById(id), esc=v=>String(v??"").replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c])), setText=(id,v)=>{const n=$(id);if(n)n.textContent=v==null||v===""?"—":String(v)}, request=async path=>{const r=await fetch(path,{headers:{Accept:"application/json"}}),p=await r.json().catch(()=>null);if(!r.ok)throw new Error(p?.detail||`요청 실패 (${r.status})`);return p}, fmtDate=v=>{if(!v)return"—";const d=new Date(v);return Number.isNaN(d.getTime())?"—":d.toLocaleString("ko-KR",{hour12:false})}, fmtNum=(v,d=3)=>Number.isFinite(Number(v))?Number(v).toFixed(d):"—", fmtPct=v=>Number.isFinite(Number(v))?`${(Number(v)*100).toFixed(1)}%`:"—", statusLabel=v=>({queued:"대기 중",running:"실행 중",cancelling:"취소 중",completed:"완료",failed:"실패",blocked:"안전 중단",cancelled:"취소됨",interrupted:"중단"}[v]||v||"—");
-const resultMap={period:"history-period",scenario:"history-scenario",controller:"history-controller",mode:"history-mode",status:"history-status",q:"history-search"};
-const lab={jobs:[],loading:false,error:"",tab:"evaluation",page:1,pageSize:8,status:"all",q:""}, results={page:1,pageSize:10,syncing:false,timer:null};
-const scenarioDescriptions={"Pod Failure":"Pod 비정상 종료","CPU Saturation":"CPU 과부하","Memory Saturation":"Memory 과부하","Network Delay":"네트워크 지연"};
+(function () {
+  "use strict";
 
-function syncRecoveryReference(){const scenario=document.querySelector('#scenario-list button[aria-pressed="true"] strong')?.textContent.trim()||$('global-scenario')?.textContent.trim()||"—",controller=document.querySelector('#controller-options button[aria-pressed="true"] strong')?.textContent.trim()||$('global-controller')?.textContent.trim()||"—",mode=document.querySelector('#mode-control button[aria-pressed="true"] strong')?.textContent.trim()||$('overview-mode-select')?.selectedOptions?.[0]?.textContent.trim()||"—";setText('overview-current-scenario',scenario);setText('overview-current-controller',controller);setText('overview-current-mode',mode);setText('recovery-header-controller',controller==='Deterministic Mutual Supervision'?'Deterministic':controller);setText('selected-summary-scenario',scenario);setText('selected-summary-scenario-desc',scenarioDescriptions[scenario]||'등록된 장애 시나리오');setText('selected-summary-controller',controller);setText('selected-summary-controller-note',mode);setText('selected-summary-mode',mode)}
-function bindRecoveryRun(){const b=$('recovery-header-run');if(b&&!b.dataset.completeBound){b.dataset.completeBound='1';b.addEventListener('click',()=>$('run-experiment')?.click())}}
-function optionInfo(o){const raw=o?.textContent?.trim()||'등록된 Benchmark',parts=raw.split('·').map(x=>x.trim()).filter(Boolean);return{title:parts[0]||raw,detail:parts.slice(1).join(' · ')||'AIOpsLab Benchmark'}}
-function benchmarkLabel(id){const s=$('aiopslab-benchmark-select'),o=s?Array.from(s.options).find(x=>x.value===id):null;return o?optionInfo(o).title:(id||"—")}
-function renderBenchmarkScenarioCards(){const s=$('aiopslab-benchmark-select'),l=$('aiopslab-scenario-list');if(!s||!l)return;const opts=Array.from(s.options).filter(o=>o.value&&!/불러오는 중/.test(o.textContent||''));if(!opts.length){l.innerHTML='<p class="empty-state">등록된 Benchmark 시나리오가 없습니다.</p>';setText('aiopslab-selected-title','데이터 없음');return}l.replaceChildren(...opts.map((o,i)=>{const info=optionInfo(o),b=document.createElement('button');b.type='button';b.className=`benchmark-scenario-card${o.selected?' active':''}`;b.setAttribute('aria-pressed',String(o.selected));b.innerHTML=`<span class="icon">${i%3===0?'▦':i%3===1?'◆':'▣'}</span><span><strong>${esc(info.title)}</strong><small>${esc(info.detail)}</small></span>`;b.addEventListener('click',()=>{s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}));renderBenchmarkScenarioCards()});return b}));setText('aiopslab-selected-title',optionInfo(s.selectedOptions[0]||opts[0]).title)}
-const detectorLabel=j=>j?.detector_label||j?.result?.detector_label||"AI-MCMP Four-Agent",detectorId=j=>j?.detector_id||j?.result?.detector_id||"ai-mcmp-four-agent";
+  const $ = (id) => document.getElementById(id);
+  const esc = (value) => String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[char]);
+  const setText = (id, value) => {
+    const node = $(id);
+    if (node) node.textContent = value == null || value === "" ? "—" : String(value);
+  };
+  const request = async (path) => {
+    const response = await fetch(path, { headers: { Accept: "application/json" } });
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) throw new Error(payload?.detail || `요청 실패 (${response.status})`);
+    return payload;
+  };
+  const fmtDate = (value) => {
+    if (!value) return "—";
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? "—" : date.toLocaleString("ko-KR", { hour12: false });
+  };
+  const fmtNum = (value, digits = 3) => Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "—";
+  const fmtPct = (value) => Number.isFinite(Number(value)) ? `${(Number(value) * 100).toFixed(1)}%` : "—";
+  const statusLabel = (value) => ({
+    queued: "대기 중", running: "실행 중", cancelling: "취소 중", completed: "완료",
+    failed: "실패", blocked: "안전 중단", cancelled: "취소됨", interrupted: "중단",
+  })[value] || value || "—";
 
-function bindLabTabControls(nav){const labels={evaluation:'벤치마크 평가',comparison:'모델 성능 비교',history:'실행 이력'};Array.from(nav.querySelectorAll('button,a,[role="tab"]')).forEach(el=>{const entry=Object.entries(labels).find(([,label])=>el.textContent.includes(label));if(!entry)return;el.dataset.aiopslabTab=entry[0];el.setAttribute('role','tab');if(el.tagName==='A')el.removeAttribute('href');if(!el.dataset.completeBound){el.dataset.completeBound='1';el.addEventListener('click',e=>{e.preventDefault();selectAIOpsLabTab(entry[0])})}})}
-function bindAIOpsLabTabs(){const panel=document.querySelector('[data-view-panel="aiopslab"]'),nav=panel?.querySelector('.reference-tabs')||$('aiopslab-functional-tabs');if(!panel||!nav)return false;nav.id='aiopslab-functional-tabs';nav.classList.add('aiopslab-functional-tabs');nav.setAttribute('role','tablist');bindLabTabControls(nav);return true}
-function createFallbackLabTabs(panel){const nav=document.createElement('nav');nav.id='aiopslab-functional-tabs';nav.className='aiopslab-functional-tabs';nav.setAttribute('role','tablist');[['evaluation','벤치마크 평가'],['comparison','모델 성능 비교'],['history','실행 이력']].forEach(([key,label])=>{const b=document.createElement('button');b.type='button';b.dataset.aiopslabTab=key;b.textContent=label;nav.append(b)});bindLabTabControls(nav);(panel.querySelector('.page-heading,.aiopslab-header')||panel.firstElementChild)?.after(nav);return nav}
-function ensureAIOpsLabPanels(){const panel=document.querySelector('[data-view-panel="aiopslab"]');if(!panel||$('aiopslab-comparison-panel'))return;let nav=panel.querySelector('.reference-tabs');if(nav){nav.id='aiopslab-functional-tabs';nav.classList.add('aiopslab-functional-tabs');nav.setAttribute('role','tablist');bindLabTabControls(nav)}else nav=createFallbackLabTabs(panel);const evaluation=document.createElement('div');evaluation.id='aiopslab-evaluation-panel';evaluation.dataset.aiopslabPanel='evaluation';Array.from(panel.children).filter(ch=>ch!==nav&&!ch.matches('.page-heading,.aiopslab-header')&&!ch.hasAttribute('data-aiopslab-panel')).forEach(ch=>evaluation.append(ch));panel.append(evaluation);const comparison=document.createElement('section');comparison.id='aiopslab-comparison-panel';comparison.dataset.aiopslabPanel='comparison';comparison.hidden=true;comparison.innerHTML=`<div class="surface aiopslab-tool-panel"><div class="section-heading"><div><h3>모델 · Detector 성능 비교</h3><p>저장된 실제 Benchmark Job 결과만 집계합니다.</p></div><button id="aiopslab-comparison-refresh" class="secondary-action">새로고침</button></div><div id="aiopslab-comparison-status" class="inline-status" aria-live="polite"></div><div id="aiopslab-comparison-cards" class="detector-comparison-cards"></div><div class="table-wrap"><table><thead><tr><th>Detector</th><th>실행 수</th><th>Accuracy</th><th>Avg TTD</th><th>Avg Steps</th><th>Avg Reward</th></tr></thead><tbody id="aiopslab-comparison-body"></tbody></table></div></div>`;panel.append(comparison);const historyPanel=document.createElement('section');historyPanel.id='aiopslab-history-panel';historyPanel.dataset.aiopslabPanel='history';historyPanel.hidden=true;historyPanel.innerHTML=`<div class="surface aiopslab-tool-panel"><div class="section-heading"><div><h3>AIOpsLab 실행 이력</h3><p>SQLite에 저장된 Benchmark Job을 조회합니다.</p></div><button id="aiopslab-history-refresh" class="secondary-action">새로고침</button></div><div class="aiopslab-history-filters"><label>상태<select id="aiopslab-history-status"><option value="all">전체</option><option value="completed">완료</option><option value="running">실행 중</option><option value="failed">실패</option><option value="blocked">안전 중단</option><option value="cancelled">취소</option></select></label><label>검색<input id="aiopslab-history-query" type="search" placeholder="Job ID 또는 시나리오"></label><label>페이지 크기<select id="aiopslab-history-page-size"><option value="5">5</option><option value="8" selected>8</option><option value="15">15</option></select></label></div><div id="aiopslab-history-status-line" class="inline-status" aria-live="polite"></div><div class="table-wrap"><table><thead><tr><th>Job ID</th><th>시나리오</th><th>Detector</th><th>반복</th><th>상태</th><th>시작 시간</th><th>Accuracy</th><th>Avg TTD</th><th>상세</th></tr></thead><tbody id="aiopslab-history-body"></tbody></table></div><div class="pagination-row"><button id="aiopslab-history-prev" class="secondary-action">이전</button><span id="aiopslab-history-page-info">1 / 1</span><button id="aiopslab-history-next" class="secondary-action">다음</button></div><div id="aiopslab-job-detail" class="aiopslab-job-detail" hidden></div></div>`;panel.append(historyPanel);$('aiopslab-comparison-refresh').addEventListener('click',loadAIOpsLabJobs);$('aiopslab-history-refresh').addEventListener('click',loadAIOpsLabJobs);$('aiopslab-history-status').addEventListener('change',e=>{lab.status=e.target.value;lab.page=1;renderAIOpsLabHistory()});$('aiopslab-history-query').addEventListener('input',e=>{lab.q=e.target.value.trim().toLowerCase();lab.page=1;renderAIOpsLabHistory()});$('aiopslab-history-page-size').addEventListener('change',e=>{lab.pageSize=Number(e.target.value)||8;lab.page=1;renderAIOpsLabHistory()});$('aiopslab-history-prev').addEventListener('click',()=>{lab.page=Math.max(1,lab.page-1);renderAIOpsLabHistory()});$('aiopslab-history-next').addEventListener('click',()=>{lab.page+=1;renderAIOpsLabHistory()});const requested=new URLSearchParams(location.search).get('aiopslab_tab');selectAIOpsLabTab(['evaluation','comparison','history'].includes(requested)?requested:'evaluation',false)}
-function selectAIOpsLabTab(tab,update=true){lab.tab=['evaluation','comparison','history'].includes(tab)?tab:'evaluation';document.querySelectorAll('[data-aiopslab-tab]').forEach(b=>{const on=b.dataset.aiopslabTab===lab.tab;b.setAttribute('aria-selected',String(on));b.setAttribute('aria-pressed',String(on));b.classList.toggle('active',on)});document.querySelectorAll('[data-aiopslab-panel]').forEach(p=>p.hidden=p.dataset.aiopslabPanel!==lab.tab);if(update){const u=new URL(location.href);lab.tab==='evaluation'?u.searchParams.delete('aiopslab_tab'):u.searchParams.set('aiopslab_tab',lab.tab);history.replaceState(null,'',`${u.pathname}${u.search}${location.hash||'#aiopslab'}`)}if(lab.tab!=='evaluation')loadAIOpsLabJobs()}
-async function loadAIOpsLabJobs(){if(lab.loading)return;lab.loading=true;lab.error='';setText('aiopslab-comparison-status','저장된 Benchmark 결과를 불러오는 중입니다.');try{const p=await request('/api/benchmarks/aiopslab/jobs?limit=100');lab.jobs=Array.isArray(p.jobs)?p.jobs:[]}catch(e){lab.error=e instanceof Error?e.message:String(e)}finally{lab.loading=false;renderAIOpsLabComparison();renderAIOpsLabHistory()}}
-const mean=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null, metricValues=(jobs,key)=>jobs.map(j=>Number(j?.result?.[key])).filter(Number.isFinite);
-function renderAIOpsLabComparison(){const body=$('aiopslab-comparison-body'),cards=$('aiopslab-comparison-cards'),line=$('aiopslab-comparison-status');if(!body||!cards||!line)return;if(lab.error){line.textContent=`결과를 불러오지 못했습니다: ${lab.error}`;body.innerHTML='<tr><td colspan="6" class="empty-cell">데이터를 불러올 수 없습니다.</td></tr>';cards.replaceChildren();return}const groups=new Map();lab.jobs.filter(j=>j.status==='completed'&&j.result).forEach(j=>{const id=detectorId(j);if(!groups.has(id))groups.set(id,{label:detectorLabel(j),jobs:[]});groups.get(id).jobs.push(j)});if(!groups.size){line.textContent='비교할 실제 Benchmark 결과가 없습니다.';body.innerHTML='<tr><td colspan="6" class="empty-cell">Benchmark를 실행하면 실제 결과가 여기에 표시됩니다.</td></tr>';cards.replaceChildren();return}line.textContent=groups.size===1?'비교 가능한 Detector가 1개입니다.':`${groups.size}개 Detector의 실제 결과를 비교합니다.`;const rows=[],nodes=[];groups.forEach(g=>{const a=mean(metricValues(g.jobs,'accuracy')),t=mean(metricValues(g.jobs,'average_ttd')),s=mean(metricValues(g.jobs,'average_steps')),r=mean(metricValues(g.jobs,'average_final_reward'));rows.push(`<tr><td><strong>${esc(g.label)}</strong></td><td>${g.jobs.length}</td><td>${a==null?'—':fmtPct(a)}</td><td>${t==null?'—':`${fmtNum(t)}s`}</td><td>${s==null?'—':fmtNum(s,2)}</td><td>${r==null?'—':fmtNum(r)}</td></tr>`);const card=document.createElement('article');card.className='detector-card';card.innerHTML=`<span>Detector</span><strong>${esc(g.label)}</strong><small>${g.jobs.length}개 완료 Job</small><dl><div><dt>Accuracy</dt><dd>${a==null?'—':fmtPct(a)}</dd></div><div><dt>Avg TTD</dt><dd>${t==null?'—':`${fmtNum(t)}s`}</dd></div><div><dt>Avg Steps</dt><dd>${s==null?'—':fmtNum(s,2)}</dd></div><div><dt>Avg Reward</dt><dd>${r==null?'—':fmtNum(r)}</dd></div></dl>`;nodes.push(card)});body.innerHTML=rows.join('');cards.replaceChildren(...nodes)}
-function filteredLabJobs(){return lab.jobs.filter(j=>(lab.status==='all'||j.status===lab.status)&&(!lab.q||`${j.job_id||''} ${j.request?.benchmark_id||''} ${benchmarkLabel(j.request?.benchmark_id)} ${detectorLabel(j)}`.toLowerCase().includes(lab.q)))}
-function renderAIOpsLabHistory(){const body=$('aiopslab-history-body'),line=$('aiopslab-history-status-line');if(!body||!line)return;if(lab.error){line.textContent=`실행 이력을 불러오지 못했습니다: ${lab.error}`;body.innerHTML='<tr><td colspan="9" class="empty-cell">재시도 버튼을 눌러 다시 조회하세요.</td></tr>';return}const jobs=filteredLabJobs(),pages=Math.max(1,Math.ceil(jobs.length/lab.pageSize));lab.page=Math.min(lab.page,pages);const page=jobs.slice((lab.page-1)*lab.pageSize,lab.page*lab.pageSize);line.textContent=jobs.length?`총 ${jobs.length}개 Benchmark Job`:'조건에 맞는 Benchmark 실행 이력이 없습니다.';setText('aiopslab-history-page-info',`${lab.page} / ${pages}`);$('aiopslab-history-prev').disabled=lab.page<=1;$('aiopslab-history-next').disabled=lab.page>=pages;if(!page.length){body.innerHTML='<tr><td colspan="9" class="empty-cell">실행 이력이 없습니다.</td></tr>';return}body.innerHTML=page.map(j=>{const r=j.result||{};return`<tr><td><code>${esc(j.job_id||'—')}</code></td><td>${esc(benchmarkLabel(j.request?.benchmark_id))}</td><td>${esc(detectorLabel(j))}</td><td>${j.request?.repetitions??'—'}</td><td>${esc(statusLabel(j.status))}</td><td>${esc(fmtDate(j.started_at||j.created_at))}</td><td>${r.accuracy==null?'—':fmtPct(r.accuracy)}</td><td>${r.average_ttd==null?'—':`${fmtNum(r.average_ttd)}s`}</td><td><button class="table-action" data-aiopslab-job-detail="${esc(j.job_id)}">보기</button></td></tr>`}).join('');body.querySelectorAll('[data-aiopslab-job-detail]').forEach(b=>b.addEventListener('click',()=>showAIOpsLabJobDetail(b.dataset.aiopslabJobDetail)))}
-async function showAIOpsLabJobDetail(id){const d=$('aiopslab-job-detail');if(!d)return;d.hidden=false;d.innerHTML='<p class="inline-status">상세 데이터를 불러오는 중입니다.</p>';try{const j=await request(`/api/benchmarks/aiopslab/jobs/${encodeURIComponent(id)}`),r=j.result||{},art=Object.entries(j.artifact_urls||{}),events=Array.isArray(j.events)?j.events:[];d.innerHTML=`<div class="section-heading"><div><h4>${esc(j.job_id)}</h4><p>${esc(benchmarkLabel(j.request?.benchmark_id))} · ${esc(detectorLabel(j))}</p></div><button id="aiopslab-job-detail-close" class="secondary-action">닫기</button></div><div class="detail-metric-row"><span>Status<strong>${esc(statusLabel(j.status))}</strong></span><span>Accuracy<strong>${r.accuracy==null?'—':fmtPct(r.accuracy)}</strong></span><span>Avg TTD<strong>${r.average_ttd==null?'—':`${fmtNum(r.average_ttd)}s`}</strong></span><span>Avg Reward<strong>${r.average_final_reward==null?'—':fmtNum(r.average_final_reward)}</strong></span></div><div class="artifact-links">${art.length?art.map(([n,h])=>`<a href="${esc(h)}" target="_blank" rel="noreferrer">${esc(n)}</a>`).join(''):'<span>다운로드 가능한 Artifact가 없습니다.</span>'}</div><details><summary>실행 이벤트 ${events.length}개</summary><ol>${events.length?events.map(e=>`<li><time>${esc(fmtDate(e.created_at))}</time> <strong>${esc(e.stage||'—')}</strong> ${esc(e.message||'')}</li>`).join(''):'<li>이벤트가 없습니다.</li>'}</ol></details>`;$('aiopslab-job-detail-close')?.addEventListener('click',()=>d.hidden=true)}catch(e){d.innerHTML=`<p class="inline-error">상세 데이터를 불러오지 못했습니다: ${esc(e instanceof Error?e.message:String(e))}</p>`}}
+  const scenarioDescriptions = {
+    "Pod Failure": "Pod 비정상 종료",
+    "CPU Saturation": "CPU 과부하",
+    "Memory Saturation": "Memory 과부하",
+    "Network Delay": "네트워크 지연",
+  };
+  const resultMap = {
+    period: "history-period", scenario: "history-scenario", controller: "history-controller",
+    mode: "history-mode", status: "history-status", q: "history-search",
+  };
+  const lab = { jobs: [], loading: false, error: "", tab: "evaluation", page: 1, pageSize: 8, status: "all", q: "" };
+  const results = { page: 1, pageSize: 10, syncing: false, timer: null };
 
-function updateDashboardDonut(){const d=$('dashboard-donut'),t=Number($('dashboard-total')?.textContent.trim()),r=Number(($('dashboard-success-rate')?.textContent||'').replace('%',''));if(!d)return;if(!Number.isFinite(t)||t<=0||!Number.isFinite(r)){d.style.background='conic-gradient(#e7edf5 0 100%)';d.innerHTML='<span>데이터 없음</span>';return}const v=Math.max(0,Math.min(100,r));d.style.background=`conic-gradient(#0bb46c 0 ${v}%,#ef4b4f ${v}% 100%)`;d.innerHTML=`<span>${v.toFixed(1)}%</span>`}
-function ensureResultControls(){const body=$('experiment-history-body');if(!body)return;const card=body.closest('.history-table-card,.surface'),bar=document.querySelector('[data-result-panel="history"] .filter-bar');if(bar&&!$('result-filter-reset')){const b=document.createElement('button');b.id='result-filter-reset';b.className='secondary-action';b.textContent='필터 초기화';b.addEventListener('click',resetResultFilters);bar.append(b)}if(card&&!$('result-pagination')){const p=document.createElement('div');p.id='result-pagination';p.className='pagination-row result-pagination';p.innerHTML=`<span id="result-loaded-boundary" class="helper-text"></span><label>페이지 크기<select id="result-page-size"><option value="5">5</option><option value="10" selected>10</option><option value="20">20</option></select></label><button id="result-pagination-prev" class="secondary-action">이전</button><span id="result-pagination-info">1 / 1</span><button id="result-pagination-next" class="secondary-action">다음</button>`;card.append(p);$('result-page-size').addEventListener('change',e=>{results.pageSize=Number(e.target.value)||10;results.page=1;syncResultFiltersToUrl();applyExperimentPagination()});$('result-pagination-prev').addEventListener('click',()=>{results.page=Math.max(1,results.page-1);syncResultFiltersToUrl();applyExperimentPagination()});$('result-pagination-next').addEventListener('click',()=>{results.page+=1;syncResultFiltersToUrl();applyExperimentPagination()})}bindResultFilters();syncResultFiltersFromUrl();applyExperimentPagination()}
-function bindResultFilters(){Object.entries(resultMap).forEach(([key,id])=>{const c=$(id);if(!c||c.dataset.urlBound)return;c.dataset.urlBound='1';c.addEventListener(key==='q'?'input':'change',()=>{if(results.syncing)return;results.page=1;if(key==='q'){clearTimeout(results.timer);results.timer=setTimeout(()=>{syncResultFiltersToUrl();applyExperimentPagination()},300)}else{syncResultFiltersToUrl();setTimeout(applyExperimentPagination,0)}})})}
-function syncResultFiltersFromUrl(){if(results.syncing)return;results.syncing=true;const p=new URLSearchParams(location.search);Object.entries(resultMap).forEach(([key,id])=>{const c=$(id),v=p.get(key);if(!c||v==null||v==='')return;if(c.tagName==='SELECT'&&!Array.from(c.options).some(o=>o.value===v))return;c.value=v;c.dispatchEvent(new Event(key==='q'?'input':'change',{bubbles:true}))});results.page=Math.max(1,Number(p.get('page'))||1);results.pageSize=[5,10,20].includes(Number(p.get('page_size')))?Number(p.get('page_size')):10;if($('result-page-size'))$('result-page-size').value=String(results.pageSize);results.syncing=false;setTimeout(applyExperimentPagination,0)}
-function syncResultFiltersToUrl(){if(results.syncing)return;const u=new URL(location.href);Object.entries(resultMap).forEach(([key,id])=>{const c=$(id);if(!c)return;const v=c.value.trim();!v||v==='all'?u.searchParams.delete(key):u.searchParams.set(key,v)});results.page>1?u.searchParams.set('page',String(results.page)):u.searchParams.delete('page');results.pageSize!==10?u.searchParams.set('page_size',String(results.pageSize)):u.searchParams.delete('page_size');history.replaceState(null,'',`${u.pathname}${u.search}${location.hash||'#analysis'}`)}
-function resetResultFilters(){results.syncing=true;Object.values(resultMap).forEach(id=>{const c=$(id);if(c){c.value=c.tagName==='SELECT'?'all':'';c.dispatchEvent(new Event(c.tagName==='SELECT'?'change':'input',{bubbles:true}))}});results.page=1;results.pageSize=10;if($('result-page-size'))$('result-page-size').value='10';results.syncing=false;const u=new URL(location.href);[...Object.keys(resultMap),'page','page_size'].forEach(k=>u.searchParams.delete(k));history.replaceState(null,'',`${u.pathname}${u.search}${location.hash||'#analysis'}`);setTimeout(applyExperimentPagination,0)}
-function applyExperimentPagination(){const body=$('experiment-history-body');if(!body)return;const rows=Array.from(body.querySelectorAll('tr')).filter(r=>!r.querySelector('.empty-cell')&&r.children.length>1);if(!rows.length){setText('result-pagination-info','1 / 1');if($('result-pagination-prev'))$('result-pagination-prev').disabled=true;if($('result-pagination-next'))$('result-pagination-next').disabled=true;setText('result-loaded-boundary','조건에 맞는 실험 결과가 없습니다.');return}const pages=Math.max(1,Math.ceil(rows.length/results.pageSize));results.page=Math.min(results.page,pages);const start=(results.page-1)*results.pageSize;rows.forEach((r,i)=>r.style.display=i>=start&&i<start+results.pageSize?'':'none');setText('result-pagination-info',`${results.page} / ${pages} · 총 ${rows.length}건`);setText('result-loaded-boundary',rows.length>=100?'현재 불러온 최대 100개 결과 범위에서 필터·페이지네이션합니다.':'현재 조회된 전체 결과를 페이지네이션합니다.');$('result-pagination-prev').disabled=results.page<=1;$('result-pagination-next').disabled=results.page>=pages}
+  function syncRecoveryReference() {
+    const scenario = document.querySelector('#scenario-list button[aria-pressed="true"] strong')?.textContent.trim()
+      || $("global-scenario")?.textContent.trim() || "—";
+    const controller = document.querySelector('#controller-options button[aria-pressed="true"] strong')?.textContent.trim()
+      || $("global-controller")?.textContent.trim() || "—";
+    const mode = document.querySelector('#mode-control button[aria-pressed="true"] strong')?.textContent.trim()
+      || $("overview-mode-select")?.selectedOptions?.[0]?.textContent.trim() || "—";
+    setText("overview-current-scenario", scenario);
+    setText("overview-current-controller", controller);
+    setText("overview-current-mode", mode);
+    setText("recovery-header-controller", controller === "Deterministic Mutual Supervision" ? "Deterministic" : controller);
+    setText("selected-summary-scenario", scenario);
+    setText("selected-summary-scenario-desc", scenarioDescriptions[scenario] || "등록된 장애 시나리오");
+    setText("selected-summary-controller", controller);
+    setText("selected-summary-controller-note", mode);
+    setText("selected-summary-mode", mode);
+  }
 
-function currentExperimentId(){const s=$('detail-experiment-subtitle')?.textContent?.trim()||'',first=s.split(' · ')[0]?.trim();if(first&&/^exp-/.test(first))return first;const g=$('global-experiment-id')?.textContent?.trim();return g&&/^exp-/.test(g)?g:''}
-async function copyExperimentId(){const id=currentExperimentId();if(!id)return;const b=$('detail-copy-button');try{await navigator.clipboard.writeText(id);if(b){b.textContent='복사됨';setTimeout(()=>b.textContent='ID 복사',1200)}}catch(_e){if(b)b.textContent='복사 실패'}}
-function prefillRerun(){const parts=($('detail-experiment-subtitle')?.textContent||'').split(' · ').map(x=>x.trim()),scenario=parts[1]||'',mode=parts.find(x=>['Mock','Dry-run','Real'].includes(x))||'',controller=parts.find(x=>x.includes('Deterministic')||x.includes('AutoGen'))||'',s=$('overview-scenario-select'),m=$('overview-mode-select'),c=$('overview-controller-select');if(s&&scenario){const o=Array.from(s.options).find(x=>x.textContent.trim()===scenario);if(o){s.value=o.value;s.dispatchEvent(new Event('change',{bubbles:true}))}}if(m&&mode){m.value=mode==='Dry-run'?'dry-run':mode.toLowerCase();m.dispatchEvent(new Event('change',{bubbles:true}))}if(c&&controller){c.value=controller.includes('AutoGen')?'autogen':'deterministic';c.dispatchEvent(new Event('change',{bubbles:true}))}location.hash='experiment'}
-function ensureDetailActions(){const panel=document.querySelector('[data-view-panel="history"]');if(!panel)return;const h=panel.querySelector('.detail-header')||panel.querySelector('.page-heading');if(h&&!$('detail-copy-button')){let actions=h.querySelector('.detail-header-actions')||h.lastElementChild;if(!actions||actions.tagName==='H2'||actions.tagName==='STRONG'){actions=document.createElement('div');actions.className='detail-header-actions';h.append(actions)}else actions.classList.add('detail-header-actions');const b=document.createElement('button');b.id='detail-copy-button';b.className='secondary-action';b.textContent='ID 복사';b.addEventListener('click',copyExperimentId);actions.prepend(b);[$('detail-download-button'),$('detail-rerun-button')].filter(Boolean).forEach(x=>actions.append(x))}const download=$('detail-download-button');if(download&&!download.dataset.completeBound){download.dataset.completeBound='1';download.addEventListener('click',e=>{e.preventDefault();let menu=$('detail-artifact-menu');if(!menu){menu=document.createElement('div');menu.id='detail-artifact-menu';menu.className='artifact-popover';download.parentElement?.append(menu)}const links=Array.from(document.querySelectorAll('#experiment-artifacts a'));if(!links.length)menu.innerHTML='<span>다운로드 가능한 결과 파일이 없습니다.</span>';else menu.replaceChildren(...links.map(x=>{const a=document.createElement('a');a.href=x.href;a.target='_blank';a.rel='noreferrer';a.textContent=x.textContent||'결과 파일';return a}));menu.hidden=false})}const rerun=$('detail-rerun-button');if(rerun&&!rerun.dataset.completeBound){rerun.dataset.completeBound='1';rerun.addEventListener('click',e=>{e.preventDefault();prefillRerun()})}ensureDetailLogControls();ensureDetailEventPayloads();bindDetailTabs();syncDetailTabFromUrl()}
-function bindDetailTabs(){document.querySelectorAll('[data-detail-tab]').forEach(b=>{if(b.dataset.urlBound)return;b.dataset.urlBound='1';b.addEventListener('click',()=>syncDetailTabToUrl(b.dataset.detailTab))})}
-function syncDetailTabToUrl(tab){const u=new URL(location.href);!tab||tab==='summary'?u.searchParams.delete('detail_tab'):u.searchParams.set('detail_tab',tab);history.replaceState(null,'',`${u.pathname}${u.search}${location.hash||'#history'}`)}
-function syncDetailTabFromUrl(){const tab=new URLSearchParams(location.search).get('detail_tab')||'summary',b=document.querySelector(`[data-detail-tab="${CSS.escape(tab)}"]`);if(b&&b.getAttribute('aria-pressed')!=='true')b.click()}
-function ensureDetailLogControls(){const pre=$('detail-logs');if(!pre||$('detail-log-search'))return;const controls=document.createElement('div');controls.className='detail-log-controls';controls.innerHTML=`<label>Level<select id="detail-log-level"><option value="all">전체</option><option value="error">Error</option><option value="warning">Warning</option><option value="info">Info</option></select></label><label>검색<input id="detail-log-search" type="search" placeholder="로그 검색"></label><label class="checkbox-label"><input id="detail-log-autoscroll" type="checkbox" checked> 자동 스크롤</label><button id="detail-log-download" class="secondary-action">로그 다운로드</button>`;pre.parentElement?.insertBefore(controls,pre);pre.dataset.rawLog=pre.textContent||'';$('detail-log-level').addEventListener('change',filterDetailLogs);$('detail-log-search').addEventListener('input',filterDetailLogs);$('detail-log-download').addEventListener('click',()=>{const raw=pre.dataset.rawLog||'';if(!raw||/로그 데이터가 없습니다/.test(raw))return;const blob=new Blob([raw],{type:'text/plain;charset=utf-8'}),href=URL.createObjectURL(blob),a=document.createElement('a');a.href=href;a.download=`${currentExperimentId()||'experiment'}-logs.txt`;a.click();URL.revokeObjectURL(href)});new MutationObserver(()=>{if(pre.dataset.filtering==='1')return;pre.dataset.rawLog=pre.textContent||'';filterDetailLogs()}).observe(pre,{childList:true,characterData:true,subtree:true})}
-function filterDetailLogs(){const pre=$('detail-logs');if(!pre)return;const raw=pre.dataset.rawLog||'',level=$('detail-log-level')?.value||'all',q=($('detail-log-search')?.value||'').toLowerCase();let lines=raw.split(/\r?\n/).slice(-100);if(level!=='all')lines=lines.filter(x=>x.toLowerCase().includes(level));if(q)lines=lines.filter(x=>x.toLowerCase().includes(q));pre.dataset.filtering='1';pre.textContent=lines.join('\n')||'조건에 맞는 로그가 없습니다.';pre.dataset.filtering='0';if($('detail-log-autoscroll')?.checked)pre.scrollTop=pre.scrollHeight}
-function ensureDetailEventPayloads(){const list=$('detail-events');if(!list||$('detail-event-payloads'))return;const d=document.createElement('div');d.id='detail-event-payloads';d.className='detail-event-payloads';list.parentElement?.append(d);$('detail-experiment-subtitle')&&new MutationObserver(loadDetailEventPayloads).observe($('detail-experiment-subtitle'),{childList:true,characterData:true,subtree:true});loadDetailEventPayloads()}
-async function loadDetailEventPayloads(){const id=currentExperimentId(),d=$('detail-event-payloads');if(!id||!d)return;try{const j=await request(`/api/experiments/${encodeURIComponent(id)}`),events=Array.isArray(j.events)?j.events.slice(-100):[];d.innerHTML=events.length?events.map(e=>`<details><summary><time>${esc(fmtDate(e.created_at))}</time> · ${esc(e.stage||'—')} · ${esc(e.message||'')}</summary><pre>${esc(JSON.stringify(e.payload||{},null,2))}</pre></details>`).join(''):'<p class="empty-state">이벤트 Payload가 없습니다.</p>'}catch(_e){d.innerHTML='<p class="empty-state">이벤트 상세를 불러올 수 없습니다.</p>'}}
-function syncDetailReference(){const a=$('overview-final-action')?.textContent.trim(),s=$('detail-experiment-subtitle')?.textContent.trim(),g=$('overview-consensus-status')?.textContent.trim(),e=$('detail-evidence-summary')?.textContent.trim()||$('overview-evidence-change')?.textContent.trim();if(a)setText('detail-final-action',a);if(s)setText('detail-info-block',s);if(g)setText('detail-agreement-block',g);if(e)setText('detail-evidence-preview',e)}
+  function bindRecoveryRun() {
+    const button = $("recovery-header-run");
+    if (!button || button.dataset.completeBound) return;
+    button.dataset.completeBound = "1";
+    button.addEventListener("click", () => $("run-experiment")?.click());
+  }
 
-function injectStyles(){if($('complete-research-console-styles'))return;const s=document.createElement('style');s.id='complete-research-console-styles';s.textContent=`.aiopslab-functional-tabs{display:flex;gap:28px;border-bottom:1px solid #dbe3ef;margin:0 0 22px;padding:0 20px}.aiopslab-functional-tabs button,.aiopslab-functional-tabs a{padding:13px 2px;border:0;border-bottom:3px solid transparent;background:transparent;color:#6a7891;font-weight:700;text-decoration:none;cursor:pointer}.aiopslab-functional-tabs [aria-selected="true"]{color:#075eea;border-bottom-color:#075eea}.aiopslab-tool-panel{padding:20px}.aiopslab-tool-panel .section-heading p{margin-top:5px;color:#66758f}.detector-comparison-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:16px 0}.detector-card{border:1px solid #d9e2ef;border-radius:10px;padding:16px;background:#fff}.detector-card>span,.detector-card>small{display:block;color:#6b7890}.detector-card>strong{display:block;margin:5px 0 13px}.detector-card dl{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:0}.detector-card dl div{padding:9px;background:#f7f9fc;border-radius:7px}.detector-card dt{font-size:12px;color:#718099}.detector-card dd{margin:3px 0 0;font-weight:800}.aiopslab-history-filters{display:grid;grid-template-columns:180px minmax(240px,1fr) 130px;gap:12px;margin:14px 0}.pagination-row{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:14px}.result-pagination{border-top:1px solid #e1e7f0;padding-top:14px;flex-wrap:wrap}.result-pagination>span:first-child{margin-right:auto}.result-pagination label{display:flex;align-items:center;gap:7px}.result-pagination select{width:auto}.aiopslab-job-detail{margin-top:18px;border-top:1px solid #dce4ee;padding-top:18px}.detail-metric-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.detail-metric-row span{padding:10px;background:#f7f9fc;border-radius:7px}.detail-metric-row strong{display:block;margin-top:4px}.artifact-links{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.artifact-links a,.artifact-popover a{display:block;padding:8px 10px;border:1px solid #cfdaea;border-radius:6px;background:#fff;color:#075eea;text-decoration:none}.detail-header-actions{display:flex;gap:8px;margin-left:auto;position:relative}.artifact-popover{position:absolute;z-index:50;right:0;top:44px;min-width:230px;padding:9px;border:1px solid #d2dcea;border-radius:8px;background:#fff;box-shadow:0 10px 30px rgba(8,35,70,.16)}.detail-log-controls{display:grid;grid-template-columns:150px minmax(220px,1fr) auto auto;gap:10px;align-items:end;margin-bottom:12px}.checkbox-label{display:flex!important;align-items:center;gap:6px;padding-bottom:9px}.checkbox-label input{width:auto;min-height:0}.detail-event-payloads{display:grid;gap:8px;margin-top:14px}.detail-event-payloads details{border:1px solid #dce4ee;border-radius:7px;padding:9px}.detail-event-payloads pre{max-height:280px;overflow:auto;background:#f7f9fc;padding:10px}.inline-status{padding:10px 12px;background:#f5f8fc;color:#53627b;margin:10px 0}.table-wrap{overflow:auto}@media(max-width:900px){.aiopslab-history-filters,.detail-log-controls{grid-template-columns:1fr 1fr}.detail-metric-row{grid-template-columns:1fr 1fr}}@media(max-width:760px){.aiopslab-functional-tabs{gap:12px;overflow:auto}.aiopslab-history-filters,.detail-log-controls,.detail-metric-row{grid-template-columns:1fr}.pagination-row{justify-content:center}.result-pagination>span:first-child{width:100%;margin:0;text-align:center}}`;document.head.append(s)}
-function syncStaticReferenceUi(){syncRecoveryReference();renderBenchmarkScenarioCards();updateDashboardDonut();syncDetailReference();ensureResultControls();ensureDetailActions()}
-function scheduleBootstrapSync(){[0,250,1000,2000].forEach(delay=>setTimeout(()=>{bindAIOpsLabTabs();syncStaticReferenceUi()},delay))}
-document.addEventListener('DOMContentLoaded',()=>{injectStyles();bindRecoveryRun();ensureAIOpsLabPanels();bindAIOpsLabTabs();ensureResultControls();ensureDetailActions();syncStaticReferenceUi();loadAIOpsLabJobs();scheduleBootstrapSync();const hb=$('experiment-history-body');if(hb)new MutationObserver(applyExperimentPagination).observe(hb,{childList:true,subtree:true});$('aiopslab-benchmark-select')?.addEventListener('change',renderBenchmarkScenarioCards);$('overview-scenario-select')?.addEventListener('change',()=>setTimeout(syncRecoveryReference,0));$('overview-controller-select')?.addEventListener('change',()=>setTimeout(syncRecoveryReference,0));$('overview-mode-select')?.addEventListener('change',()=>setTimeout(syncRecoveryReference,0));$('scenario-list')?.addEventListener('click',()=>setTimeout(syncRecoveryReference,0));$('controller-options')?.addEventListener('click',()=>setTimeout(syncRecoveryReference,0));$('mode-control')?.addEventListener('click',()=>setTimeout(syncRecoveryReference,0))});
+  function optionInfo(option) {
+    const raw = option?.textContent?.trim() || "등록된 Benchmark";
+    const parts = raw.split("·").map((item) => item.trim()).filter(Boolean);
+    return { title: parts[0] || raw, detail: parts.slice(1).join(" · ") || "AIOpsLab Benchmark" };
+  }
+
+  function benchmarkLabel(id) {
+    const select = $("aiopslab-benchmark-select");
+    const option = select ? Array.from(select.options).find((item) => item.value === id) : null;
+    return option ? optionInfo(option).title : (id || "—");
+  }
+
+  function renderBenchmarkScenarioCards() {
+    const select = $("aiopslab-benchmark-select");
+    const list = $("aiopslab-scenario-list");
+    if (!select || !list) return;
+    const options = Array.from(select.options).filter((option) => option.value && !/불러오는 중/.test(option.textContent || ""));
+    if (!options.length) {
+      list.innerHTML = '<p class="empty-state">등록된 Benchmark 시나리오가 없습니다.</p>';
+      setText("aiopslab-selected-title", "데이터 없음");
+      return;
+    }
+    list.replaceChildren(...options.map((option, index) => {
+      const info = optionInfo(option);
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = `benchmark-scenario-card${option.selected ? " active" : ""}`;
+      button.setAttribute("aria-pressed", String(option.selected));
+      button.innerHTML = `<span class="icon">${index % 3 === 0 ? "▦" : index % 3 === 1 ? "◆" : "▣"}</span><span><strong>${esc(info.title)}</strong><small>${esc(info.detail)}</small></span>`;
+      button.addEventListener("click", () => {
+        select.value = option.value;
+        select.dispatchEvent(new Event("change", { bubbles: true }));
+        renderBenchmarkScenarioCards();
+      });
+      return button;
+    }));
+    setText("aiopslab-selected-title", optionInfo(select.selectedOptions[0] || options[0]).title);
+  }
+
+  const detectorLabel = (job) => job?.detector_label || job?.result?.detector_label || "AI-MCMP Four-Agent";
+  const detectorId = (job) => job?.detector_id || job?.result?.detector_id || "ai-mcmp-four-agent";
+
+  function bindLabTabControls(nav) {
+    const labels = { evaluation: "벤치마크 평가", comparison: "모델 성능 비교", history: "실행 이력" };
+    Array.from(nav.querySelectorAll("button,a,[role=tab]")).forEach((element) => {
+      const entry = Object.entries(labels).find(([, label]) => element.textContent.includes(label));
+      if (!entry) return;
+      element.dataset.aiopslabTab = entry[0];
+      element.setAttribute("role", "tab");
+      if (element.tagName === "A") element.removeAttribute("href");
+      if (element.dataset.completeBound) return;
+      element.dataset.completeBound = "1";
+      element.addEventListener("click", (event) => {
+        event.preventDefault();
+        selectAIOpsLabTab(entry[0]);
+      });
+    });
+  }
+
+  function bindAIOpsLabTabs() {
+    const panel = document.querySelector('[data-view-panel="aiopslab"]');
+    const nav = panel?.querySelector(".reference-tabs") || $("aiopslab-functional-tabs");
+    if (!panel || !nav) return false;
+    nav.id = "aiopslab-functional-tabs";
+    nav.classList.add("aiopslab-functional-tabs");
+    nav.setAttribute("role", "tablist");
+    bindLabTabControls(nav);
+    return true;
+  }
+
+  function createFallbackLabTabs(panel) {
+    const nav = document.createElement("nav");
+    nav.id = "aiopslab-functional-tabs";
+    nav.className = "aiopslab-functional-tabs";
+    nav.setAttribute("role", "tablist");
+    [["evaluation", "벤치마크 평가"], ["comparison", "모델 성능 비교"], ["history", "실행 이력"]].forEach(([key, label]) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.dataset.aiopslabTab = key;
+      button.textContent = label;
+      nav.append(button);
+    });
+    bindLabTabControls(nav);
+    (panel.querySelector(".page-heading,.aiopslab-header") || panel.firstElementChild)?.after(nav);
+    return nav;
+  }
+
+  function ensureAIOpsLabPanels() {
+    const panel = document.querySelector('[data-view-panel="aiopslab"]');
+    if (!panel || $("aiopslab-comparison-panel")) return;
+    const nav = panel.querySelector(".reference-tabs") || createFallbackLabTabs(panel);
+    nav.id = "aiopslab-functional-tabs";
+    nav.classList.add("aiopslab-functional-tabs");
+    nav.setAttribute("role", "tablist");
+    bindLabTabControls(nav);
+
+    const evaluation = document.createElement("div");
+    evaluation.id = "aiopslab-evaluation-panel";
+    evaluation.dataset.aiopslabPanel = "evaluation";
+    Array.from(panel.children)
+      .filter((child) => child !== nav && !child.matches(".page-heading,.aiopslab-header") && !child.hasAttribute("data-aiopslab-panel"))
+      .forEach((child) => evaluation.append(child));
+    panel.append(evaluation);
+
+    const comparison = document.createElement("section");
+    comparison.id = "aiopslab-comparison-panel";
+    comparison.dataset.aiopslabPanel = "comparison";
+    comparison.hidden = true;
+    comparison.innerHTML = `<div class="surface aiopslab-tool-panel"><div class="section-heading"><div><h3>모델 · Detector 성능 비교</h3><p>저장된 실제 Benchmark Job 결과만 집계합니다.</p></div><button id="aiopslab-comparison-refresh" class="secondary-action">새로고침</button></div><div id="aiopslab-comparison-status" class="inline-status" aria-live="polite"></div><div id="aiopslab-comparison-cards" class="detector-comparison-cards"></div><div class="table-wrap"><table><thead><tr><th>Detector</th><th>실행 수</th><th>Accuracy</th><th>Avg TTD</th><th>Avg Steps</th><th>Avg Reward</th></tr></thead><tbody id="aiopslab-comparison-body"></tbody></table></div></div>`;
+    panel.append(comparison);
+
+    const historyPanel = document.createElement("section");
+    historyPanel.id = "aiopslab-history-panel";
+    historyPanel.dataset.aiopslabPanel = "history";
+    historyPanel.hidden = true;
+    historyPanel.innerHTML = `<div class="surface aiopslab-tool-panel"><div class="section-heading"><div><h3>AIOpsLab 실행 이력</h3><p>SQLite에 저장된 Benchmark Job을 조회합니다.</p></div><button id="aiopslab-history-refresh" class="secondary-action">새로고침</button></div><div class="aiopslab-history-filters"><label>상태<select id="aiopslab-history-status"><option value="all">전체</option><option value="completed">완료</option><option value="running">실행 중</option><option value="failed">실패</option><option value="blocked">안전 중단</option><option value="cancelled">취소</option></select></label><label>검색<input id="aiopslab-history-query" type="search" placeholder="Job ID 또는 시나리오"></label><label>페이지 크기<select id="aiopslab-history-page-size"><option value="5">5</option><option value="8" selected>8</option><option value="15">15</option></select></label></div><div id="aiopslab-history-status-line" class="inline-status" aria-live="polite"></div><div class="table-wrap"><table><thead><tr><th>Job ID</th><th>시나리오</th><th>Detector</th><th>반복</th><th>상태</th><th>시작 시간</th><th>Accuracy</th><th>Avg TTD</th><th>상세</th></tr></thead><tbody id="aiopslab-history-body"></tbody></table></div><div class="pagination-row"><button id="aiopslab-history-prev" class="secondary-action">이전</button><span id="aiopslab-history-page-info">1 / 1</span><button id="aiopslab-history-next" class="secondary-action">다음</button></div><div id="aiopslab-job-detail" class="aiopslab-job-detail" hidden></div></div>`;
+    panel.append(historyPanel);
+
+    $("aiopslab-comparison-refresh").addEventListener("click", loadAIOpsLabJobs);
+    $("aiopslab-history-refresh").addEventListener("click", loadAIOpsLabJobs);
+    $("aiopslab-history-status").addEventListener("change", (event) => { lab.status = event.target.value; lab.page = 1; renderAIOpsLabHistory(); });
+    $("aiopslab-history-query").addEventListener("input", (event) => { lab.q = event.target.value.trim().toLowerCase(); lab.page = 1; renderAIOpsLabHistory(); });
+    $("aiopslab-history-page-size").addEventListener("change", (event) => { lab.pageSize = Number(event.target.value) || 8; lab.page = 1; renderAIOpsLabHistory(); });
+    $("aiopslab-history-prev").addEventListener("click", () => { lab.page = Math.max(1, lab.page - 1); renderAIOpsLabHistory(); });
+    $("aiopslab-history-next").addEventListener("click", () => { lab.page += 1; renderAIOpsLabHistory(); });
+
+    const requested = new URLSearchParams(location.search).get("aiopslab_tab");
+    selectAIOpsLabTab(["evaluation", "comparison", "history"].includes(requested) ? requested : "evaluation", false);
+  }
+
+  function selectAIOpsLabTab(tab, update = true) {
+    lab.tab = ["evaluation", "comparison", "history"].includes(tab) ? tab : "evaluation";
+    document.querySelectorAll("[data-aiopslab-tab]").forEach((button) => {
+      const active = button.dataset.aiopslabTab === lab.tab;
+      button.setAttribute("aria-selected", String(active));
+      button.setAttribute("aria-pressed", String(active));
+      button.classList.toggle("active", active);
+    });
+    document.querySelectorAll("[data-aiopslab-panel]").forEach((panel) => {
+      panel.hidden = panel.dataset.aiopslabPanel !== lab.tab;
+    });
+    if (update) {
+      const url = new URL(location.href);
+      if (lab.tab === "evaluation") url.searchParams.delete("aiopslab_tab");
+      else url.searchParams.set("aiopslab_tab", lab.tab);
+      history.replaceState(null, "", `${url.pathname}${url.search}${location.hash || "#aiopslab"}`);
+    }
+    if (lab.tab !== "evaluation") loadAIOpsLabJobs();
+  }
+
+  async function loadAIOpsLabJobs() {
+    if (lab.loading) return;
+    lab.loading = true;
+    lab.error = "";
+    setText("aiopslab-comparison-status", "저장된 Benchmark 결과를 불러오는 중입니다.");
+    try {
+      const payload = await request("/api/benchmarks/aiopslab/jobs?limit=100");
+      lab.jobs = Array.isArray(payload.jobs) ? payload.jobs : [];
+    } catch (error) {
+      lab.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      lab.loading = false;
+      renderAIOpsLabComparison();
+      renderAIOpsLabHistory();
+    }
+  }
+
+  const mean = (values) => values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  const metricValues = (jobs, key) => jobs.map((job) => Number(job?.result?.[key])).filter(Number.isFinite);
+
+  function renderAIOpsLabComparison() {
+    const body = $("aiopslab-comparison-body");
+    const cards = $("aiopslab-comparison-cards");
+    const line = $("aiopslab-comparison-status");
+    if (!body || !cards || !line) return;
+    if (lab.error) {
+      line.textContent = `결과를 불러오지 못했습니다: ${lab.error}`;
+      body.innerHTML = '<tr><td colspan="6" class="empty-cell">데이터를 불러올 수 없습니다.</td></tr>';
+      cards.replaceChildren();
+      return;
+    }
+    const groups = new Map();
+    lab.jobs.filter((job) => job.status === "completed" && job.result).forEach((job) => {
+      const id = detectorId(job);
+      if (!groups.has(id)) groups.set(id, { label: detectorLabel(job), jobs: [] });
+      groups.get(id).jobs.push(job);
+    });
+    if (!groups.size) {
+      line.textContent = "비교할 실제 Benchmark 결과가 없습니다.";
+      body.innerHTML = '<tr><td colspan="6" class="empty-cell">Benchmark를 실행하면 실제 결과가 여기에 표시됩니다.</td></tr>';
+      cards.replaceChildren();
+      return;
+    }
+    line.textContent = groups.size === 1 ? "비교 가능한 Detector가 1개입니다." : `${groups.size}개 Detector의 실제 결과를 비교합니다.`;
+    const rows = [];
+    const nodes = [];
+    groups.forEach((group) => {
+      const accuracy = mean(metricValues(group.jobs, "accuracy"));
+      const ttd = mean(metricValues(group.jobs, "average_ttd"));
+      const steps = mean(metricValues(group.jobs, "average_steps"));
+      const reward = mean(metricValues(group.jobs, "average_final_reward"));
+      rows.push(`<tr><td><strong>${esc(group.label)}</strong></td><td>${group.jobs.length}</td><td>${accuracy == null ? "—" : fmtPct(accuracy)}</td><td>${ttd == null ? "—" : `${fmtNum(ttd)}s`}</td><td>${steps == null ? "—" : fmtNum(steps, 2)}</td><td>${reward == null ? "—" : fmtNum(reward)}</td></tr>`);
+      const card = document.createElement("article");
+      card.className = "detector-card";
+      card.innerHTML = `<span>Detector</span><strong>${esc(group.label)}</strong><small>${group.jobs.length}개 완료 Job</small><dl><div><dt>Accuracy</dt><dd>${accuracy == null ? "—" : fmtPct(accuracy)}</dd></div><div><dt>Avg TTD</dt><dd>${ttd == null ? "—" : `${fmtNum(ttd)}s`}</dd></div><div><dt>Avg Steps</dt><dd>${steps == null ? "—" : fmtNum(steps, 2)}</dd></div><div><dt>Avg Reward</dt><dd>${reward == null ? "—" : fmtNum(reward)}</dd></div></dl>`;
+      nodes.push(card);
+    });
+    body.innerHTML = rows.join("");
+    cards.replaceChildren(...nodes);
+  }
+
+  function filteredLabJobs() {
+    return lab.jobs.filter((job) => (lab.status === "all" || job.status === lab.status)
+      && (!lab.q || `${job.job_id || ""} ${job.request?.benchmark_id || ""} ${benchmarkLabel(job.request?.benchmark_id)} ${detectorLabel(job)}`.toLowerCase().includes(lab.q)));
+  }
+
+  function renderAIOpsLabHistory() {
+    const body = $("aiopslab-history-body");
+    const line = $("aiopslab-history-status-line");
+    if (!body || !line) return;
+    if (lab.error) {
+      line.textContent = `실행 이력을 불러오지 못했습니다: ${lab.error}`;
+      body.innerHTML = '<tr><td colspan="9" class="empty-cell">재시도 버튼을 눌러 다시 조회하세요.</td></tr>';
+      return;
+    }
+    const jobs = filteredLabJobs();
+    const pages = Math.max(1, Math.ceil(jobs.length / lab.pageSize));
+    lab.page = Math.min(lab.page, pages);
+    const page = jobs.slice((lab.page - 1) * lab.pageSize, lab.page * lab.pageSize);
+    line.textContent = jobs.length ? `총 ${jobs.length}개 Benchmark Job` : "조건에 맞는 Benchmark 실행 이력이 없습니다.";
+    setText("aiopslab-history-page-info", `${lab.page} / ${pages}`);
+    $("aiopslab-history-prev").disabled = lab.page <= 1;
+    $("aiopslab-history-next").disabled = lab.page >= pages;
+    if (!page.length) {
+      body.innerHTML = '<tr><td colspan="9" class="empty-cell">실행 이력이 없습니다.</td></tr>';
+      return;
+    }
+    body.innerHTML = page.map((job) => {
+      const result = job.result || {};
+      return `<tr><td><code>${esc(job.job_id || "—")}</code></td><td>${esc(benchmarkLabel(job.request?.benchmark_id))}</td><td>${esc(detectorLabel(job))}</td><td>${job.request?.repetitions ?? "—"}</td><td>${esc(statusLabel(job.status))}</td><td>${esc(fmtDate(job.started_at || job.created_at))}</td><td>${result.accuracy == null ? "—" : fmtPct(result.accuracy)}</td><td>${result.average_ttd == null ? "—" : `${fmtNum(result.average_ttd)}s`}</td><td><button class="table-action" data-aiopslab-job-detail="${esc(job.job_id)}">보기</button></td></tr>`;
+    }).join("");
+    body.querySelectorAll("[data-aiopslab-job-detail]").forEach((button) => button.addEventListener("click", () => showAIOpsLabJobDetail(button.dataset.aiopslabJobDetail)));
+  }
+
+  async function showAIOpsLabJobDetail(id) {
+    const detail = $("aiopslab-job-detail");
+    if (!detail) return;
+    detail.hidden = false;
+    detail.innerHTML = '<p class="inline-status">상세 데이터를 불러오는 중입니다.</p>';
+    try {
+      const job = await request(`/api/benchmarks/aiopslab/jobs/${encodeURIComponent(id)}`);
+      const result = job.result || {};
+      const artifacts = Object.entries(job.artifact_urls || {});
+      const events = Array.isArray(job.events) ? job.events : [];
+      detail.innerHTML = `<div class="section-heading"><div><h4>${esc(job.job_id)}</h4><p>${esc(benchmarkLabel(job.request?.benchmark_id))} · ${esc(detectorLabel(job))}</p></div><button id="aiopslab-job-detail-close" class="secondary-action">닫기</button></div><div class="detail-metric-row"><span>Status<strong>${esc(statusLabel(job.status))}</strong></span><span>Accuracy<strong>${result.accuracy == null ? "—" : fmtPct(result.accuracy)}</strong></span><span>Avg TTD<strong>${result.average_ttd == null ? "—" : `${fmtNum(result.average_ttd)}s`}</strong></span><span>Avg Reward<strong>${result.average_final_reward == null ? "—" : fmtNum(result.average_final_reward)}</strong></span></div><div class="artifact-links">${artifacts.length ? artifacts.map(([name, href]) => `<a href="${esc(href)}" target="_blank" rel="noreferrer">${esc(name)}</a>`).join("") : "<span>다운로드 가능한 Artifact가 없습니다.</span>"}</div><details><summary>실행 이벤트 ${events.length}개</summary><ol>${events.length ? events.map((event) => `<li><time>${esc(fmtDate(event.created_at))}</time> <strong>${esc(event.stage || "—")}</strong> ${esc(event.message || "")}</li>`).join("") : "<li>이벤트가 없습니다.</li>"}</ol></details>`;
+      $("aiopslab-job-detail-close")?.addEventListener("click", () => { detail.hidden = true; });
+    } catch (error) {
+      detail.innerHTML = `<p class="inline-error">상세 데이터를 불러오지 못했습니다: ${esc(error instanceof Error ? error.message : String(error))}</p>`;
+    }
+  }
+
+  function updateDashboardDonut() {
+    const donut = $("dashboard-donut");
+    const total = Number($("dashboard-total")?.textContent.trim());
+    const rate = Number(($("dashboard-success-rate")?.textContent || "").replace("%", ""));
+    if (!donut) return;
+    if (!Number.isFinite(total) || total <= 0 || !Number.isFinite(rate)) {
+      donut.style.background = "conic-gradient(#e7edf5 0 100%)";
+      donut.innerHTML = "<span>데이터 없음</span>";
+      return;
+    }
+    const value = Math.max(0, Math.min(100, rate));
+    donut.style.background = `conic-gradient(#0bb46c 0 ${value}%,#ef4b4f ${value}% 100%)`;
+    donut.innerHTML = `<span>${value.toFixed(1)}%</span>`;
+  }
+
+  function ensureResultControls() {
+    const body = $("experiment-history-body");
+    if (!body) return;
+    const card = body.closest(".history-table-card,.surface");
+    const bar = document.querySelector('[data-result-panel="history"] .filter-bar');
+    if (bar && !$("result-filter-reset")) {
+      const button = document.createElement("button");
+      button.id = "result-filter-reset";
+      button.className = "secondary-action";
+      button.textContent = "필터 초기화";
+      button.addEventListener("click", resetResultFilters);
+      bar.append(button);
+    }
+    if (card && !$("result-pagination")) {
+      const pagination = document.createElement("div");
+      pagination.id = "result-pagination";
+      pagination.className = "pagination-row result-pagination";
+      pagination.innerHTML = `<span id="result-loaded-boundary" class="helper-text"></span><label>페이지 크기<select id="result-page-size"><option value="5">5</option><option value="10" selected>10</option><option value="20">20</option></select></label><button id="result-pagination-prev" class="secondary-action">이전</button><span id="result-pagination-info">1 / 1</span><button id="result-pagination-next" class="secondary-action">다음</button>`;
+      card.append(pagination);
+      $("result-page-size").addEventListener("change", (event) => { results.pageSize = Number(event.target.value) || 10; results.page = 1; syncResultFiltersToUrl(); applyExperimentPagination(); });
+      $("result-pagination-prev").addEventListener("click", () => { results.page = Math.max(1, results.page - 1); syncResultFiltersToUrl(); applyExperimentPagination(); });
+      $("result-pagination-next").addEventListener("click", () => { results.page += 1; syncResultFiltersToUrl(); applyExperimentPagination(); });
+    }
+    bindResultFilters();
+    syncResultFiltersFromUrl();
+    applyExperimentPagination();
+  }
+
+  function bindResultFilters() {
+    Object.entries(resultMap).forEach(([key, id]) => {
+      const control = $(id);
+      if (!control || control.dataset.urlBound) return;
+      control.dataset.urlBound = "1";
+      control.addEventListener(key === "q" ? "input" : "change", () => {
+        if (results.syncing) return;
+        results.page = 1;
+        if (key === "q") {
+          clearTimeout(results.timer);
+          results.timer = setTimeout(() => { syncResultFiltersToUrl(); applyExperimentPagination(); }, 300);
+        } else {
+          syncResultFiltersToUrl();
+          setTimeout(applyExperimentPagination, 0);
+        }
+      });
+    });
+  }
+
+  function syncResultFiltersFromUrl() {
+    if (results.syncing) return;
+    results.syncing = true;
+    const params = new URLSearchParams(location.search);
+    Object.entries(resultMap).forEach(([key, id]) => {
+      const control = $(id);
+      const value = params.get(key);
+      if (!control || value == null || value === "") return;
+      if (control.tagName === "SELECT" && !Array.from(control.options).some((option) => option.value === value)) return;
+      control.value = value;
+    });
+    results.page = Math.max(1, Number(params.get("page")) || 1);
+    results.pageSize = [5, 10, 20].includes(Number(params.get("page_size"))) ? Number(params.get("page_size")) : 10;
+    if ($("result-page-size")) $("result-page-size").value = String(results.pageSize);
+    results.syncing = false;
+  }
+
+  function syncResultFiltersToUrl() {
+    if (results.syncing) return;
+    const url = new URL(location.href);
+    Object.entries(resultMap).forEach(([key, id]) => {
+      const control = $(id);
+      if (!control) return;
+      const value = control.value.trim();
+      if (!value || value === "all") url.searchParams.delete(key);
+      else url.searchParams.set(key, value);
+    });
+    if (results.page > 1) url.searchParams.set("page", String(results.page)); else url.searchParams.delete("page");
+    if (results.pageSize !== 10) url.searchParams.set("page_size", String(results.pageSize)); else url.searchParams.delete("page_size");
+    history.replaceState(null, "", `${url.pathname}${url.search}${location.hash || "#analysis"}`);
+  }
+
+  function resetResultFilters() {
+    results.syncing = true;
+    Object.values(resultMap).forEach((id) => {
+      const control = $(id);
+      if (control) control.value = control.tagName === "SELECT" ? "all" : "";
+    });
+    results.page = 1;
+    results.pageSize = 10;
+    if ($("result-page-size")) $("result-page-size").value = "10";
+    results.syncing = false;
+    const url = new URL(location.href);
+    [...Object.keys(resultMap), "page", "page_size"].forEach((key) => url.searchParams.delete(key));
+    history.replaceState(null, "", `${url.pathname}${url.search}${location.hash || "#analysis"}`);
+    applyExperimentPagination();
+  }
+
+  function applyExperimentPagination() {
+    const body = $("experiment-history-body");
+    if (!body) return;
+    const rows = Array.from(body.querySelectorAll("tr")).filter((row) => !row.querySelector(".empty-cell") && row.children.length > 1);
+    if (!rows.length) {
+      setText("result-pagination-info", "1 / 1");
+      if ($("result-pagination-prev")) $("result-pagination-prev").disabled = true;
+      if ($("result-pagination-next")) $("result-pagination-next").disabled = true;
+      setText("result-loaded-boundary", "조건에 맞는 실험 결과가 없습니다.");
+      return;
+    }
+    const pages = Math.max(1, Math.ceil(rows.length / results.pageSize));
+    results.page = Math.min(results.page, pages);
+    const start = (results.page - 1) * results.pageSize;
+    rows.forEach((row, index) => { row.style.display = index >= start && index < start + results.pageSize ? "" : "none"; });
+    setText("result-pagination-info", `${results.page} / ${pages} · 총 ${rows.length}건`);
+    setText("result-loaded-boundary", rows.length >= 100 ? "현재 불러온 최대 100개 결과 범위에서 필터·페이지네이션합니다." : "현재 조회된 전체 결과를 페이지네이션합니다.");
+    $("result-pagination-prev").disabled = results.page <= 1;
+    $("result-pagination-next").disabled = results.page >= pages;
+  }
+
+  function currentExperimentId() {
+    const subtitle = $("detail-experiment-subtitle")?.textContent?.trim() || "";
+    const first = subtitle.split(" · ")[0]?.trim();
+    if (first && /^exp-/.test(first)) return first;
+    const global = $("global-experiment-id")?.textContent?.trim();
+    return global && /^exp-/.test(global) ? global : "";
+  }
+
+  async function copyExperimentId() {
+    const id = currentExperimentId();
+    if (!id) return;
+    const button = $("detail-copy-button");
+    try {
+      await navigator.clipboard.writeText(id);
+      if (button) { button.textContent = "복사됨"; setTimeout(() => { button.textContent = "ID 복사"; }, 1200); }
+    } catch (_error) {
+      if (button) button.textContent = "복사 실패";
+    }
+  }
+
+  function prefillRerun() {
+    const parts = ($("detail-experiment-subtitle")?.textContent || "").split(" · ").map((item) => item.trim());
+    const scenario = parts[1] || "";
+    const mode = parts.find((item) => ["Mock", "Dry-run", "Real"].includes(item)) || "";
+    const controller = parts.find((item) => item.includes("Deterministic") || item.includes("AutoGen")) || "";
+    const scenarioSelect = $("overview-scenario-select");
+    const modeSelect = $("overview-mode-select");
+    const controllerSelect = $("overview-controller-select");
+    if (scenarioSelect && scenario) {
+      const option = Array.from(scenarioSelect.options).find((item) => item.textContent.trim() === scenario);
+      if (option) { scenarioSelect.value = option.value; scenarioSelect.dispatchEvent(new Event("change", { bubbles: true })); }
+    }
+    if (modeSelect && mode) {
+      modeSelect.value = mode === "Dry-run" ? "dry-run" : mode.toLowerCase();
+      modeSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    if (controllerSelect && controller) {
+      controllerSelect.value = controller.includes("AutoGen") ? "autogen" : "deterministic";
+      controllerSelect.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+    location.hash = "experiment";
+  }
+
+  function ensureDetailActions() {
+    const panel = document.querySelector('[data-view-panel="history"]');
+    if (!panel) return;
+    const header = panel.querySelector(".detail-header") || panel.querySelector(".page-heading");
+    if (header && !$("detail-copy-button")) {
+      let actions = header.querySelector(".detail-header-actions") || header.lastElementChild;
+      if (!actions || ["H2", "STRONG"].includes(actions.tagName)) {
+        actions = document.createElement("div");
+        header.append(actions);
+      }
+      actions.classList.add("detail-header-actions");
+      const copy = document.createElement("button");
+      copy.id = "detail-copy-button";
+      copy.className = "secondary-action";
+      copy.textContent = "ID 복사";
+      copy.addEventListener("click", copyExperimentId);
+      actions.prepend(copy);
+      [$("detail-download-button"), $("detail-rerun-button")].filter(Boolean).forEach((button) => actions.append(button));
+    }
+    const download = $("detail-download-button");
+    if (download && !download.dataset.completeBound) {
+      download.dataset.completeBound = "1";
+      download.addEventListener("click", (event) => {
+        event.preventDefault();
+        let menu = $("detail-artifact-menu");
+        if (!menu) {
+          menu = document.createElement("div");
+          menu.id = "detail-artifact-menu";
+          menu.className = "artifact-popover";
+          download.parentElement?.append(menu);
+        }
+        const links = Array.from(document.querySelectorAll("#experiment-artifacts a"));
+        if (!links.length) menu.innerHTML = "<span>다운로드 가능한 결과 파일이 없습니다.</span>";
+        else menu.replaceChildren(...links.map((source) => {
+          const link = document.createElement("a");
+          link.href = source.href; link.target = "_blank"; link.rel = "noreferrer"; link.textContent = source.textContent || "결과 파일";
+          return link;
+        }));
+        menu.hidden = false;
+      });
+    }
+    const rerun = $("detail-rerun-button");
+    if (rerun && !rerun.dataset.completeBound) {
+      rerun.dataset.completeBound = "1";
+      rerun.addEventListener("click", (event) => { event.preventDefault(); prefillRerun(); });
+    }
+    ensureDetailLogControls();
+    ensureDetailEventPayloads();
+    bindDetailTabs();
+    syncDetailTabFromUrl();
+  }
+
+  function bindDetailTabs() {
+    document.querySelectorAll("[data-detail-tab]").forEach((button) => {
+      if (button.dataset.urlBound) return;
+      button.dataset.urlBound = "1";
+      button.addEventListener("click", () => {
+        syncDetailTabToUrl(button.dataset.detailTab);
+        if (button.dataset.detailTab === "logs") refreshDetailLogs();
+        if (button.dataset.detailTab === "events") loadDetailEventPayloads();
+      });
+    });
+  }
+
+  function syncDetailTabToUrl(tab) {
+    const url = new URL(location.href);
+    if (!tab || tab === "summary") url.searchParams.delete("detail_tab"); else url.searchParams.set("detail_tab", tab);
+    history.replaceState(null, "", `${url.pathname}${url.search}${location.hash || "#history"}`);
+  }
+
+  function syncDetailTabFromUrl() {
+    const tab = new URLSearchParams(location.search).get("detail_tab") || "summary";
+    const button = document.querySelector(`[data-detail-tab="${CSS.escape(tab)}"]`);
+    if (button && button.getAttribute("aria-pressed") !== "true") button.click();
+  }
+
+  function ensureDetailLogControls() {
+    const pre = $("detail-logs");
+    if (!pre || $("detail-log-search")) return;
+    const controls = document.createElement("div");
+    controls.className = "detail-log-controls";
+    controls.innerHTML = `<label>Level<select id="detail-log-level"><option value="all">전체</option><option value="error">Error</option><option value="warning">Warning</option><option value="info">Info</option></select></label><label>검색<input id="detail-log-search" type="search" placeholder="로그 검색"></label><label class="checkbox-label"><input id="detail-log-autoscroll" type="checkbox" checked> 자동 스크롤</label><button id="detail-log-download" class="secondary-action">로그 다운로드</button>`;
+    pre.parentElement?.insertBefore(controls, pre);
+    $("detail-log-level").addEventListener("change", filterDetailLogs);
+    $("detail-log-search").addEventListener("input", filterDetailLogs);
+    $("detail-log-download").addEventListener("click", () => {
+      const raw = pre.dataset.rawLog || pre.textContent || "";
+      if (!raw || /로그 데이터가 없습니다/.test(raw)) return;
+      const blob = new Blob([raw], { type: "text/plain;charset=utf-8" });
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href; link.download = `${currentExperimentId() || "experiment"}-logs.txt`; link.click();
+      URL.revokeObjectURL(href);
+    });
+    refreshDetailLogs();
+  }
+
+  function refreshDetailLogs() {
+    const pre = $("detail-logs");
+    if (!pre) return;
+    if (!pre.dataset.rawLog || pre.dataset.renderedFiltered !== "1") pre.dataset.rawLog = pre.textContent || "";
+    filterDetailLogs();
+  }
+
+  function filterDetailLogs() {
+    const pre = $("detail-logs");
+    if (!pre) return;
+    const raw = pre.dataset.rawLog || "";
+    const level = $("detail-log-level")?.value || "all";
+    const query = ($("detail-log-search")?.value || "").toLowerCase();
+    let lines = raw.split(/\r?\n/).slice(-100);
+    if (level !== "all") lines = lines.filter((line) => line.toLowerCase().includes(level));
+    if (query) lines = lines.filter((line) => line.toLowerCase().includes(query));
+    pre.dataset.renderedFiltered = "1";
+    pre.textContent = lines.join("\n") || "조건에 맞는 로그가 없습니다.";
+    if ($("detail-log-autoscroll")?.checked) pre.scrollTop = pre.scrollHeight;
+  }
+
+  function ensureDetailEventPayloads() {
+    const list = $("detail-events");
+    if (!list || $("detail-event-payloads")) return;
+    const container = document.createElement("div");
+    container.id = "detail-event-payloads";
+    container.className = "detail-event-payloads";
+    list.parentElement?.append(container);
+  }
+
+  async function loadDetailEventPayloads() {
+    const id = currentExperimentId();
+    const container = $("detail-event-payloads");
+    if (!id || !container) return;
+    try {
+      const job = await request(`/api/experiments/${encodeURIComponent(id)}`);
+      const events = Array.isArray(job.events) ? job.events.slice(-100) : [];
+      container.innerHTML = events.length ? events.map((event) => `<details><summary><time>${esc(fmtDate(event.created_at))}</time> · ${esc(event.stage || "—")} · ${esc(event.message || "")}</summary><pre>${esc(JSON.stringify(event.payload || {}, null, 2))}</pre></details>`).join("") : '<p class="empty-state">이벤트 Payload가 없습니다.</p>';
+    } catch (_error) {
+      container.innerHTML = '<p class="empty-state">이벤트 상세를 불러올 수 없습니다.</p>';
+    }
+  }
+
+  function syncDetailReference() {
+    const action = $("overview-final-action")?.textContent.trim();
+    const subtitle = $("detail-experiment-subtitle")?.textContent.trim();
+    const agreement = $("overview-consensus-status")?.textContent.trim();
+    const evidence = $("detail-evidence-summary")?.textContent.trim() || $("overview-evidence-change")?.textContent.trim();
+    if (action) setText("detail-final-action", action);
+    if (subtitle) setText("detail-info-block", subtitle);
+    if (agreement) setText("detail-agreement-block", agreement);
+    if (evidence) setText("detail-evidence-preview", evidence);
+  }
+
+  function injectStyles() {
+    if ($("complete-research-console-styles")) return;
+    const style = document.createElement("style");
+    style.id = "complete-research-console-styles";
+    style.textContent = `.aiopslab-functional-tabs{display:flex;gap:28px;border-bottom:1px solid #dbe3ef;margin:0 0 22px;padding:0 20px}.aiopslab-functional-tabs button,.aiopslab-functional-tabs a{padding:13px 2px;border:0;border-bottom:3px solid transparent;background:transparent;color:#6a7891;font-weight:700;text-decoration:none;cursor:pointer}.aiopslab-functional-tabs [aria-selected="true"]{color:#075eea;border-bottom-color:#075eea}.aiopslab-tool-panel{padding:20px}.detector-comparison-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin:16px 0}.detector-card{border:1px solid #d9e2ef;border-radius:10px;padding:16px;background:#fff}.detector-card dl{display:grid;grid-template-columns:1fr 1fr;gap:9px;margin:12px 0 0}.detector-card dl div{padding:9px;background:#f7f9fc;border-radius:7px}.aiopslab-history-filters{display:grid;grid-template-columns:180px minmax(240px,1fr) 130px;gap:12px;margin:14px 0}.pagination-row{display:flex;align-items:center;justify-content:flex-end;gap:10px;margin-top:14px}.result-pagination{border-top:1px solid #e1e7f0;padding-top:14px;flex-wrap:wrap}.result-pagination>span:first-child{margin-right:auto}.aiopslab-job-detail{margin-top:18px;border-top:1px solid #dce4ee;padding-top:18px}.detail-metric-row{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.detail-metric-row span{padding:10px;background:#f7f9fc;border-radius:7px}.artifact-links{display:flex;flex-wrap:wrap;gap:8px;margin:14px 0}.artifact-links a,.artifact-popover a{display:block;padding:8px 10px;border:1px solid #cfdaea;border-radius:6px;background:#fff;color:#075eea;text-decoration:none}.detail-header-actions{display:flex;gap:8px;margin-left:auto;position:relative}.artifact-popover{position:absolute;z-index:50;right:0;top:44px;min-width:230px;padding:9px;border:1px solid #d2dcea;border-radius:8px;background:#fff;box-shadow:0 10px 30px rgba(8,35,70,.16)}.detail-log-controls{display:grid;grid-template-columns:150px minmax(220px,1fr) auto auto;gap:10px;align-items:end;margin-bottom:12px}.detail-event-payloads{display:grid;gap:8px;margin-top:14px}.detail-event-payloads details{border:1px solid #dce4ee;border-radius:7px;padding:9px}.detail-event-payloads pre{max-height:280px;overflow:auto;background:#f7f9fc;padding:10px}.inline-status{padding:10px 12px;background:#f5f8fc;color:#53627b;margin:10px 0}.table-wrap{overflow:auto}@media(max-width:900px){.aiopslab-history-filters,.detail-log-controls{grid-template-columns:1fr 1fr}.detail-metric-row{grid-template-columns:1fr 1fr}}@media(max-width:760px){.aiopslab-functional-tabs{gap:12px;overflow:auto}.aiopslab-history-filters,.detail-log-controls,.detail-metric-row{grid-template-columns:1fr}}`;
+    document.head.append(style);
+  }
+
+  function syncStaticReferenceUi() {
+    syncRecoveryReference();
+    renderBenchmarkScenarioCards();
+    updateDashboardDonut();
+    syncDetailReference();
+    ensureResultControls();
+    ensureDetailActions();
+    applyExperimentPagination();
+  }
+
+  function bindStaticEvents() {
+    $("aiopslab-benchmark-select")?.addEventListener("change", renderBenchmarkScenarioCards);
+    ["overview-scenario-select", "overview-controller-select", "overview-mode-select"].forEach((id) => $(id)?.addEventListener("change", () => setTimeout(syncRecoveryReference, 0)));
+    ["scenario-list", "controller-options", "mode-control"].forEach((id) => $(id)?.addEventListener("click", () => setTimeout(syncRecoveryReference, 0)));
+    document.querySelector('[data-view="analysis"]')?.addEventListener("click", () => setTimeout(() => { applyExperimentPagination(); updateDashboardDonut(); }, 0));
+    document.querySelector('[data-view="aiopslab"]')?.addEventListener("click", () => setTimeout(() => { bindAIOpsLabTabs(); renderBenchmarkScenarioCards(); }, 0));
+  }
+
+  function bootstrap() {
+    injectStyles();
+    bindRecoveryRun();
+    ensureAIOpsLabPanels();
+    bindAIOpsLabTabs();
+    ensureResultControls();
+    ensureDetailActions();
+    bindStaticEvents();
+    syncStaticReferenceUi();
+    loadAIOpsLabJobs();
+    [250, 1000, 2000].forEach((delay) => setTimeout(syncStaticReferenceUi, delay));
+  }
+
+  document.addEventListener("DOMContentLoaded", bootstrap);
 })();
