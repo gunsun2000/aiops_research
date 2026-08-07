@@ -4,6 +4,7 @@ ROOT = Path(__file__).resolve().parents[1]
 INDEX = ROOT / "ui" / "control_plane_static" / "index.html"
 APP = ROOT / "ui" / "control_plane_static" / "app.js"
 REFERENCE = ROOT / "ui" / "control_plane_static" / "reference-ui.js"
+BULK = ROOT / "ui" / "control_plane_static" / "bulk-delete-ui.js"
 
 
 def source(path: Path) -> str:
@@ -78,7 +79,9 @@ def test_experiment_result_deletion_requires_confirmation_and_refreshes_history(
 
 
 def test_bulk_experiment_result_deletion_is_visible_safe_and_refreshes_results():
-    script = source(REFERENCE)
+    html = source(INDEX)
+    script = source(BULK)
+    assert "/static/bulk-delete-ui.js?v=1" in html
     assert "delete-all-experiments" in script
     assert "전체 삭제" in script
     assert "deleteAllExperimentResults" in script
