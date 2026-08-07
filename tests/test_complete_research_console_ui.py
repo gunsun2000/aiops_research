@@ -64,11 +64,10 @@ def test_experiment_results_sync_filters_to_url_and_paginate():
 
 
 def test_experiment_result_deletion_requires_confirmation_and_refreshes_history():
-    html = source(INDEX)
     app = source(APP)
     reference = source(REFERENCE)
-    assert 'id="detail-delete-button"' in html
-    assert 'id="result-delete-status"' in html
+    assert 'status.id="result-delete-status"' in app
+    assert 'button.id="detail-delete-button"' in app
     assert "deleteExperimentResult" in app
     assert "window.confirm" in app
     assert "Job, 이벤트, 생성된 결과 파일이 영구적으로 삭제됩니다." in app
