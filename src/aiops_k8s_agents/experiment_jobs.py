@@ -269,6 +269,17 @@ class SQLiteExperimentJobStore:
             )
         return self._required(experiment_id)
 
+    def delete(self, experiment_id: str) -> ExperimentJob:
+        existing = self._required(experiment_id)
+        if not existing.status.terminal:
+            raise ValueError("only terminal experiment jobs can be deleted")
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "DELETE FROM experiment_jobs WHERE experiment_id = ?",
+                (experiment_id,),
+            )
+        return existing
+
     def interrupt_nonterminal_jobs(self) -> tuple[str, ...]:
         statuses = (
             ExperimentJobStatus.QUEUED.value,
@@ -340,6 +351,7 @@ class SQLiteExperimentJobStore:
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=30.0)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA foreign_keys = ON")
         return connection
 
     def _required(self, experiment_id: str) -> ExperimentJob:
