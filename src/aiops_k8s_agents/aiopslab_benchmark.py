@@ -10,6 +10,7 @@ from pathlib import Path
 from threading import Event
 from typing import Any, Mapping
 
+from aiops_k8s_agents.aiopslab_evaluator import attach_aiopslab_evaluation
 from aiops_k8s_agents.aiopslab_jobs import AIOpsLabBenchmarkRequest
 
 
@@ -225,8 +226,19 @@ class AIOpsLabBenchmarkExecutor:
         )
         if not new_reports:
             raise RuntimeError("AIOpsLab benchmark did not produce a report")
+        report_path = new_reports[-1]
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+        attach_aiopslab_evaluation(
+            report,
+            max_steps=spec.max_steps,
+            metrics_duration_minutes=spec.metrics_duration_minutes,
+        )
+        report_path.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
         return AIOpsLabExecutionResult(
-            report_path=new_reports[-1],
+            report_path=report_path,
             returncode=process.returncode,
             stdout=stdout,
             stderr=stderr,
