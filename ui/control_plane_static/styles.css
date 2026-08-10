@@ -199,6 +199,21 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
 .detail-event-payloads pre{max-height:280px;overflow:auto;padding:10px;background:#f7f9fc}
 .inline-status{padding:10px 12px;margin:10px 0;color:#53627b;background:#f5f8fc;border-radius:7px}
 .success-hero{background:#eefaf5;border:1px solid #d5f1e4}
+.evaluator-summary{margin-top:18px;padding:16px;border:1px solid #dce5f0;border-radius:8px;background:#fbfcfe}
+.evaluator-summary .section-heading{margin-bottom:8px}
+.evaluator-meta{display:flex;gap:8px;align-items:center;color:var(--muted);font-size:11px}
+.evaluator-meta strong{color:var(--text)}
+.evaluator-reward-grid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:12px}
+.evaluator-reward-grid article{padding:10px;border:1px solid #e1e8f1;border-radius:7px;background:#fff}
+.evaluator-reward-grid span,.evaluator-reward-grid strong{display:block}
+.evaluator-reward-grid span{color:var(--muted);font-size:10px}
+.evaluator-reward-grid strong{margin-top:5px;color:var(--blue);font-size:16px}
+.evaluator-components{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:12px 0 0}
+.evaluator-components div{padding:8px 10px;border-radius:6px;background:#fff}
+.evaluator-components dt{color:var(--muted);font-size:10px}
+.evaluator-components dd{margin:4px 0 0;font-weight:750}
+.evaluator-summary>p{margin:12px 0 0;color:var(--muted);font-size:11px;line-height:1.5}
+.detail-card#detail-agent-summary article small{display:block;color:var(--muted)}
 .performance-dashboard-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 .performance-panel{min-width:0;padding:22px}
 .performance-panel-wide{grid-column:1/-1}
@@ -219,6 +234,8 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
   .detail-metric-row{grid-template-columns:1fr 1fr}
   .performance-dashboard-grid{grid-template-columns:1fr}
   .performance-panel-wide{grid-column:auto}
+  .evaluator-reward-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
+  .evaluator-components{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 
 @media(max-width:760px){
@@ -227,4 +244,5 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
   .aiopslab-history-filters,.detail-log-controls,.detail-metric-row{grid-template-columns:1fr}
   [data-result-panel="history"] .filter-bar{grid-template-columns:1fr}
   .benchmark-meta-grid{grid-template-columns:1fr}
+  .evaluator-reward-grid,.evaluator-components{grid-template-columns:1fr 1fr}
 }

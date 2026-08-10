@@ -49,7 +49,7 @@
 - AutoGen GroupChat을 선택 가능한 Controller로 실행
 - AutoGen model/controller provenance와 structured transcript 저장·표시
 - 저장된 복구 Job을 장애·Action·Controller/모드별로 집계하는 성능 대시보드
-- 복구 성공률, 평균 MTTR, 평균 Reward와 실행 횟수 표시
+- 복구 성공률, 평균 MTTR, 평균 Team Reward와 실행 횟수 표시
 - 실험 상세의 복구 전·후 Evidence, Agent 승인·거부, 실행 로그와 artifact 조회
 
 AIOpsLab detection benchmark는 동일 Control Plane 안에서 복구 실험과 구분된 전용 Job으로 연결되어 있습니다.
@@ -62,7 +62,7 @@ SSE로 표시되며 완료 후 정확도, 평균 TTD, 평균 step, 평균 reward
 참조 화면에 보이는 F1, Precision, Recall, AUC를 임의로 만들지 않습니다. 현재 AIOpsLab
 결과 스키마가 제공하는 정확도, 평균 TTD, 평균 action step, 평균 reward만 표시하며,
 없는 값은 `—`로 남깁니다. 복구 성능 대시보드도 저장된 Job의 측정값만 집계하고 누락된
-MTTR·Reward를 `0`으로 계산하지 않습니다.
+MTTR·Team Reward를 `0`으로 계산하지 않습니다. Recovery 결과의 Team Reward는 `evaluation.team_reward`만 사용하며, legacy report는 `—`로 표시합니다.
 
 ## 3. 설치와 실행
 
@@ -216,7 +216,7 @@ http://127.0.0.1:18180/api/docs
 | --- | --- | --- |
 | 성공률 | 복구 성공 여부가 기록된 Job 중 성공 비율 | 결과가 없는 Job은 분모에서 제외 |
 | 평균 MTTR | 복구 시간이 기록된 Job의 평균 초 | 누락값을 0초로 처리하지 않음 |
-| 평균 Reward | Agent 기여 reward 합계의 Job 평균 | 고정 학습 보상이 아니라 현재 정책 평가 점수 |
+| 평균 Team Reward | `evaluation.team_reward`가 있는 Recovery Job의 평균 | legacy report와 평가 미완료 Job은 평균에서 제외 |
 | Action별 성능 | `observe_only`, `rollout_restart`, `scale_out`별 집계 | 장애와 실행 모드를 함께 확인 |
 | Controller별 성능 | deterministic/AutoGen과 mock/dry-run/real 조합별 집계 | Mock과 Real을 같은 실험 근거로 해석하지 않음 |
 

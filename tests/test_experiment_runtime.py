@@ -209,6 +209,21 @@ def test_runtime_runs_fault_agent_cleanup_as_one_experiment():
     }
 
 
+def test_runtime_persists_recovery_evaluation_after_report_is_complete():
+    result = runtime_with().run(real_request())
+
+    evaluation = result.report["evaluation"]
+    assert evaluation["evaluator"] == "RecoveryEvaluatorAgent"
+    assert 0.0 < evaluation["team_reward"] <= 1.0
+    assert set(evaluation["agent_rewards"]) == {
+        "AIServiceHASupportAgent",
+        "AIApplicationManagementAgent",
+        "AISemiconductorInfraOpsAgent",
+        "CostOptimizationAgent",
+    }
+    assert result.session.stages["result"]["payload"]["evaluation"] == evaluation
+
+
 def test_runtime_cleans_up_fault_when_coordinator_raises():
     chaos = FakeChaosAdapter()
     result = runtime_with(coordinator=RaisingCoordinator(), chaos=chaos).run(real_request())

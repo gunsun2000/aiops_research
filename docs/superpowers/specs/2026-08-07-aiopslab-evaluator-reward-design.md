@@ -2,15 +2,15 @@
 
 ## Goal
 
-Replace the AIOpsLab detection path's fixed per-action rewards with a post-run Evaluator Agent that assigns both per-agent rewards and a team reward from objective experiment evidence.
+Replace fixed decision-time reward totals with post-run Evaluator Agents that assign per-agent rewards and a team reward from objective experiment evidence.
 
 ## Scope
 
-This change applies to the AIOpsLab detection benchmark path. It does not change the recovery experiment reward fields outside AIOpsLab.
+This document originally specified the AIOpsLab detection benchmark path. The same report-level contract is now also used by the Chaos Mesh/Kubernetes recovery path through `RecoveryEvaluatorAgent`; each path keeps its own evidence rubric and official metrics.
 
 ## Architecture
 
-The existing four agents continue to make detection decisions. They do not assign meaningful rewards during execution. After AIOpsLab returns the benchmark result, an independent `AIOpsLabEvaluatorAgent` evaluates the completed run.
+The existing four agents continue to make detection decisions. They do not assign meaningful rewards during execution. After AIOpsLab returns the benchmark result, an independent `AIOpsLabEvaluatorAgent` evaluates the completed run. After a Chaos Mesh recovery runtime completes, `RecoveryEvaluatorAgent` evaluates the final recovery report before persistence.
 
 Flow:
 
@@ -116,8 +116,16 @@ Tests must verify:
 - aggregation averages team and per-agent rewards correctly
 - UI uses the persisted evaluator fields and does not fabricate values
 
+## Recovery evaluator extension
+
+Recovery reports use the same bounded team/per-agent contract, but score only recorded recovery evidence:
+
+- outcome, efficiency, safety, and evidence quality are the authoritative components
+- `team_reward = 0.65 * outcome + 0.15 * efficiency + 0.10 * safety + 0.10 * evidence_quality`
+- missing metrics and cost evidence remain missing; they are never fabricated
+- legacy `agent_contributions[*].reward` values remain diagnostic compatibility data and are not summed as the final reward
+- the UI uses `evaluation.team_reward` and `evaluation.agent_rewards`; missing evaluation data is shown as `—`
+
 ## Non-Goals
 
-- No online RL policy update is added in this change.
-- No LLM-as-a-judge dependency is added in this change.
-- No reward changes are made to the non-AIOpsLab recovery execution path.
+- No online RL policy update or LLM-as-a-judge dependency is added.

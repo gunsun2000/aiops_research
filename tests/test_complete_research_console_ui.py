@@ -109,7 +109,7 @@ def test_performance_dashboard_uses_persisted_recovery_jobs():
     assert "state.jobs" in app
     assert 'value!=null&&value!==""' in app
     assert "recovery.recovery_success==null?undefined" in app
-    for metric in ("성공률", "평균 MTTR", "평균 Reward"):
+    for metric in ("성공률", "평균 MTTR", "평균 Team Reward"):
         assert metric in html
 
 
@@ -255,3 +255,37 @@ def test_existing_runtime_contracts_still_present():
     assert "EXECUTE REAL EXPERIMENT" in script
     assert 'api("/api/benchmarks/aiopslab/jobs",' in script
     assert "EXECUTE REAL COMPARISON" in script
+
+
+def test_recovery_reward_ui_uses_evaluator_team_reward_only():
+    html = source(INDEX)
+    app = source(APP)
+
+    assert "evaluation.team_reward" in app
+    assert "evaluatorAgentReward" in app
+    report_metrics = app.split("function reportMetrics", 1)[1].split("function renderDetail", 1)[0]
+    assert "agent_contributions" not in report_metrics
+    assert "reduce((sum,item)=>sum+Number(item.reward||0),0)" not in app
+    assert 'reward:evaluation&&evaluation.team_reward!=null?Number(evaluation.team_reward):null' in app
+    assert "Team Reward" in html
+    for marker in (
+        "detail-team-reward",
+        "detail-ha-reward",
+        "detail-app-reward",
+        "detail-infra-reward",
+        "detail-cost-reward",
+        "detail-outcome",
+        "detail-efficiency",
+        "detail-safety",
+        "detail-evidence-quality",
+        "detail-evaluator",
+        "detail-rubric",
+    ):
+        assert marker in html
+
+
+def test_legacy_reports_have_no_authoritative_reward():
+    app = source(APP)
+    assert "evaluationFor(report)" in app
+    assert 'reward:evaluation&&evaluation.team_reward!=null?Number(evaluation.team_reward):null' in app
+    assert "report.agent_contributions" not in app

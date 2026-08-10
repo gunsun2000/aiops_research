@@ -154,6 +154,7 @@ def normalize_experiment_session(
                     [],
                 ),
                 "agent_contributions": report.get("agent_contributions", {}),
+                "evaluation": report.get("evaluation", {}),
                 "final_status": final_status,
             },
         ),

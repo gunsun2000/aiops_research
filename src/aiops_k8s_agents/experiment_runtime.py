@@ -31,6 +31,7 @@ from aiops_k8s_agents.executor import ExecutionMode
 from aiops_k8s_agents.mutual_supervision_models import to_serializable
 from aiops_k8s_agents.operation_lock import OperationLockError, TargetOperationLock
 from aiops_k8s_agents.real_evidence import RuntimeConfiguration
+from aiops_k8s_agents.recovery_evaluator import attach_recovery_evaluation
 
 
 @dataclass(frozen=True)
@@ -456,6 +457,8 @@ class ExperimentRuntime:
             "final_status": status,
             "cleanup": deepcopy(dict(cleanup)),
         })
+        if request.incident_source == "chaos_mesh":
+            attach_recovery_evaluation(report)
         bridge.emit(RuntimeStage.COMPLETED, f"experiment {status}")
         report["runtime_events"] = [event.to_dict() for event in bridge._events]
         if bridge.artifact_store is not None and hasattr(bridge.artifact_store, "paths"):
