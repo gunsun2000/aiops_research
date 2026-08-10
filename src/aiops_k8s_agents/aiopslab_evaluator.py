@@ -100,6 +100,32 @@ class AIOpsLabEvaluatorAgent:
         )
 
 
+def attach_aiopslab_evaluation(
+    report: dict[str, Any],
+    *,
+    max_steps: int,
+    metrics_duration_minutes: int,
+) -> dict[str, Any]:
+    decisions = list(report.get("decisions", []))
+    for decision in decisions:
+        metadata = dict(decision.get("metadata", {}))
+        metadata.pop("rewards", None)
+        metadata.pop("reward_total", None)
+        decision["metadata"] = metadata
+
+    evaluator = AIOpsLabEvaluatorAgent(
+        max_steps=max_steps,
+        metrics_duration_minutes=metrics_duration_minutes,
+    )
+    evaluation = evaluator.evaluate(
+        dict(report.get("aiopslab_results", {})),
+        decisions,
+    )
+    report["decisions"] = decisions
+    report["evaluation"] = evaluation.to_dict()
+    return report
+
+
 def _correctness_score(accuracy: str) -> float:
     normalized = accuracy.strip().lower()
     if normalized == "correct":
