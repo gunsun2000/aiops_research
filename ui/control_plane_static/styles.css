@@ -2,3 +2,136 @@
 @media(max-width:1200px){.reference-flow{grid-template-columns:repeat(4,1fr);row-gap:20px}.reference-flow li:nth-child(4)::after{display:none}.aiopslab-reference-grid{grid-template-columns:1fr 1fr}.benchmark-run{grid-column:1/-1}.results-reference-grid{grid-template-columns:1fr}.results-summary{grid-template-columns:1fr 1fr}.scenario-grid{grid-template-columns:repeat(2,1fr)}.reference-recovery-setup{grid-template-columns:1fr}.selected-summary{order:-1}.overview-status-strip{grid-template-columns:repeat(3,1fr)}.overview-status-strip>div{border-right:0}}
 @media(max-width:900px){.platform-shell{grid-template-columns:200px minmax(0,1fr)}.overview-two-column,.overview-two-column.lower,.detail-grid,.agent-inspector-layout,.evidence-layout{grid-template-columns:1fr}.agent-summary-grid{grid-template-columns:repeat(2,1fr)}.filter-bar{grid-template-columns:repeat(2,1fr)}.controller-options,.mode-cards{grid-template-columns:1fr}.aiopslab-reference-grid{grid-template-columns:1fr}.results-summary{grid-template-columns:1fr}}
 @media(max-width:760px){.platform-shell{display:block}.platform-sidebar{position:relative;height:auto}.platform-brand{height:64px}.platform-nav{grid-template-columns:repeat(2,1fr)}.platform-nav button{min-height:58px}.sidebar-connections{display:none}.view-container{padding:14px 12px 28px}.page-heading,.recovery-header{display:block}.recovery-header-meta{margin-top:14px;flex-wrap:wrap}.overview-status-strip{grid-template-columns:1fr 1fr}.reference-flow{grid-template-columns:repeat(2,1fr)}.reference-flow li:nth-child(even)::after{display:none}.inline-form label{grid-template-columns:1fr}.overview-run-button{float:none;margin-top:8px;width:100%}.scenario-grid,.agent-summary-grid,.result-metric-grid,.summary-card-grid,.benchmark-metric-grid,.advanced-settings-grid{grid-template-columns:1fr}.filter-bar{grid-template-columns:1fr}.detail-header{grid-template-columns:auto 1fr}.detail-header>strong,.detail-header>div{grid-column:1/-1}.reference-tabs,.result-tabs,.detail-tabs{overflow:auto}.history-table-card{overflow:auto}.platform-nav b{font-size:12px}.platform-nav small{display:none}}
+
+/* Reference-faithful research workspace */
+:root{
+  --sidebar-width:252px;
+  --navy:#062b59;
+  --navy-deep:#031b39;
+  --blue:#0b5de8;
+  --blue-strong:#084ec8;
+  --ink:#10233f;
+  --muted:#60718b;
+  --line:#d8e2ef;
+  --canvas:#f4f7fb;
+  --surface:#ffffff;
+  --green:#119b67;
+  --orange:#d97706;
+  --red:#d94452;
+  --purple:#6d50c6;
+  --radius:8px;
+  --shadow:0 1px 2px rgba(15,35,64,.04);
+}
+
+html,body{background:var(--canvas)}
+body{color:var(--ink);font-size:14px;letter-spacing:0}
+.platform-shell{grid-template-columns:var(--sidebar-width) minmax(0,1fr);background:var(--canvas)}
+.platform-sidebar{padding:0 16px 20px;background:linear-gradient(180deg,var(--navy-deep),var(--navy) 58%,#042650)}
+.platform-brand{height:96px;padding:0 4px;border-bottom:1px solid rgba(255,255,255,.12)}
+.brand-mark{width:46px;height:46px;border-radius:7px;background:#0b63e5;box-shadow:none}
+.platform-brand strong{font-size:18px;line-height:1.25}
+.platform-brand small{font-size:12px;color:#c6d7eb}
+.platform-nav{gap:8px;margin-top:18px}
+.platform-nav button{grid-template-columns:38px 1fr;min-height:68px;padding:11px 12px;border-radius:7px}
+.platform-nav button[aria-pressed="true"]{background:#0d56bd;box-shadow:inset 3px 0 0 #5fa0ff}
+.platform-nav .nav-icon{font-size:21px}
+.platform-nav b{font-size:14px}
+.platform-nav small{font-size:11px;color:#c9d9ec}
+.sidebar-connections{padding:16px;margin-top:auto;background:rgba(0,18,43,.32);border-color:rgba(198,219,244,.28);border-radius:8px}
+.sidebar-connections li{min-height:25px}
+.sidebar-connections li strong{font-weight:750}
+.platform-main{min-height:100vh;background:var(--canvas)}
+.view-container{padding:26px 30px 44px}
+.view-panel{width:100%;max-width:1560px;margin:0 auto}
+.surface{border-color:var(--line);border-radius:var(--radius);box-shadow:var(--shadow)}
+.page-heading{min-height:66px;align-items:flex-start;margin-bottom:20px}
+.page-heading h2,.recovery-header h2{font-size:27px;line-height:1.25;letter-spacing:0}
+.page-heading p,.recovery-header p{font-size:13px;line-height:1.6;color:var(--muted)}
+.primary-action,.secondary-action{height:44px;min-height:44px;border-radius:6px}
+.primary-action{background:var(--blue);border-color:var(--blue);box-shadow:none}
+.primary-action:hover:not(:disabled){background:var(--blue-strong)}
+.secondary-action:hover:not(:disabled){border-color:#91a9c8;background:#f8fafd}
+.overview-status-strip{min-height:68px;padding:0 16px;margin-bottom:14px}
+.overview-status-strip>div{padding:0 20px}
+.overview-flow-card{padding:18px 20px;margin-bottom:14px}
+.overview-flow-card h3{font-size:15px;margin-bottom:18px}
+.reference-flow b{width:48px;height:48px;margin-bottom:10px}
+.reference-flow span{font-size:12px;line-height:1.35}
+.overview-two-column{gap:14px;margin-bottom:14px}
+.overview-quick,.overview-current,.overview-agents,.overview-result{padding:20px}
+.overview-quick h3,.overview-current h3,.overview-agents h3,.overview-result h3{font-size:15px}
+.inline-form{gap:11px;margin-top:18px}
+.inline-form label{grid-template-columns:150px minmax(0,1fr)}
+.current-layout{gap:28px;margin-top:18px}
+.agent-summary-grid{gap:12px;margin-top:16px}
+.agent-summary-grid article{min-height:152px;padding:14px;background:#fbfcfe}
+.agent-summary-grid p{line-height:1.55}
+.result-metric-grid{gap:10px;margin-top:14px}
+.result-metric-grid article{min-height:76px;display:grid;align-content:center;background:#fbfcfe}
+.recovery-header{min-height:68px;margin-bottom:20px}
+.recovery-header-meta{gap:22px}
+.reference-recovery-setup{grid-template-columns:minmax(0,1fr) 330px;gap:18px}
+.recovery-step{padding:22px 24px}
+.recovery-step h3{font-size:17px;margin-bottom:18px}
+.scenario-grid{gap:18px}
+.scenario-list button{min-height:142px;padding:22px 14px}
+.controller-options{gap:20px}
+.controller-option{min-height:152px;padding:22px 24px}
+.mode-cards{gap:20px}
+.mode-cards button{min-height:112px;padding:20px}
+.selected-summary{padding:24px}
+.selected-summary>div{padding:18px 0}
+.mode-guide{padding:18px;margin-top:10px}
+.reference-tabs,.result-tabs,.detail-tabs{gap:28px;margin-bottom:24px}
+.reference-tabs button,.result-tabs button,.detail-tabs button{min-height:48px;padding:12px 5px}
+.aiopslab-reference-grid{grid-template-columns:350px minmax(0,1fr) 350px;gap:18px}
+.benchmark-scenarios,.benchmark-info,.benchmark-run{padding:22px}
+.benchmark-scenario-card{min-height:72px;padding:14px}
+.benchmark-run label{margin:24px 0}
+.recent-benchmark{margin-top:18px;padding:20px}
+.filter-bar{gap:14px;padding:18px;margin-bottom:18px}
+.results-reference-grid{grid-template-columns:minmax(0,1fr) 360px;gap:18px}
+.history-table-card th,.history-table-card td{height:56px;padding:14px}
+.results-summary>.surface{padding:22px}
+.summary-card-grid{gap:12px;margin-top:18px}
+.summary-card-grid article{min-height:112px;display:grid;align-content:center}
+.detail-reference-layout{max-width:1320px;margin:18px auto 0}
+.detail-header{min-height:64px;margin-bottom:14px}
+.detail-grid{grid-template-columns:minmax(0,1.35fr) 390px;gap:18px}
+.detail-summary,.detail-info,.agent-agreement,.detail-card{padding:24px}
+
+@media(max-width:1200px){
+  .reference-recovery-setup{grid-template-columns:1fr}
+  .selected-summary{order:-1}
+  .aiopslab-reference-grid{grid-template-columns:1fr 1fr}
+  .benchmark-run{grid-column:1/-1}
+  .results-reference-grid{grid-template-columns:1fr}
+}
+
+@media(max-width:900px){
+  :root{--sidebar-width:210px}
+  .view-container{padding:22px 20px 36px}
+  .overview-two-column,.overview-two-column.lower,.detail-grid{grid-template-columns:1fr}
+  .recovery-header-meta{flex-wrap:wrap}
+}
+
+@media(max-width:760px){
+  :root{--sidebar-width:100%}
+  .platform-shell{display:block}
+  .platform-sidebar{position:relative;height:auto;padding:0 12px 12px}
+  .platform-brand{height:72px}
+  .platform-nav{grid-template-columns:repeat(2,minmax(0,1fr));gap:6px;margin-top:10px}
+  .platform-nav button{min-height:58px;padding:8px}
+  .view-container{padding:18px 12px 30px}
+  .page-heading,.recovery-header{display:block;min-height:0}
+  .page-heading h2,.recovery-header h2{font-size:23px}
+  .recovery-header-meta{display:grid;grid-template-columns:1fr 1fr;margin-top:16px;gap:10px}
+  .recovery-header-meta>span{min-width:0;padding-right:0;border-right:0}
+  .recovery-header-meta .primary-action{grid-column:1/-1;width:100%}
+  .overview-status-strip{grid-template-columns:1fr 1fr}
+  .overview-status-strip>div{padding:10px}
+  .scenario-grid,.controller-options,.mode-cards,.aiopslab-reference-grid,.results-summary{grid-template-columns:1fr}
+  .scenario-list button{min-height:110px}
+  .benchmark-run{grid-column:auto}
+  .detail-reference-layout{margin-top:0}
+}

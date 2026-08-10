@@ -191,6 +191,14 @@ def test_styles_match_reference_shell_and_desktop_density():
     assert ".dashboard-donut" in css
     assert ".detail-reference-layout" in css
     assert "@media(max-width:760px)" in css
+
+
+def test_reference_shell_uses_stable_workspace_dimensions():
+    css = _compact(_source(STYLES_CSS))
+    assert "--sidebar-width:252px" in css
+    assert "max-width:1560px" in css
+    assert "grid-template-columns:var(--sidebar-width)minmax(0,1fr)" in css
+    assert "@media(max-width:760px)" in css
     assert "position:sticky" in css
     assert "overflow-wrap:anywhere" in css
 
