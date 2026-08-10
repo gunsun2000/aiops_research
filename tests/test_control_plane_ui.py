@@ -48,6 +48,15 @@ def test_reference_images_define_the_page_structure():
     assert "복구 전 / 후 Evidence" in html
 
 
+def test_reference_console_has_semantic_page_actions_and_workspace_sections():
+    html = _source(INDEX_HTML)
+    assert '<header class="page-heading recovery-header">' in html
+    assert 'class="recovery-main" aria-label="복구 실험 설정"' in html
+    assert 'class="surface selected-summary" aria-label="선택된 실험 요약"' in html
+    assert 'aria-label="실험 결과 필터"' in html
+    assert 'aria-label="실험 상세 탭"' in html
+
+
 def test_sidebar_exposes_runtime_connection_statuses():
     html = _source(INDEX_HTML)
     for connection in ("kubernetes", "prometheus", "chaos-mesh", "aiopslab", "autogen"):
