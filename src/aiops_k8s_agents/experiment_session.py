@@ -17,6 +17,7 @@ class ExperimentStage(str, Enum):
     CONSENSUS = "consensus"
     SAFETY = "safety"
     EXECUTION = "execution"
+    EVALUATION = "evaluation"
     RESULT = "result"
 
 
@@ -143,6 +144,11 @@ def normalize_experiment_session(
             experiment_id,
             _execution_status(execution, safety),
             execution,
+        ),
+        ExperimentStage.EVALUATION.value: _stage(
+            experiment_id,
+            "completed" if report.get("evaluation") else "pending",
+            report.get("evaluation", {}),
         ),
         ExperimentStage.RESULT.value: _stage(
             experiment_id,

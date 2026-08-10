@@ -458,6 +458,10 @@ class ExperimentRuntime:
             "cleanup": deepcopy(dict(cleanup)),
         })
         if request.incident_source == "chaos_mesh":
+            bridge.emit(
+                RuntimeStage.ANALYZING,
+                "evaluating recovery outcome with RecoveryEvaluatorAgent",
+            )
             attach_recovery_evaluation(report)
         bridge.emit(RuntimeStage.COMPLETED, f"experiment {status}")
         report["runtime_events"] = [event.to_dict() for event in bridge._events]

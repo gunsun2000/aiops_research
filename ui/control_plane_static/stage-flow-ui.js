@@ -10,6 +10,7 @@
     { title: "Cost Agent 검토", subtitle: "Cost Review", roleClass: "stage-cost" },
     { title: "안전 명령 검증", subtitle: "Guard: Python + Go", roleClass: "stage-neutral" },
     { title: "복구 실행 · 결과 확인", subtitle: "Kubernetes Action / Recovery Monitor", roleClass: "stage-neutral" },
+    { title: "Recovery Evaluator Agent", subtitle: "Team / Agent Reward", roleClass: "stage-neutral" },
   ];
 
   const ROLE_CLASSES = ["stage-neutral", "stage-ha", "stage-app", "stage-infra", "stage-cost"];
@@ -41,10 +42,23 @@
     item.classList.add(roleClass);
   }
 
+  function ensureFlowItems(list, count, createItem) {
+    if (!list) return [];
+    while (list.querySelectorAll("li").length < count) {
+      list.append(createItem(list.querySelectorAll("li").length));
+    }
+    return Array.from(list.querySelectorAll("li"));
+  }
+
   function renderOverviewFlow() {
     const timeline = document.getElementById("overview-stage-timeline");
     if (!timeline) return;
-    const items = Array.from(timeline.querySelectorAll("li"));
+    const items = ensureFlowItems(timeline, FLOW_STEPS.length, () => {
+      const item = document.createElement("li");
+      item.dataset.stageKey = "analyzing";
+      item.innerHTML = "<b></b><span></span>";
+      return item;
+    });
     FLOW_STEPS.forEach((step, index) => {
       const item = items[index];
       if (!item) return;
@@ -66,7 +80,7 @@
   function renderMiniFlow() {
     const list = document.querySelector(".mini-stage-list");
     if (!list) return;
-    const items = Array.from(list.querySelectorAll("li"));
+    const items = ensureFlowItems(list, FLOW_STEPS.length, () => document.createElement("li"));
     FLOW_STEPS.forEach((step, index) => {
       const item = items[index];
       if (!item) return;
@@ -78,7 +92,11 @@
   function renderLiveFlow() {
     const timeline = document.getElementById("stage-timeline");
     if (!timeline) return;
-    const items = Array.from(timeline.querySelectorAll("li"));
+    const items = ensureFlowItems(timeline, FLOW_STEPS.length, () => {
+      const item = document.createElement("li");
+      item.dataset.stages = "analyzing cleanup completed";
+      return item;
+    });
     FLOW_STEPS.forEach((step, index) => {
       const item = items[index];
       if (!item) return;
@@ -96,6 +114,8 @@
 
   function bootstrap() {
     renderFourAgentFlow();
+    const progress = document.getElementById("overview-completed-stages");
+    if (progress) progress.textContent = "0 / 9";
     [100, 500, 1200].forEach((delay) => window.setTimeout(renderFourAgentFlow, delay));
   }
 

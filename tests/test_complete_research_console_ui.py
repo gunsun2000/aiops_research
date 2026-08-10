@@ -140,6 +140,7 @@ def test_recovery_flow_exposes_all_four_agents_in_eight_steps():
         "Cost Agent 검토",
         "안전 명령 검증",
         "복구 실행 · 결과 확인",
+        "Recovery Evaluator Agent",
     )
     for label in expected:
         assert label in flow
@@ -148,6 +149,7 @@ def test_recovery_flow_exposes_all_four_agents_in_eight_steps():
     assert "overview-stage-timeline" in flow
     assert "stage-timeline" in flow
     assert "mini-stage-list" in flow
+    assert "Recovery Evaluator" in flow
 
 
 def test_recovery_flow_agent_steps_match_agent_card_colors():

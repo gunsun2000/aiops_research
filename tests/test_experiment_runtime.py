@@ -201,7 +201,7 @@ def test_runtime_runs_fault_agent_cleanup_as_one_experiment():
     assert chaos.calls == ["preflight", "inject:cpu-stress", "cleanup:cpu-stress"]
     assert [event.stage.value for event in result.events] == [
         "preflight", "injecting_fault", "collecting_evidence", "agent_reasoning",
-        "validating", "executing", "observing_recovery", "cleanup", "completed",
+        "validating", "executing", "observing_recovery", "cleanup", "analyzing", "completed",
     ]
     assert {event.experiment_id for event in result.events} == {result.experiment_id}
     assert {stage["experiment_id"] for stage in result.session.stages.values()} == {
@@ -222,6 +222,7 @@ def test_runtime_persists_recovery_evaluation_after_report_is_complete():
         "CostOptimizationAgent",
     }
     assert result.session.stages["result"]["payload"]["evaluation"] == evaluation
+    assert result.session.stages["evaluation"]["payload"] == evaluation
 
 
 def test_runtime_cleans_up_fault_when_coordinator_raises():
