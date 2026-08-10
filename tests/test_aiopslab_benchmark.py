@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -39,6 +40,32 @@ def _write_catalog(path: Path) -> None:
     )
 
 
+def _executor_fixture(tmp_path):
+    catalog_path = tmp_path / "benchmarks.json"
+    _write_catalog(catalog_path)
+    spec = AIOpsLabBenchmarkCatalog.from_path(catalog_path).resolve(
+        "hotel-reservation-detection-v1"
+    )
+    repo_root = tmp_path / "project"
+    aiopslab_root = tmp_path / "external" / "AIOpsLab"
+    kubeconfig = tmp_path / "kubeconfig.yaml"
+    python = tmp_path / "python.exe"
+    (repo_root / "scripts").mkdir(parents=True)
+    (repo_root / "scripts" / "server_aiopslab_auto_detection.py").write_text(
+        "# runner", encoding="utf-8"
+    )
+    aiopslab_root.mkdir(parents=True)
+    kubeconfig.write_text("apiVersion: v1", encoding="utf-8")
+    python.write_text("binary", encoding="utf-8")
+    executor = AIOpsLabBenchmarkExecutor(
+        repo_root=repo_root,
+        aiopslab_root=aiopslab_root,
+        python_executable=python,
+        kubeconfig=kubeconfig,
+    )
+    return executor, spec
+
+
 def test_catalog_resolves_only_registered_benchmark_ids(tmp_path):
     path = tmp_path / "benchmarks.json"
     _write_catalog(path)
@@ -69,28 +96,7 @@ def test_catalog_exposes_hotel_reservation_ui_metadata_without_metrics(tmp_path)
 
 
 def test_executor_builds_bounded_argv_from_server_owned_paths(tmp_path):
-    catalog_path = tmp_path / "benchmarks.json"
-    _write_catalog(catalog_path)
-    spec = AIOpsLabBenchmarkCatalog.from_path(catalog_path).resolve(
-        "hotel-reservation-detection-v1"
-    )
-    repo_root = tmp_path / "project"
-    aiopslab_root = tmp_path / "external" / "AIOpsLab"
-    kubeconfig = tmp_path / "kubeconfig.yaml"
-    python = tmp_path / "python.exe"
-    (repo_root / "scripts").mkdir(parents=True)
-    (repo_root / "scripts" / "server_aiopslab_auto_detection.py").write_text(
-        "# runner", encoding="utf-8"
-    )
-    aiopslab_root.mkdir(parents=True)
-    kubeconfig.write_text("apiVersion: v1", encoding="utf-8")
-    python.write_text("binary", encoding="utf-8")
-    executor = AIOpsLabBenchmarkExecutor(
-        repo_root=repo_root,
-        aiopslab_root=aiopslab_root,
-        python_executable=python,
-        kubeconfig=kubeconfig,
-    )
+    executor, spec = _executor_fixture(tmp_path)
 
     command = executor.build_command(
         spec,
@@ -98,13 +104,13 @@ def test_executor_builds_bounded_argv_from_server_owned_paths(tmp_path):
     )
 
     assert isinstance(command, list)
-    assert command[0] == str(python.resolve())
+    assert command[0] == str(executor.python_executable)
     assert "--problem-id" in command
     assert command[command.index("--problem-id") + 1] == spec.problem_id
     assert command[command.index("--aiopslab-root") + 1] == str(
-        aiopslab_root.resolve()
+        executor.aiopslab_root
     )
-    assert command[command.index("--kubeconfig") + 1] == str(kubeconfig.resolve())
+    assert command[command.index("--kubeconfig") + 1] == str(executor.kubeconfig)
     assert executor.readiness()["ready"] is True
 
 
@@ -134,6 +140,87 @@ def test_executor_rejects_repetition_above_registered_limit(tmp_path):
             AIOpsLabBenchmarkRequest(spec.benchmark_id, repetitions=12),
             repetitions_override=13,
         )
+
+
+def test_executor_attaches_evaluator_result_to_generated_report(tmp_path, monkeypatch):
+    executor, spec = _executor_fixture(tmp_path)
+    output_dir = tmp_path / "reports"
+
+    class _FakeProcess:
+        returncode = 0
+
+        def __init__(self, *args, **kwargs):
+            output_dir.mkdir(parents=True, exist_ok=True)
+            (output_dir / "run_aiopslab_auto_detection.json").write_text(
+                json.dumps(
+                    {
+                        "problem_id": spec.problem_id,
+                        "namespace": spec.namespace,
+                        "service": spec.service,
+                        "decisions": [
+                            {
+                                "api_call": 'get_logs("test-hotel-reservation", "geo")',
+                                "valid": True,
+                                "metadata": {"referee": "approved", "reward_total": "1.55"},
+                            },
+                            {
+                                "api_call": 'get_metrics("test-hotel-reservation", 10)',
+                                "valid": True,
+                                "metadata": {"referee": "approved", "reward_total": "3.10"},
+                            },
+                            {
+                                "api_call": 'submit("Yes")',
+                                "valid": True,
+                                "metadata": {"referee": "approved", "reward_total": "3.10"},
+                            },
+                        ],
+                        "aiopslab_results": {
+                            "results": {
+                                "Detection Accuracy": "Correct",
+                                "TTD": 3.0,
+                                "steps": 3,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+        def poll(self):
+            return 0
+
+        def communicate(self, timeout=None):
+            return "completed", ""
+
+        def terminate(self):
+            return None
+
+        def kill(self):
+            return None
+
+    monkeypatch.setattr("aiops_k8s_agents.aiopslab_benchmark.subprocess.Popen", _FakeProcess)
+
+    execution = executor.execute(
+        spec,
+        job_id="lab-evaluator",
+        repetition=1,
+        output_dir=output_dir,
+        cancellation=Event(),
+    )
+
+    report = json.loads(execution.report_path.read_text(encoding="utf-8"))
+    assert report["evaluation"]["evaluator"] == "AIOpsLabEvaluatorAgent"
+    assert report["evaluation"]["team_reward"] > 0.0
+    assert set(report["evaluation"]["agent_rewards"]) == {
+        "AIServiceHASupportAgent",
+        "AIApplicationManagementAgent",
+        "AISemiconductorInfraOpsAgent",
+        "CostOptimizationAgent",
+    }
+    assert all(
+        "reward_total" not in decision["metadata"]
+        for decision in report["decisions"]
+    )
 
 
 def test_sanitize_benchmark_output_redacts_credentials_and_paths():
