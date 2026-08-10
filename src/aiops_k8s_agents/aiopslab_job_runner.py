@@ -277,6 +277,8 @@ def _aggregate(
         "average_ttd": summary.average_ttd,
         "average_steps": summary.average_steps,
         "average_final_reward": summary.average_final_reward,
+        "average_team_reward": summary.average_team_reward,
+        "average_agent_rewards": summary.average_agent_rewards,
         "records": [asdict(record) for record in summary.records],
         "reports": reports,
         "artifacts": {
@@ -297,6 +299,8 @@ def _empty_result(job_id: str, job_dir: Path, reports: list[str]) -> dict[str, A
         "average_ttd": None,
         "average_steps": None,
         "average_final_reward": None,
+        "average_team_reward": None,
+        "average_agent_rewards": {},
         "records": [],
         "reports": reports,
         "artifacts": {"directory": str(job_dir)},
