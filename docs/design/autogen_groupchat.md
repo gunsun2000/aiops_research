@@ -84,6 +84,12 @@ aiops-k8s-agents autogen-run \
   --allowed-deployment paymentservice
 ```
 
+The repository pins `autogen-core`, `autogen-agentchat`, and
+`autogen-ext[openai]` to `0.7.5` so the GroupChat runtime is reproducible.
+`gpt-5.5` is the selected OpenAI model, not an AutoGen package version; the
+runtime supplies explicit `model_info` for this model because AutoGen does not
+list the project model alias as a built-in model.
+
 대화 요약을 보려면 `--show-transcript`를 추가한다.
 
 ```bash
