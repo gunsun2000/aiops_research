@@ -87,5 +87,22 @@ def test_detection_policy_submits_no_after_clean_logs_and_metrics():
     assert decision.metadata["consensus"] == "approved"
 
 
+def test_aiopslab_detection_metadata_does_not_assign_fixed_rewards():
+    policy = AIOpsLabDetectionPolicy(
+        namespace="test-hotel-reservation",
+        service="geo",
+    )
+
+    first = policy.next_action("Please take the next action")
+    second = policy.next_action("panic: no reachable servers")
+    third = policy.next_action(
+        "Metrics data exported to directory: /tmp/metric_20260608_180631"
+    )
+
+    for decision in (first, second, third):
+        assert "rewards" not in decision.metadata
+        assert "reward_total" not in decision.metadata
+
+
 def test_format_aiopslab_action_wraps_api_call_for_orchestrator_parser():
     assert format_aiopslab_action('submit("Yes")') == 'Action:```\nsubmit("Yes")\n```'
