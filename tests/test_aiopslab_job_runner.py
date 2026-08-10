@@ -54,6 +54,7 @@ class _FakeExecutor:
             f"20260803-{repetition:02d}_aiopslab_auto_detection.json"
         )
         report_path.parent.mkdir(parents=True, exist_ok=True)
+        team_reward = round(0.80 + repetition * 0.02, 2)
         report_path.write_text(
             json.dumps(
                 {
@@ -62,15 +63,22 @@ class _FakeExecutor:
                     "service": spec.service,
                     "decisions": [
                         {
-                            "api_call": 'submit("Yes")',
-                            "metadata": {
-                                "reward_total": "3.10",
-                                "phase": "detection",
-                            },
+                            "api_call": 'get_logs("test-hotel-reservation", "geo")',
+                            "metadata": {"phase": "detection"},
+                            "observation_excerpt": "panic: no reachable servers",
+                        },
+                        {
+                            "api_call": 'get_metrics("test-hotel-reservation", 10)',
+                            "metadata": {"phase": "analysis"},
                             "observation_excerpt": (
                                 "Metrics data exported to directory: /tmp/metric"
                             ),
-                        }
+                        },
+                        {
+                            "api_call": 'submit("Yes")',
+                            "metadata": {"phase": "detection"},
+                            "observation_excerpt": "done",
+                        },
                     ],
                     "aiopslab_results": {
                         "final_state": "SubmissionStatus.VALID_SUBMISSION",
@@ -79,6 +87,24 @@ class _FakeExecutor:
                             "TTD": float(repetition),
                             "steps": 3,
                         },
+                    },
+                    "evaluation": {
+                        "evaluator": "AIOpsLabEvaluatorAgent",
+                        "rubric_version": "evaluator-v1",
+                        "team_reward": team_reward,
+                        "agent_rewards": {
+                            "AIServiceHASupportAgent": team_reward,
+                            "AIApplicationManagementAgent": team_reward - 0.01,
+                            "AISemiconductorInfraOpsAgent": team_reward - 0.02,
+                            "CostOptimizationAgent": team_reward - 0.03,
+                        },
+                        "components": {
+                            "correctness": 1.0,
+                            "efficiency": 0.8,
+                            "safety": 1.0,
+                            "evidence_quality": 1.0,
+                        },
+                        "reason": "objective evidence",
                     },
                 }
             ),
@@ -140,6 +166,10 @@ def test_runner_repeats_benchmark_and_writes_aggregate_artifacts(tmp_path):
     assert finished.result["total_runs"] == 3
     assert finished.result["correct_runs"] == 3
     assert finished.result["average_ttd"] == 2.0
+    assert finished.result["average_team_reward"] == 0.84
+    assert finished.result["average_final_reward"] == 0.84
+    assert finished.result["average_agent_rewards"]["AIServiceHASupportAgent"] == 0.84
+    assert finished.result["average_agent_rewards"]["CostOptimizationAgent"] == 0.81
     assert len(executor.calls) == 3
     assert Path(finished.result["artifacts"]["markdown"]).exists()
     assert Path(finished.result["artifacts"]["csv"]).exists()
@@ -189,4 +219,3 @@ def test_runner_rejects_unknown_benchmark_before_executor(tmp_path):
     assert "not registered" in finished.error
     assert executor.calls == []
     runner.shutdown()
-
