@@ -172,14 +172,77 @@
   async function cancelRecoveryComparison(){if(!state.comparisonJobId)return;try{renderComparisonJob(await api(`/api/comparisons/recovery/jobs/${state.comparisonJobId}/cancel`,{method:"POST"}));}catch(error){text("comparison-error",error.message||String(error));}}
   async function restoreLatestRecoveryComparison(){try{const payload=await api("/api/comparisons/recovery/jobs?limit=20"),latest=payload.jobs&&payload.jobs[0];if(!latest)return;const job=await api(`/api/comparisons/recovery/jobs/${latest.job_id}`);state.comparisonEvents=[];$("comparison-event-log").replaceChildren();(job.events||[]).forEach(addComparisonEvent);renderComparisonJob(job);if(!TERMINAL.has(job.status))connectComparisonEvents();}catch(_error){return;}}
 
-  function reportMetrics(job){const report=reportFor(job),recovery=report&&report.recovery_monitoring||{},contributions=report?Object.values(report.agent_contributions||{}):[];return{mttr:recovery.recovery_seconds,reward:contributions.length?contributions.reduce((sum,item)=>sum+Number(item.reward||0),0):null,success:recovery.recovery_success===true,finalStatus:report&&report.final_status,action:report&&report.selected_action};}
+  function reportMetrics(job){const report=reportFor(job),recovery=report&&report.recovery_monitoring||{},contributions=report?Object.values(report.agent_contributions||{}):[];return{mttr:recovery.recovery_seconds,reward:contributions.length?contributions.reduce((sum,item)=>sum+Number(item.reward||0),0):null,success:recovery.recovery_success==null?undefined:recovery.recovery_success===true,finalStatus:report&&report.final_status,action:report&&report.selected_action};}
   function filteredJobs(){const period=$("history-period").value,scenarioId=$("history-scenario").value,controller=$("history-controller").value,mode=$("history-mode").value,status=$("history-status").value,search=$("history-search").value.trim().toLowerCase(),cutoff=period==="all"?null:Date.now()-Number(period)*86400000;return state.jobs.filter((job)=>{const request=job.request||{};if(cutoff&&new Date(job.created_at||0).getTime()<cutoff)return false;if(scenarioId!=="all"&&request.scenario_id!==scenarioId)return false;if(controller!=="all"&&request.controller!==controller)return false;if(mode!=="all"&&request.mode!==mode)return false;if(status!=="all"&&job.status!==status)return false;if(search&&!String(job.experiment_id||"").toLowerCase().includes(search))return false;return true;});}
   function ensureDeleteControls(){const historyPanel=document.querySelector('[data-result-panel="history"]');if(historyPanel&&!$("result-delete-status")){const status=document.createElement("p");status.id="result-delete-status";status.className="inline-status result-delete-status";status.setAttribute("aria-live","polite");status.hidden=true;(historyPanel.querySelector(".filter-bar")||historyPanel.firstElementChild)?.after(status);}const detailPanel=document.querySelector('[data-view-panel="history"]');if(detailPanel&&!$("detail-delete-button")){const button=document.createElement("button");button.id="detail-delete-button";button.type="button";button.className="destructive-action";button.textContent="실험 삭제";const header=detailPanel.querySelector(".detail-header,.page-heading");let actions=header&&header.querySelector(".detail-header-actions");if(!actions&&header){actions=document.createElement("div");actions.className="detail-header-actions";header.append(actions);}actions?.append(button);}}
   function setDeleteStatus(message,isError=false){const node=$("result-delete-status");if(!node)return;node.hidden=!message;node.textContent=message||"";node.classList.toggle("inline-error",Boolean(isError));}
   async function deleteExperimentResult(experimentId,{fromDetail=false}={}){const job=state.jobs.find((item)=>item.experiment_id===experimentId)||(state.job&&state.job.experiment_id===experimentId?state.job:null);if(job&&!TERMINAL.has(job.status)){setDeleteStatus("실행 중인 실험은 삭제할 수 없습니다.",true);return;}const confirmed=window.confirm("이 실험 결과를 삭제하시겠습니까?\nJob, 이벤트, 생성된 결과 파일이 영구적으로 삭제됩니다.");if(!confirmed)return;setDeleteStatus("실험 결과를 삭제하는 중입니다.");try{const result=await api(`/api/experiments/${encodeURIComponent(experimentId)}`,{method:"DELETE"});if(state.experimentId===experimentId){closeEvents();stopTimer();state.experimentId="";state.job=null;state.events=[];state.running=false;renderGlobalContext(null);}await loadExperimentHistory();setDeleteStatus(`${experimentId} 삭제 완료 · Artifact ${result&&result.artifacts_deleted!=null?result.artifacts_deleted:0}개 삭제`);if(fromDetail)selectPlatformView("analysis");}catch(error){const raw=error instanceof Error?error.message:String(error),message=/not terminal/i.test(raw)?"실행 중인 실험은 삭제할 수 없습니다.":raw;setDeleteStatus(message,true);}}
   function renderHistory(){const jobs=filteredJobs();text("history-count",`${jobs.length}건`);const body=$("experiment-history-body");if(!jobs.length){body.innerHTML='<tr><td colspan="9" class="empty-cell">조건에 맞는 실험 결과가 없습니다.</td></tr>';}else{body.replaceChildren(...jobs.map((job)=>{const request=job.request||{},item=state.scenarios[request.scenario_id]||RECOVERY_SCENARIOS[request.scenario_id]||{label:request.scenario_id||"—"},metrics=reportMetrics(job),tr=document.createElement("tr"),canDelete=TERMINAL.has(job.status);tr.innerHTML=`<td>${htmlEscape(job.experiment_id||"—")}</td><td>${htmlEscape(formatDate(job.created_at))}</td><td>${htmlEscape(item.label)}</td><td>${htmlEscape(controllerLabel(request.controller,request.controller==="autogen"?request.model:""))}</td><td><span class="mode-chip ${htmlEscape(request.mode||"mock")}">${htmlEscape(modeLabel(request.mode))}</span></td><td>${htmlEscape(metrics.finalStatus==="safe_failure"?"안전 중단":jobStatusLabel(job.status))}</td><td>${htmlEscape(metrics.mttr==null?"—":`${formatNumber(metrics.mttr,2)}s`)}</td><td>${htmlEscape(metrics.reward==null?"—":formatNumber(metrics.reward,3))}</td><td><div class="table-actions"><button type="button" class="table-action" data-history-detail>상세 보기</button><button type="button" class="table-action destructive" data-history-delete ${canDelete?"":"disabled"} title="${canDelete?"실험 결과 영구 삭제":"실행 중인 실험은 삭제할 수 없습니다."}">삭제</button></div></td>`;tr.querySelector("[data-history-detail]").addEventListener("click",async()=>{try{const detail=await api(`/api/experiments/${job.experiment_id}`);renderJob(detail);selectPlatformView("history");}catch(error){showError(error);}});tr.querySelector("[data-history-delete]").addEventListener("click",()=>deleteExperimentResult(job.experiment_id));return tr;}));} $("synthetic-warning").hidden=!jobs.some((job)=>(job.request&&job.request.mode)==="mock");renderDashboard();window.dispatchEvent(new CustomEvent("aiops:history-updated"));}
   async function loadExperimentHistory(){try{const payload=await api("/api/experiments?limit=100");state.jobs=payload.jobs||[];renderHistory();}catch(_error){$("experiment-history-body").innerHTML='<tr><td colspan="9" class="empty-cell">실험 이력을 불러오지 못했습니다.</td></tr>';window.dispatchEvent(new CustomEvent("aiops:history-updated"));}}
-  function renderDashboard(){const jobs=state.jobs; text("dashboard-total",String(jobs.length));const metrics=jobs.map((job)=>reportMetrics(job)),completed=metrics.filter((m)=>m.success!==undefined),success=completed.filter((m)=>m.success).length;text("dashboard-success-rate",completed.length?`${((success/completed.length)*100).toFixed(1)}%`:"—");const mttrValues=metrics.map((m)=>Number(m.mttr)).filter((v)=>Number.isFinite(v));text("dashboard-mttr",mttrValues.length?`${(mttrValues.reduce((a,b)=>a+b,0)/mttrValues.length).toFixed(2)}s`:"—");const rewards=metrics.map((m)=>Number(m.reward)).filter((v)=>Number.isFinite(v));text("dashboard-reward",rewards.length?(rewards.reduce((a,b)=>a+b,0)/rewards.length).toFixed(3):"—");const distribution=jobs.reduce((acc,job)=>{const key=reportMetrics(job).finalStatus==="safe_failure"?"안전 중단":jobStatusLabel(job.status);acc[key]=(acc[key]||0)+1;return acc;},{}),container=$("dashboard-distribution");if(!jobs.length){container.innerHTML='<p class="empty-state">집계 가능한 실험 결과가 없습니다.</p>';return;}container.replaceChildren(...Object.entries(distribution).map(([label,count])=>{const row=document.createElement("div");row.className="distribution-row";row.innerHTML=`<span>${htmlEscape(label)}</span><div class="distribution-bar"><i style="width:${(count/jobs.length)*100}%"></i></div><strong>${count}</strong>`;return row;}));}
+  function renderPerformanceDashboard(jobs){
+    const validJobs=jobs.filter((job)=>reportFor(job));
+    const average=(values,digits,suffix="")=>{
+      const finite=values.filter((value)=>value!=null&&value!=="").map(Number).filter(Number.isFinite);
+      return finite.length?`${(finite.reduce((sum,value)=>sum+value,0)/finite.length).toFixed(digits)}${suffix}`:"—";
+    };
+    const aggregate=(keyFor)=>{
+      const groups=new Map();
+      validJobs.forEach((job)=>{
+        const key=keyFor(job);
+        if(!key)return;
+        const entry=groups.get(key)||{jobs:[],label:key};
+        entry.jobs.push(job);
+        groups.set(key,entry);
+      });
+      return Array.from(groups.values());
+    };
+    const cellsFor=(group)=>{
+      const metrics=group.jobs.map(reportMetrics);
+      const measured=metrics.filter((item)=>typeof item.success==="boolean");
+      const successes=measured.filter((item)=>item.success).length;
+      return {
+        count:group.jobs.length,
+        success:measured.length?`${((successes/measured.length)*100).toFixed(1)}%`:"—",
+        mttr:average(metrics.map((item)=>item.mttr),2,"s"),
+        reward:average(metrics.map((item)=>item.reward),3),
+      };
+    };
+    const renderRows=(bodyId,groups,labelCells,colspan)=>{
+      const body=$(bodyId);
+      if(!body)return;
+      if(!groups.length){body.innerHTML=`<tr><td colspan="${colspan}" class="empty-cell">집계 가능한 저장 결과가 없습니다.</td></tr>`;return;}
+      body.replaceChildren(...groups.map((group)=>{
+        const metrics=cellsFor(group),row=document.createElement("tr");
+        row.innerHTML=`${labelCells(group).map((value)=>`<td>${htmlEscape(value)}</td>`).join("")}<td>${metrics.count}</td><td>${metrics.success}</td><td>${metrics.mttr}</td><td>${metrics.reward}</td>`;
+        return row;
+      }));
+    };
+    renderRows("dashboard-scenario-body",aggregate((job)=>{
+      const id=job.request&&job.request.scenario_id;
+      return (state.scenarios[id]||RECOVERY_SCENARIOS[id]||{}).label||id;
+    }),(group)=>[group.label],5);
+    renderRows("dashboard-action-body",aggregate((job)=>actionLabel(reportMetrics(job).action)),(group)=>[group.label],5);
+    renderRows("dashboard-controller-body",aggregate((job)=>{
+      const request=job.request||{};
+      return `${controllerLabel(request.controller,request.controller==="autogen"?request.model:"")}|||${modeLabel(request.mode)}`;
+    }),(group)=>group.label.split("|||"),6);
+  }
+
+  function renderDashboard(){
+    const jobs=state.jobs;
+    renderPerformanceDashboard(jobs);
+    text("dashboard-total",String(jobs.length));
+    const metrics=jobs.filter((job)=>reportFor(job)).map((job)=>reportMetrics(job));
+    const completed=metrics.filter((item)=>typeof item.success==="boolean"),success=completed.filter((item)=>item.success).length;
+    text("dashboard-success-rate",completed.length?`${((success/completed.length)*100).toFixed(1)}%`:"—");
+    const mttrValues=metrics.map((item)=>Number(item.mttr)).filter(Number.isFinite);
+    text("dashboard-mttr",mttrValues.length?`${(mttrValues.reduce((a,b)=>a+b,0)/mttrValues.length).toFixed(2)}s`:"—");
+    const rewards=metrics.map((item)=>Number(item.reward)).filter(Number.isFinite);
+    text("dashboard-reward",rewards.length?(rewards.reduce((a,b)=>a+b,0)/rewards.length).toFixed(3):"—");
+    const distribution=jobs.reduce((acc,job)=>{const key=reportMetrics(job).finalStatus==="safe_failure"?"안전 중단":jobStatusLabel(job.status);acc[key]=(acc[key]||0)+1;return acc;},{}),container=$("dashboard-distribution");
+    if(!jobs.length){container.innerHTML='<p class="empty-state">집계 가능한 실험 결과가 없습니다.</p>';return;}
+    container.replaceChildren(...Object.entries(distribution).map(([label,count])=>{const row=document.createElement("div");row.className="distribution-row";row.innerHTML=`<span>${htmlEscape(label)}</span><div class="distribution-bar"><i style="width:${(count/jobs.length)*100}%"></i></div><strong>${count}</strong>`;return row;}));
+  }
   function renderDetail(job){if(!job)return;const report=reportFor(job),request=job.request||{},detailScenario=state.scenarios[request.scenario_id]||RECOVERY_SCENARIOS[request.scenario_id]||{label:request.scenario_id||"—"};text("detail-experiment-subtitle",`${job.experiment_id} · ${detailScenario.label} · ${modeLabel(request.mode)} · ${controllerLabel(request.controller,request.controller==="autogen"?request.model:"")}`);const deleteButton=$("detail-delete-button");if(deleteButton){deleteButton.dataset.experimentId=job.experiment_id;deleteButton.disabled=!TERMINAL.has(job.status);deleteButton.title=deleteButton.disabled?"실행 중인 실험은 삭제할 수 없습니다.":"Job, 이벤트, Artifact 영구 삭제";}const timeline=$("detail-timeline"),events=job.events||state.events;timeline.replaceChildren(...(events.length?events.map((event)=>{const li=document.createElement("li");li.textContent=`${formatDate(event.created_at)} · ${stageLabel(event.stage)} · ${event.message}`;return li;}):[Object.assign(document.createElement("li"),{className:"empty-state",textContent:"타임라인 데이터가 없습니다."})]));const agentSummary=$("detail-agent-summary");agentSummary.replaceChildren(...Object.entries(AGENTS).map(([agent,info])=>{const decision=initialDecision(agent,report),reviews=reviewsBy(agent,report),article=document.createElement("article");article.innerHTML=`<span class="agent-code">${htmlEscape(info.code)}</span><div><strong>${htmlEscape(agent)}</strong><small>${decision?(decision.approved?"승인":"거부"):reviews.length?"Peer Review":"대기"}</small><p>${htmlEscape(decision?decision.reason||actionLabel(decision.proposed_action):reviews[0]?reviews[0].reason:"실행 결과 없음")}</p></div>`;return article;}));const evidence=report&&report.evidence;text("detail-evidence-summary",evidence?JSON.stringify(evidence,null,2):"Evidence가 없습니다.");text("detail-logs",report?JSON.stringify(report,null,2):"로그 데이터가 없습니다.");const detailEvents=$("detail-events");detailEvents.replaceChildren(...(events.length?events.map((event)=>{const li=document.createElement("li");li.textContent=`[${stageLabel(event.stage)}] ${event.message}`;return li;}):[Object.assign(document.createElement("li"),{className:"empty-state",textContent:"이벤트 데이터가 없습니다."})]));}
   function renderResearchDocuments(){const container=$("research-documents");if(!container)return;container.replaceChildren(...RESEARCH_DOCUMENTS.map(([label,path])=>{const a=document.createElement("a");a.href=`/api/artifacts/${path}`;a.target="_blank";a.rel="noreferrer";a.textContent=label;return a;}));}
   function bindTabs(){document.querySelectorAll("[data-result-tab]").forEach((button)=>button.addEventListener("click",()=>{document.querySelectorAll("[data-result-tab]").forEach((item)=>item.setAttribute("aria-pressed",String(item===button)));document.querySelectorAll("[data-result-panel]").forEach((panel)=>panel.hidden=panel.dataset.resultPanel!==button.dataset.resultTab);}));document.querySelectorAll("[data-detail-tab]").forEach((button)=>button.addEventListener("click",()=>{document.querySelectorAll("[data-detail-tab]").forEach((item)=>item.setAttribute("aria-pressed",String(item===button)));document.querySelectorAll("[data-detail-panel]").forEach((panel)=>panel.hidden=panel.dataset.detailPanel!==button.dataset.detailTab);}));}

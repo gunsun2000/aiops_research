@@ -248,7 +248,6 @@
   }
 
   async function bootstrap() {
-    injectPolishStyles();
     applyFinitePolish();
     await loadBenchmarkPresentation();
     renderRecentBenchmarkResults(true);

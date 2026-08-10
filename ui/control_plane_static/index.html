@@ -5,10 +5,10 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="안전 제어형 4-Agent AIOps 연구 운영 플랫폼" />
   <title>4-Agent AIOps Research Platform</title>
-  <link rel="stylesheet" href="/static/styles.css?v=21" />
-  <script defer src="/static/app.js?v=20"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=22" />
+  <script defer src="/static/app.js?v=21"></script>
   <script defer src="/static/reference-ui.js?v=1"></script>
-  <script defer src="/static/bulk-delete-ui.js?v=1"></script>
+  <script defer src="/static/bulk-delete-ui.js?v=2"></script>
 </head>
 <body>
 <noscript><main class="noscript">이 연구 콘솔을 사용하려면 JavaScript가 필요합니다.</main></noscript>
@@ -97,7 +97,13 @@
           </div>
         </section>
         <section class="result-tab-panel" data-result-panel="comparison" hidden><section class="surface recovery-comparison" id="recovery-comparison-panel"><h3>복구 전략 비교</h3><span id="comparison-runtime-status">확인 중</span><select id="comparison-mode"><option value="mock">Mock</option><option value="real">Real</option></select><select id="comparison-repetitions"><option value="1">1회</option><option value="3" selected>3회</option><option value="5">5회</option></select><select id="comparison-guard"><option value="python">Python</option><option value="go">Go</option></select><button id="comparison-run">비교 실행</button><button id="comparison-cancel" disabled>취소</button><p id="comparison-boundary"></p><strong id="comparison-job-status">—</strong><strong id="comparison-progress">0 / 0</strong><strong id="comparison-success-rate">—</strong><strong id="comparison-mean-recovery">—</strong><strong id="comparison-evidence">—</strong><img id="comparison-success-chart" alt="성공률 차트" /><img id="comparison-recovery-chart" alt="복구 시간 차트" /><div id="comparison-artifacts"></div><span id="comparison-event-count">0 events</span><ol id="comparison-event-log"></ol><p id="comparison-error"></p></section></section>
-        <section class="result-tab-panel" data-result-panel="dashboard" hidden><p>상단 실험 목록의 요약 통계와 결과 분포를 사용합니다.</p></section>
+        <section class="result-tab-panel" data-result-panel="dashboard" hidden>
+          <div class="performance-dashboard-grid">
+            <section class="surface performance-panel"><div class="section-heading"><div><h3>장애 시나리오별 성능</h3><p>저장된 복구 실험의 성공률, 평균 MTTR, 평균 Reward를 집계합니다.</p></div></div><div class="table-wrap"><table><thead><tr><th>시나리오</th><th>실험 수</th><th>성공률</th><th>평균 MTTR</th><th>평균 Reward</th></tr></thead><tbody id="dashboard-scenario-body"><tr><td colspan="5">집계 가능한 결과가 없습니다.</td></tr></tbody></table></div></section>
+            <section class="surface performance-panel"><div class="section-heading"><div><h3>복구 Action별 성능</h3><p>실제로 선택된 Action의 복구 성능을 비교합니다.</p></div></div><div class="table-wrap"><table><thead><tr><th>Action</th><th>실험 수</th><th>성공률</th><th>평균 MTTR</th><th>평균 Reward</th></tr></thead><tbody id="dashboard-action-body"><tr><td colspan="5">집계 가능한 결과가 없습니다.</td></tr></tbody></table></div></section>
+            <section class="surface performance-panel performance-panel-wide"><div class="section-heading"><div><h3>Controller · 실행 모드 비교</h3><p>Deterministic과 AutoGen, Mock·Dry-run·Real 결과를 분리해 표시합니다.</p></div></div><div class="table-wrap"><table><thead><tr><th>Controller</th><th>모드</th><th>실험 수</th><th>성공률</th><th>평균 MTTR</th><th>평균 Reward</th></tr></thead><tbody id="dashboard-controller-body"><tr><td colspan="6">집계 가능한 결과가 없습니다.</td></tr></tbody></table></div></section>
+          </div>
+        </section>
       </section>
 
       <section class="view-panel" data-view-panel="history" hidden>

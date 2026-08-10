@@ -7,6 +7,7 @@ REFERENCE = ROOT / "ui" / "control_plane_static" / "reference-ui.js"
 BULK = ROOT / "ui" / "control_plane_static" / "bulk-delete-ui.js"
 POLISH = ROOT / "ui" / "control_plane_static" / "research-console-polish.js"
 FLOW = ROOT / "ui" / "control_plane_static" / "stage-flow-ui.js"
+STYLES = ROOT / "ui" / "control_plane_static" / "styles.css"
 
 
 def source(path: Path) -> str:
@@ -54,7 +55,8 @@ def test_reference_ui_is_event_driven_and_has_no_mutation_observers():
 def test_data_first_visual_polish_is_loaded_without_fabricated_values():
     bulk = source(BULK)
     polish = source(POLISH)
-    assert "/static/research-console-polish.js?v=1" in bulk
+    styles = source(STYLES)
+    assert "/static/research-console-polish.js?v=2" in bulk
     assert "/api/benchmarks/aiopslab/jobs?limit=6" in polish
     assert "renderRecentBenchmarkResults" in polish
     assert "experiment-id-search" in polish
@@ -62,8 +64,8 @@ def test_data_first_visual_polish_is_loaded_without_fabricated_values():
     assert "No broad MutationObserver" in polish
     assert "experiment-history-body" in polish
     assert 'document.readyState === "loading"' in polish
-    assert ".aiopslab-tool-panel table{width:100%;border-collapse:collapse}" in polish
-    assert ".detail-header{display:grid;grid-template-columns:42px auto minmax(0,1fr) auto" in polish
+    assert ".aiopslab-tool-panel table" in styles
+    assert ".detail-header" in styles
     lowered = polish.lower()
     for forbidden in ("0.842", "0.831", "0.863", "0.901", "14.32", "4.12"):
         assert forbidden not in lowered
@@ -75,6 +77,39 @@ def test_data_first_polish_keeps_aiopslab_metrics_to_supported_schema():
         assert metric in polish
     for unsupported in ("F1-Score", "Precision", "Recall", "AUC"):
         assert unsupported not in polish
+
+
+def test_benchmark_and_result_styles_are_owned_by_the_shared_stylesheet():
+    styles = source(STYLES)
+    polish = source(POLISH)
+    assert "injectPolishStyles();" not in polish
+    for selector in (
+        ".aiopslab-functional-tabs",
+        ".aiopslab-tool-panel table",
+        ".recent-benchmark-table",
+        ".result-search-shell",
+        ".detail-log-controls",
+        ".performance-dashboard-grid",
+    ):
+        assert selector in styles
+
+
+def test_performance_dashboard_uses_persisted_recovery_jobs():
+    html = source(INDEX)
+    app = source(APP)
+    for marker in (
+        "performance-dashboard-grid",
+        "dashboard-scenario-body",
+        "dashboard-action-body",
+        "dashboard-controller-body",
+    ):
+        assert marker in html
+    assert "function renderPerformanceDashboard" in app
+    assert "state.jobs" in app
+    assert 'value!=null&&value!==""' in app
+    assert "recovery.recovery_success==null?undefined" in app
+    for metric in ("성공률", "평균 MTTR", "평균 Reward"):
+        assert metric in html
 
 
 def test_recovery_flow_exposes_all_four_agents_in_eight_steps():
@@ -159,7 +194,7 @@ def test_experiment_result_deletion_requires_confirmation_and_refreshes_history(
 def test_bulk_experiment_result_deletion_reloads_after_success_headers_without_waiting_for_json():
     html = source(INDEX)
     script = source(BULK)
-    assert "/static/bulk-delete-ui.js?v=1" in html
+    assert "/static/bulk-delete-ui.js?v=2" in html
     assert "delete-all-experiments" in script
     assert "전체 삭제" in script
     assert "deleteAllExperimentResults" in script
