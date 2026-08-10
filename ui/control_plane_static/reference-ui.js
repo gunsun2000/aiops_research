@@ -670,6 +670,8 @@
   }
 
   function bindStaticEvents() {
+    window.addEventListener("aiops:selection-updated", syncRecoveryReference);
+    window.addEventListener("aiops:job-rendered", syncDetailReference);
     $("aiopslab-benchmark-select")?.addEventListener("change", renderBenchmarkScenarioCards);
     ["overview-scenario-select", "overview-controller-select", "overview-mode-select"].forEach((id) => $(id)?.addEventListener("change", () => setTimeout(syncRecoveryReference, 0)));
     ["scenario-list", "controller-options", "mode-control"].forEach((id) => $(id)?.addEventListener("click", () => setTimeout(syncRecoveryReference, 0)));

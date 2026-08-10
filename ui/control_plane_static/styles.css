@@ -209,6 +209,11 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
 .performance-panel th{color:#5d6b82;background:#fbfcfe}
 .performance-panel tbody tr:last-child td{border-bottom:0}
 
+@media(max-width:1350px){
+  .aiopslab-reference-grid{grid-template-columns:1fr 1fr}
+  .benchmark-run{grid-column:1/-1}
+}
+
 @media(max-width:900px){
   .aiopslab-history-filters,.detail-log-controls{grid-template-columns:1fr 1fr}
   .detail-metric-row{grid-template-columns:1fr 1fr}

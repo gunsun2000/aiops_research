@@ -92,6 +92,7 @@ def test_benchmark_and_result_styles_are_owned_by_the_shared_stylesheet():
         ".performance-dashboard-grid",
     ):
         assert selector in styles
+    assert "@media(max-width:1350px)" in styles
 
 
 def test_performance_dashboard_uses_persisted_recovery_jobs():
@@ -110,6 +111,20 @@ def test_performance_dashboard_uses_persisted_recovery_jobs():
     assert "recovery.recovery_success==null?undefined" in app
     for metric in ("성공률", "평균 MTTR", "평균 Reward"):
         assert metric in html
+
+
+def test_recovery_selection_summary_tracks_async_scenario_updates():
+    app = source(APP)
+    reference = source(REFERENCE)
+    assert 'new CustomEvent("aiops:selection-updated")' in app
+    assert 'addEventListener("aiops:selection-updated", syncRecoveryReference)' in reference
+
+
+def test_experiment_detail_tracks_the_rendered_job_report():
+    app = source(APP)
+    reference = source(REFERENCE)
+    assert 'new CustomEvent("aiops:job-rendered")' in app
+    assert 'addEventListener("aiops:job-rendered", syncDetailReference)' in reference
 
 
 def test_recovery_flow_exposes_all_four_agents_in_eight_steps():

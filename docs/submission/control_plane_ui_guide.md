@@ -18,14 +18,20 @@
 -> 결과 및 이벤트 저장
 ```
 
-화면은 여러 기능 페이지로 분리하지 않고 다음 네 영역을 동시에 보여줍니다.
+콘솔은 하나의 연구 흐름을 목적별 화면으로 나눠 보여줍니다. 각 화면은 동일한
+`experiment_id`와 저장된 Job 결과를 사용하므로 기능이 서로 분리되어 동작하지 않습니다.
 
-| 영역 | 내용 |
+| 화면 | 연구자가 확인하는 내용 |
 | --- | --- |
-| 왼쪽 | 장애 시나리오, 실행 모드, 연구 프로파일, 반복 횟수 |
-| 가운데 | 7단계 실행 상태, Evidence, 4-Agent 상호감시, 최종 Action, 이벤트 |
-| 오른쪽 | 선택 Agent 판단, peer review, allowlist와 Validator 결과 |
-| 하단 | 복구 성공, MTTR, Reward, Agent review, 산출물 |
+| 시스템 개요 | 연결 상태, 8단계 자율 복구 흐름, 실행 중인 실험, 최근 결과 |
+| 복구 실험 | 장애 시나리오, Controller, 실행 모드, 안전 설정을 선택하고 실험 실행 |
+| AIOpsLab Benchmark | 탐지 benchmark 실행, 진행 상태, 정확도·TTD·step·reward 확인 |
+| 실험 결과 | 저장된 실험 검색·필터, 복구 전략 비교, 성능 대시보드 |
+| 실험 상세 | 요약, 타임라인, Agent 판단, Evidence, 로그, 산출물 확인 |
+
+복구 실험 화면은 `조건 -> Evidence -> 4-Agent 상호검토 -> 안전 검증 -> 실행 -> 복구
+관찰`을 한 Job으로 연결합니다. AIOpsLab은 같은 플랫폼에서 실행·조회되지만 탐지 성능을
+평가하는 별도 실험 유형이므로 복구 성능 통계와 혼합하지 않습니다.
 
 ## 2. 현재 구현 범위
 
@@ -42,13 +48,21 @@
 - deterministic 4-Agent 상호감시와 Python Validator 결과 표시
 - AutoGen GroupChat을 선택 가능한 Controller로 실행
 - AutoGen model/controller provenance와 structured transcript 저장·표시
+- 저장된 복구 Job을 장애·Action·Controller/모드별로 집계하는 성능 대시보드
+- 복구 성공률, 평균 MTTR, 평균 Reward와 실행 횟수 표시
+- 실험 상세의 복구 전·후 Evidence, Agent 승인·거부, 실행 로그와 artifact 조회
 
-AIOpsLab detection benchmark는 복구 실험과 분리된 전용 Job으로 연결되어 있습니다.
+AIOpsLab detection benchmark는 동일 Control Plane 안에서 복구 실험과 구분된 전용 Job으로 연결되어 있습니다.
 등록된 benchmark ID와 1~12회 반복만 브라우저에서 선택할 수 있고, 외부 저장소,
 Python 실행 파일, kubeconfig 경로는 서버 운영자가 환경변수로 제공합니다. 진행 이벤트는
 SSE로 표시되며 완료 후 정확도, 평균 TTD, 평균 step, 평균 reward와 Markdown/CSV 보고서를
 확인할 수 있습니다. AutoGen은 의존성과 credential이 준비된 경우에만 선택할 수 있으며,
 준비되지 않았으면 장애 주입 전 preflight에서 거부됩니다.
+
+참조 화면에 보이는 F1, Precision, Recall, AUC를 임의로 만들지 않습니다. 현재 AIOpsLab
+결과 스키마가 제공하는 정확도, 평균 TTD, 평균 action step, 평균 reward만 표시하며,
+없는 값은 `—`로 남깁니다. 복구 성능 대시보드도 저장된 Job의 측정값만 집계하고 누락된
+MTTR·Reward를 `0`으로 계산하지 않습니다.
 
 ## 3. 설치와 실행
 
@@ -195,3 +209,17 @@ http://127.0.0.1:18180/api/docs
 - Recovery Action Comparison의 `Real`은 Ubuntu에서 Chaos Mesh 장애를 실제로
   주입하고 Prometheus와 Kubernetes 결과를 측정합니다. `CONFIRM_REAL_RUN=YES`,
   kubeconfig, Prometheus, latency query와 `EXECUTE REAL COMPARISON` 확인이 필요합니다.
+
+## 8. 성능 화면 해석
+
+| 지표 | 의미 | 주의점 |
+| --- | --- | --- |
+| 성공률 | 복구 성공 여부가 기록된 Job 중 성공 비율 | 결과가 없는 Job은 분모에서 제외 |
+| 평균 MTTR | 복구 시간이 기록된 Job의 평균 초 | 누락값을 0초로 처리하지 않음 |
+| 평균 Reward | Agent 기여 reward 합계의 Job 평균 | 고정 학습 보상이 아니라 현재 정책 평가 점수 |
+| Action별 성능 | `observe_only`, `rollout_restart`, `scale_out`별 집계 | 장애와 실행 모드를 함께 확인 |
+| Controller별 성능 | deterministic/AutoGen과 mock/dry-run/real 조합별 집계 | Mock과 Real을 같은 실험 근거로 해석하지 않음 |
+
+성능 대시보드는 새로운 값을 생성하지 않고 `GET /api/experiments`에서 조회한 저장 Job의
+report를 집계합니다. 따라서 논문이나 발표에는 반드시 실행 모드, Controller, 장애
+시나리오, 반복 횟수와 함께 제시합니다.
