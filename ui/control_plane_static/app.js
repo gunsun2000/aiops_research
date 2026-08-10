@@ -74,7 +74,66 @@
   function renderExperimentArtifacts(artifacts){ const container=$("experiment-artifacts"); if(!container)return; const links=Object.entries(artifacts||{}).filter(([,value])=>typeof value==="string"&&value).map(([name,value])=>{ const link=document.createElement("a"); link.href=value.startsWith("/")?value:`/api/artifacts/${value}`; link.target="_blank"; link.rel="noreferrer"; link.textContent=name; return link; }); container.replaceChildren(...(links.length?links:[Object.assign(document.createElement("span"),{textContent:"다운로드 가능한 Artifact 없음"})])); }
   function renderReport(report){ if(!report)return; const evidence=report.evidence||{},metrics=evidence.metric_values||{},metricEntries=Object.entries(metrics),mode=state.job&&state.job.request?state.job.request.mode:state.selectedMode,source=evidenceBoundary(mode,evidence.source); text("evidence-metric",metricEntries.length?metricEntries.map(([key,value])=>`${key} ${value}`).join(" · "):"수집 결과 없음"); text("evidence-source",source); text("observed-provider",source); text("observed-incident-source",incidentSource(mode)); text("observed-collected-at",evidence.collected_at?formatDate(evidence.collected_at):"수집되지 않음"); renderMetricCards(metrics); renderEvidenceComparison(report); const reviews=Array.isArray(report.peer_reviews)?report.peer_reviews:[],negotiation=report.negotiation||{}; text("review-summary",`${reviews.length}개 역할별 검토`); text("consensus-summary",negotiation.consensus||"미합의"); text("consensus-status",negotiation.consensus==="approved"?"합의 완료":"합의 확인 필요"); setBadge("overview-consensus-status",negotiation.consensus==="approved"?"합의 완료":"검토 필요",negotiation.consensus==="approved"?"success":"warning"); text("action-summary",actionLabel(report.selected_action)); text("overview-final-action",actionLabel(report.selected_action)); const safety=report.safety_validation||{}; text("allowlist-result",safety.valid===true?"통과":safety.valid===false?"차단":"대기"); text("validator-result",safety.valid===true?"VALID":safety.valid===false?"BLOCKED":"대기"); const cleanup=report.cleanup||{}; text("cleanup-result",cleanup.valid===false?"실패 · 검토 필요":cleanup.valid===true?"완료":"불필요/대기"); const recovery=report.recovery_monitoring||{},safeFailure=report.final_status==="safe_failure",recoveryLabel=safeFailure?"안전 중단":recovery.recovery_success===true?"성공":recovery.recovery_success===false?"실패":"—"; text("result-status",safeFailure?"안전 중단":report.final_status||"완료"); text("result-recovery",recoveryLabel); text("result-mttr",recovery.recovery_seconds==null?"—":`${formatNumber(recovery.recovery_seconds,2)}s`); text("overview-result-mttr",recovery.recovery_seconds==null?"—":`${formatNumber(recovery.recovery_seconds,2)}s`); text("overview-result-success",recoveryLabel); setBadge("overview-recovery-status",recoveryLabel==="성공"?"복구 성공":recoveryLabel==="안전 중단"?"안전 중단":recoveryLabel==="실패"?"복구 실패":"결과 없음",recoveryLabel==="성공"?"success":["실패","안전 중단"].includes(recoveryLabel)?"danger":"neutral"); const contributions=Object.values(report.agent_contributions||{}),reward=contributions.length?contributions.reduce((sum,item)=>sum+Number(item.reward||0),0):null; text("result-reward",reward==null?"—":formatNumber(reward,3)); text("overview-result-reward",reward==null?"—":formatNumber(reward,3)); text("result-reviews",String(reviews.length)); const artifacts=report.artifacts||{}; text("result-artifacts",Object.keys(artifacts).length?`${Object.keys(artifacts).length}개`:"Job DB 저장"); renderExperimentArtifacts(artifacts); }
 
-  function renderJob(job){ state.job=job; state.experimentId=job.experiment_id; state.running=!TERMINAL.has(job.status); if(job.request){ if(state.scenarios[job.request.scenario_id])state.selectedScenario=job.request.scenario_id; if(job.request.mode)state.selectedMode=job.request.mode; $("controller-select").value=job.request.controller||"deterministic"; if($("model-input")&&job.request.model)$("model-input").value=job.request.model; if($("profile-select"))$("profile-select").value=job.request.protocol_profile||"four-agent-role-veto-v1"; $("controller-model").hidden=job.request.controller!=="autogen"; setPressed("scenario-list","button[data-scenario]",state.selectedScenario,(b)=>b.dataset.scenario); setPressed("mode-control","button[data-mode]",state.selectedMode,(b)=>b.dataset.mode); setPressed("controller-options","button[data-controller]",$("controller-select").value,(b)=>b.dataset.controller); if($("overview-scenario-select"))$("overview-scenario-select").value=state.selectedScenario; if($("overview-mode-select"))$("overview-mode-select").value=state.selectedMode; if($("overview-controller-select"))$("overview-controller-select").value=$("controller-select").value; } ["header-mode-badge","overview-mode-badge","experiment-mode-badge","selection-runtime-badge"].forEach((id)=>setModeBadge(id,state.selectedMode)); text("overview-recent-scenario",scenario().label); text("overview-recent-controller",controllerLabel(job.request&&job.request.controller,job.request&&job.request.controller==="autogen"?job.request.model:"")); text("overview-started-at",formatDate(job.started_at||job.created_at)); text("overview-job-status",jobStatusLabel(job.status)); setBadge("overview-progress-status",jobStatusLabel(job.status),statusClass(job.status)); renderGlobalContext(job); renderCondition(); const report=reportFor(job); renderAgentCards(report); renderInspector(); renderReport(report); updateStage(job.current_stage,TERMINAL.has(job.status)&&job.status!=="completed"); $("run-experiment").disabled=state.running||($("controller-select").value==="autogen"&&!(state.connections.autogen&&state.connections.autogen.ready)); $("cancel-experiment").disabled=!state.running; if(TERMINAL.has(job.status))stopTimer(); renderDetail(job); }
+  function renderOverviewContext(job){
+    text("overview-recent-scenario",scenario().label);
+    text("overview-recent-controller",controllerLabel(job.request&&job.request.controller,job.request&&job.request.controller==="autogen"?job.request.model:""));
+    text("overview-started-at",formatDate(job.started_at||job.created_at));
+    text("overview-job-status",jobStatusLabel(job.status));
+    setBadge("overview-progress-status",jobStatusLabel(job.status),statusClass(job.status));
+    renderGlobalContext(job);
+    renderCondition();
+  }
+
+  function renderOverviewStages(job){
+    updateStage(job.current_stage,TERMINAL.has(job.status)&&job.status!=="completed");
+  }
+
+  function renderOverviewAgents(report){
+    renderAgentCards(report);
+    renderInspector();
+    const postExecutionReviews=report&&Array.isArray(report.post_execution_reviews)?report.post_execution_reviews:[];
+    postExecutionReviews.forEach((review)=>{
+      const info=AGENTS[review.agent];
+      const node=info&&$(info.overviewId);
+      if(!node)return;
+      const verdict=review.approved===true?"실행 후 승인":review.approved===false?"실행 후 재검토":"실행 후 확인";
+      node.textContent=`${node.textContent} · ${verdict}`;
+    });
+  }
+
+  function renderOverviewResult(report){
+    renderReport(report);
+  }
+
+  function renderJob(job){
+    state.job=job;
+    state.experimentId=job.experiment_id;
+    state.running=!TERMINAL.has(job.status);
+    if(job.request){
+      if(state.scenarios[job.request.scenario_id])state.selectedScenario=job.request.scenario_id;
+      if(job.request.mode)state.selectedMode=job.request.mode;
+      $("controller-select").value=job.request.controller||"deterministic";
+      if($("model-input")&&job.request.model)$("model-input").value=job.request.model;
+      if($("profile-select"))$("profile-select").value=job.request.protocol_profile||"four-agent-role-veto-v1";
+      $("controller-model").hidden=job.request.controller!=="autogen";
+      setPressed("scenario-list","button[data-scenario]",state.selectedScenario,(b)=>b.dataset.scenario);
+      setPressed("mode-control","button[data-mode]",state.selectedMode,(b)=>b.dataset.mode);
+      setPressed("controller-options","button[data-controller]",$("controller-select").value,(b)=>b.dataset.controller);
+      if($("overview-scenario-select"))$("overview-scenario-select").value=state.selectedScenario;
+      if($("overview-mode-select"))$("overview-mode-select").value=state.selectedMode;
+      if($("overview-controller-select"))$("overview-controller-select").value=$("controller-select").value;
+    }
+    ["header-mode-badge","overview-mode-badge","experiment-mode-badge","selection-runtime-badge"].forEach((id)=>setModeBadge(id,state.selectedMode));
+    const report=reportFor(job);
+    renderOverviewContext(job);
+    renderOverviewAgents(report);
+    renderOverviewResult(report);
+    renderOverviewStages(job);
+    $("run-experiment").disabled=state.running||($("controller-select").value==="autogen"&&!(state.connections.autogen&&state.connections.autogen.ready));
+    $("cancel-experiment").disabled=!state.running;
+    if(TERMINAL.has(job.status))stopTimer();
+    renderDetail(job);
+  }
   function addRuntimeEvent(event){ state.events.push(event); text("event-count",`${state.events.length} events`); const list=$("event-log"); if(list&&state.events.length===1)list.replaceChildren(); if(list){ const li=document.createElement("li"),time=document.createElement("time"),span=document.createElement("span"); time.textContent=new Date(event.created_at).toLocaleTimeString("ko-KR",{hour12:false}); span.textContent=`[${stageLabel(event.stage)}] ${event.message}`; li.append(time,span); list.append(li); } const overview=$("overview-event-log"); if(overview){ const latest=state.events.slice(-5); overview.replaceChildren(...latest.map((item)=>{ const li=document.createElement("li"); li.textContent=`${stageLabel(item.stage)} · ${item.message}`; return li; })); } updateStage(event.stage,event.status==="failed"); text("current-stage",event.stage); text("global-stage",stageLabel(event.stage)); }
   function connectEvents(){ closeEvents(); const stream=new EventSource(`/api/experiments/${state.experimentId}/events`); state.eventSource=stream; stream.addEventListener("runtime",(event)=>addRuntimeEvent(JSON.parse(event.data))); stream.addEventListener("job",async(event)=>{ const job=JSON.parse(event.data); closeEvents(); try{ renderJob(await api(`/api/experiments/${job.experiment_id}`)); await loadExperimentHistory(); }catch(error){showError(error);} }); stream.onerror=()=>{ if(!state.job||!TERMINAL.has(state.job.status))text("control-error","실시간 이벤트 연결을 재시도하고 있습니다."); }; }
   function closeEvents(){ if(state.eventSource)state.eventSource.close(); state.eventSource=null; }

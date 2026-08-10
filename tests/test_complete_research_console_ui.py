@@ -110,6 +110,23 @@ def test_recovery_flow_agent_steps_match_agent_card_colors():
     assert 'style.id = "agent-stage-role-colors"' in flow
 
 
+def test_overview_runtime_rendering_is_split_by_research_responsibility():
+    script = source(APP)
+    for function_name in (
+        "renderOverviewContext",
+        "renderOverviewStages",
+        "renderOverviewAgents",
+        "renderOverviewResult",
+    ):
+        assert f"function {function_name}" in script
+    for status in ("queued", "running", "completed", "blocked", "failed", "cancelled"):
+        assert status in script
+    for fabricated in ("14.32", "4.12", "0.842", "0.901"):
+        assert fabricated not in script
+    assert "/api/connections" in script
+    assert "post_execution_reviews" in script
+
+
 def test_experiment_results_sync_filters_to_url_and_paginate():
     script = source(REFERENCE)
     for name in ("period", "scenario", "controller", "mode", "status", "q", "page", "page_size"):
