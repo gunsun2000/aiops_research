@@ -82,6 +82,19 @@ AUTOGEN_ALLOWED_ACTIONS = {
     for agent, action_approval in AUTOGEN_ACTION_APPROVAL.items()
 }
 
+# AutoGen does not yet recognize the project-level gpt-5.5 alias as a built-in
+# OpenAI model. Keep its capabilities explicit so structured Agent decisions
+# can be used without changing the model selected by the research protocol.
+OPENAI_MODEL_INFO_OVERRIDES = {
+    "gpt-5.5": {
+        "vision": False,
+        "function_calling": True,
+        "json_output": True,
+        "family": "gpt-5",
+        "structured_output": True,
+    },
+}
+
 AUTOGEN_AGENT_ALIASES = {
     "AI HA Agent": "AIServiceHASupportAgent",
     "AI Service HA Support Agent": "AIServiceHASupportAgent",
@@ -707,7 +720,11 @@ def create_openai_model_client(model: str) -> Any:
             "OpenAI AutoGen extension is not installed. Run: "
             'python -m pip install -e ".[autogen,dev]"'
         ) from exc
-    return OpenAIChatCompletionClient(model=model)
+    client_kwargs: dict[str, Any] = {"model": model}
+    model_info = OPENAI_MODEL_INFO_OVERRIDES.get(model)
+    if model_info is not None:
+        client_kwargs["model_info"] = dict(model_info)
+    return OpenAIChatCompletionClient(**client_kwargs)
 
 
 def _payload_to_dict(payload: Any) -> dict[str, Any]:

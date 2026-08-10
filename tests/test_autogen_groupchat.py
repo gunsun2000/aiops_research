@@ -1,6 +1,8 @@
 import asyncio
 import builtins
 import json
+import sys
+import types
 
 import pytest
 
@@ -228,6 +230,30 @@ def test_round_robin_groupchat_allows_task_plus_all_agent_replies():
     team = provider._build_team()
 
     assert team._termination_condition._max_messages == len(AUTOGEN_AGENT_NAMES) + 1
+
+
+def test_create_openai_model_client_supplies_model_info_for_gpt55(monkeypatch):
+    captured = {}
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    fake_module = types.ModuleType("autogen_ext.models.openai")
+    fake_module.OpenAIChatCompletionClient = FakeClient
+    monkeypatch.setitem(sys.modules, "autogen_ext.models.openai", fake_module)
+
+    client = autogen_groupchat.create_openai_model_client("gpt-5.5")
+
+    assert isinstance(client, FakeClient)
+    assert captured["model"] == "gpt-5.5"
+    assert captured["model_info"] == {
+        "vision": False,
+        "function_calling": True,
+        "json_output": True,
+        "family": "gpt-5",
+        "structured_output": True,
+    }
 
 
 def test_autogen_runtime_is_registered_only_with_explicit_provider():
