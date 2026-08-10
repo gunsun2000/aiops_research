@@ -149,6 +149,26 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
 .benchmark-scenario-card{position:relative;text-align:left}
 .benchmark-scenario-card.active{border-color:var(--blue);background:#f7fbff;box-shadow:0 0 0 2px rgba(11,93,232,.08)}
 .benchmark-scenario-card .icon{flex:0 0 auto;width:42px;height:42px;display:grid;place-items:center;border-radius:8px;color:#fff;background:var(--blue)}
+
+/* Keep the eight operational stages on one line and present evaluation as the final result band. */
+.reference-flow{grid-template-columns:repeat(8,minmax(0,1fr));row-gap:18px}
+.reference-flow li:nth-child(8)::after{display:none}
+.reference-flow li:last-child{grid-column:1/-1;display:grid;grid-template-columns:48px minmax(0,1fr);align-items:center;gap:12px;margin-top:2px;padding:12px 18px;text-align:left;border:1px solid #cbd9ec;border-radius:8px;background:#f8fbff}
+.reference-flow li:last-child::before{content:"최종 평가";grid-column:2;grid-row:1;margin-bottom:3px;color:var(--muted);font-size:11px;font-weight:750;letter-spacing:.02em}
+.reference-flow li:last-child b{grid-column:1;grid-row:1 / span 2;margin:0}
+.reference-flow li:last-child span{grid-column:2;grid-row:2;color:var(--ink);font-size:13px}
+.reference-flow li:last-child small{margin-top:3px;color:var(--blue)}
+
+@media(max-width:1200px){
+  .reference-flow{grid-template-columns:repeat(4,minmax(0,1fr))}
+  .reference-flow li:nth-child(4)::after{display:none}
+  .reference-flow li:nth-child(8)::after{display:none}
+}
+
+@media(max-width:760px){
+  .reference-flow{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .reference-flow li:last-child{grid-column:1/-1}
+}
 .benchmark-scenario-card>span:nth-child(2){min-width:0}
 .benchmark-selected-badge,.benchmark-tag{display:inline-flex;width:max-content;padding:4px 8px;border-radius:999px;color:var(--blue);background:#eaf2ff;font-size:11px;font-weight:750}
 .benchmark-selected-title-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}

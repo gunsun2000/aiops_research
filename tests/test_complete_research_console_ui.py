@@ -127,7 +127,7 @@ def test_experiment_detail_tracks_the_rendered_job_report():
     assert 'addEventListener("aiops:job-rendered", syncDetailReference)' in reference
 
 
-def test_recovery_flow_exposes_all_four_agents_in_eight_steps():
+def test_recovery_flow_exposes_four_agents_and_final_evaluator_stage():
     bulk = source(BULK)
     flow = source(FLOW)
     assert "/static/stage-flow-ui.js?v=1" in bulk
@@ -150,6 +150,10 @@ def test_recovery_flow_exposes_all_four_agents_in_eight_steps():
     assert "stage-timeline" in flow
     assert "mini-stage-list" in flow
     assert "Recovery Evaluator" in flow
+
+    styles = source(STYLES)
+    assert ".reference-flow li:last-child{grid-column:1/-1" in styles
+    assert "@media(max-width:760px)" in styles
 
 
 def test_recovery_flow_agent_steps_match_agent_card_colors():
