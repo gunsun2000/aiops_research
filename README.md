@@ -110,11 +110,21 @@ aiops-control-plane
 Control Plane은 다른 로컬 프로젝트와 포트가 겹치지 않도록 기본적으로 `18180` 포트를 사용합니다.
 `PORT` 환경변수를 명시하면 다른 포트로 덮어쓸 수 있습니다.
 
-브라우저:
+Ubuntu 서버에서 직접 브라우저를 실행할 때:
 
 ```text
 http://127.0.0.1:18180/
 ```
+
+Windows에서 VS Code Remote SSH로 서버에 접속할 때는 VS Code의 Ports 탭에서
+원격 포트 `18180`을 로컬 포트 `18181`로 전달한 뒤 다음 주소를 사용합니다.
+
+```text
+http://127.0.0.1:18181/
+```
+
+`18181`은 접속용 로컬 전달 포트이며 Ubuntu Control Plane의 `PORT`를 `18181`로
+변경하는 것이 아닙니다. VS Code Ports 탭에는 `18180 -> 127.0.0.1:18181`로 표시되어야 합니다.
 
 상세 UI 가이드는 [docs/submission/control_plane_ui_guide.md](docs/submission/control_plane_ui_guide.md)에,
 real runtime 검증 절차는 [docs/experiments/platform_real_runtime_guide.md](docs/experiments/platform_real_runtime_guide.md)에 있습니다.

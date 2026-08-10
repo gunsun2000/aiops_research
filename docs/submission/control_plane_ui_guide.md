@@ -97,11 +97,21 @@ UI에서 `AutoGen GroupChat`을 선택하면 `four-agent-autogen-v1` 프로파�
 연결됩니다. 모델 응답은 자유형 shell 명령으로 실행되지 않고 구조화된 Agent 판단으로
 변환된 뒤 기존 Validator, allowlist, replica 제한과 cleanup 경계를 그대로 통과합니다.
 
-브라우저:
+Ubuntu 서버에서 직접 브라우저를 실행할 때:
 
 ```text
 http://127.0.0.1:18180/
 ```
+
+Windows의 VS Code Remote SSH에서 확인할 때는 VS Code Ports 탭에서 원격 포트
+`18180`을 로컬 포트 `18181`로 전달합니다. 이 경우 Windows 브라우저에서는 다음 주소를 엽니다.
+
+```text
+http://127.0.0.1:18181/
+```
+
+VS Code Ports 탭의 정상적인 표기는 `18180 -> 127.0.0.1:18181`입니다.
+접속용 로컬 포트만 `18181`로 보이며, Ubuntu에서 실행하는 Control Plane의 `PORT=18180`은 유지합니다.
 
 Windows PowerShell:
 
