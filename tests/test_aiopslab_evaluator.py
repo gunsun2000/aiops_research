@@ -1,6 +1,7 @@
 from aiops_k8s_agents.aiopslab_evaluator import (
     AIOPSLAB_AGENT_NAMES,
     AIOpsLabEvaluatorAgent,
+    attach_aiopslab_evaluation,
 )
 
 
@@ -124,3 +125,23 @@ def test_application_reward_reflects_evidence_quality():
     assert complete.agent_rewards["AIApplicationManagementAgent"] > (
         incomplete.agent_rewards["AIApplicationManagementAgent"]
     )
+
+
+def test_attach_evaluation_persists_objective_team_and_agent_rewards():
+    report = {
+        "problem_id": "misconfig_app_hotel_res-detection-1",
+        "decisions": _decisions(),
+        "aiopslab_results": _results("Correct", ttd=4.0, steps=3),
+    }
+
+    updated = attach_aiopslab_evaluation(
+        report,
+        max_steps=8,
+        metrics_duration_minutes=10,
+    )
+
+    assert updated is report
+    assert updated["evaluation"]["evaluator"] == "AIOpsLabEvaluatorAgent"
+    assert updated["evaluation"]["team_reward"] > 0.0
+    assert set(updated["evaluation"]["agent_rewards"]) == set(AIOPSLAB_AGENT_NAMES)
+    assert "reward_total" not in updated["decisions"][-1]["metadata"]
