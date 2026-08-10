@@ -4,6 +4,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from math import isfinite
+import os
 from time import monotonic
 import time
 from threading import Event
@@ -15,6 +16,12 @@ from aiops_k8s_agents.experiment_runtime_models import (
     ExperimentRuntimeResult,
     RuntimeEvent,
     RuntimeStage,
+)
+from aiops_k8s_agents.action_policy import (
+    ContextualBanditPolicy,
+    PolicyContext,
+    cause_for_metric,
+    load_policy_samples,
 )
 from aiops_k8s_agents.agent_adapters import (
     AgentAdapterRegistry,
@@ -324,6 +331,7 @@ class ExperimentRuntime:
         experiment_id = self.experiment_id_factory()
         bridge = RuntimeResearchEventBridge(experiment_id, self.event_sink, self.artifact_event_store)
         report: dict[str, Any] = self._base_report(experiment_id, request)
+        _attach_action_policy_advice(report, request)
         application: Any | None = None
         cleanup: Mapping[str, Any] = {}
         primary_status = "failed"
@@ -531,6 +539,9 @@ class ExperimentRuntime:
             "incident_source": request.incident_source,
             "benchmark_id": request.benchmark_id,
             "detection": deepcopy(dict(request.detection_context)),
+            "action_policy": str(
+                request.detection_context.get("action_policy", "baseline")
+            ),
             "final_status": "failed",
             "evidence": {},
             "diagnosis": {},
@@ -544,6 +555,35 @@ class ExperimentRuntime:
 
 class _BlockedRequest(ValueError):
     pass
+
+
+def _attach_action_policy_advice(
+    report: dict[str, Any],
+    request: ExperimentRuntimeRequest,
+) -> None:
+    """Attach advisory policy output without changing the bounded executor path."""
+
+    requested_mode = str(
+        request.detection_context.get("action_policy", "baseline")
+    ).strip().lower()
+    policy_mode = requested_mode if requested_mode in {"baseline", "learned"} else "baseline"
+    policy = ContextualBanditPolicy(mode=policy_mode)
+    samples_path = os.environ.get("AIOPS_ACTION_POLICY_SAMPLES", "").strip()
+    if policy_mode == "learned" and samples_path:
+        try:
+            policy.fit(load_policy_samples(samples_path))
+        except (OSError, ValueError) as exc:
+            report["action_policy_error"] = str(exc)
+    recommendation = policy.recommend(
+        PolicyContext(
+            scenario=request.scenario_id,
+            metric=request.metric,
+            cause=cause_for_metric(request.metric),
+        )
+    )
+    report["action_policy"] = policy_mode
+    report["action_policy_samples"] = samples_path
+    report["action_policy_recommendation"] = recommendation.to_dict()
 
 
 class _null_context:

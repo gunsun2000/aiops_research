@@ -126,6 +126,7 @@ class ExperimentValidationRequest(BaseModel):
     model: str = ""
     incident_source: Literal["chaos_mesh", "aiopslab"] = "chaos_mesh"
     benchmark_id: str = ""
+    action_policy: Literal["baseline", "learned"] = "baseline"
 
 
 class ExperimentCreateRequest(ExperimentValidationRequest):
@@ -826,6 +827,7 @@ def api_validate_experiment(
             model=request.model,
             incident_source=request.incident_source,
             benchmark_id=request.benchmark_id,
+            detection_context={"action_policy": request.action_policy},
         )
     except (TypeError, ValueError) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -930,7 +932,15 @@ def _runtime_request(data: Mapping[str, Any]) -> ExperimentRuntimeRequest:
         model=data.get("model", ""),
         incident_source=data.get("incident_source", "chaos_mesh"),
         benchmark_id=data.get("benchmark_id", ""),
-        detection_context=data.get("detection_context", {}),
+        detection_context={
+            **dict(data.get("detection_context", {})),
+            "action_policy": data.get(
+                "action_policy",
+                dict(data.get("detection_context", {})).get(
+                    "action_policy", "baseline"
+                ),
+            ),
+        },
     )
 
 

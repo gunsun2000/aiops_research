@@ -53,6 +53,7 @@
   function selectScenario(id){ if(state.running||!state.scenarios[id])return; state.selectedScenario=id; setPressed("scenario-list","button[data-scenario]",id,(b)=>b.dataset.scenario); if($("overview-scenario-select"))$("overview-scenario-select").value=id; renderCondition(); resetEvidenceView(); window.dispatchEvent(new CustomEvent("aiops:selection-updated")); }
   function selectMode(mode){ if(state.running||!MODE_BOUNDARIES[mode])return; state.selectedMode=mode; setPressed("mode-control","button[data-mode]",mode,(b)=>b.dataset.mode); if($("overview-mode-select"))$("overview-mode-select").value=mode; text("mode-boundary",MODE_BOUNDARIES[mode]); text("overview-quick-help",MODE_BOUNDARIES[mode]); ["header-mode-badge","overview-mode-badge","experiment-mode-badge","selection-runtime-badge"].forEach((id)=>setModeBadge(id,mode)); renderSelectionSummary(); resetEvidenceView(); }
   function selectController(controller){ if(state.running)return; const resolved=controller==="autogen"?"autogen":"deterministic"; const autogen=state.connections.autogen||{ready:false,reason:"OpenAI API 키가 필요합니다"}; if(resolved==="autogen"&&!autogen.ready){ text("control-error",autogen.reason||"AutoGen runtime이 준비되지 않았습니다."); return; } $("controller-select").value=resolved; if($("overview-controller-select"))$("overview-controller-select").value=resolved; setPressed("controller-options","button[data-controller]",resolved,(b)=>b.dataset.controller); $("controller-model").hidden=resolved!=="autogen"; $("advanced-settings").open=resolved==="autogen"; $("profile-select").disabled=resolved==="autogen"; $("profile-select").value=resolved==="autogen"?"four-agent-autogen-v1":"four-agent-role-veto-v1"; text("controller-readiness",resolved==="autogen"?(autogen.reason||"AutoGen runtime 준비"):"Deterministic runtime 준비"); text("control-error",""); renderSelectionSummary(); }
+  function ensureActionPolicyControl(){ const grid=document.querySelector(".advanced-settings-grid"); if(!grid||$("action-policy-select"))return; const label=document.createElement("label"); label.textContent="Action Policy"; const select=document.createElement("select"); select.id="action-policy-select"; select.innerHTML='<option value="baseline" selected>Baseline Policy</option><option value="learned">Learned Policy (advisory)</option>'; const note=document.createElement("small"); note.className="helper-text"; note.textContent="학습 정책은 기존 bounded action의 추천 순위만 바꾸며, 4-Agent 검토와 Validator를 우회하지 않습니다."; label.append(select,note); grid.append(label); }
   function controllerProfile(){ return $("controller-select").value==="autogen"?"four-agent-autogen-v1":$("profile-select").value; }
   function renderCondition(){ const item=scenario(); text("target-deployment",`${item.namespace} / ${item.deployment}`); text("target-metric",`${item.metric} · threshold ${item.threshold}`); text("evidence-scenario",item.label); text("evidence-target",`${item.namespace}/${item.deployment}`); text("observed-scenario",item.label); text("observed-target",`${item.namespace}/${item.deployment}`); text("observed-metric",`${item.metric} · threshold ${item.threshold}`); renderSelectionSummary(); renderGlobalContext(state.job); }
   function renderSelectionSummary(){ const item=scenario(); const controller=$("controller-select")?$("controller-select").value:"deterministic"; const model=controller==="autogen"&&$("model-input")?$("model-input").value.trim():""; text("selection-summary",`${item.label} · ${modeLabel(state.selectedMode)} · ${controllerLabel(controller,model)}`); }
@@ -107,10 +108,44 @@
     renderReport(report);
   }
 
+  function renderRecoveryRunStatus(job){
+    const panel=$("recovery-run-status");
+    if(!panel)return;
+    const status=job&&job.status?job.status:"queued";
+    const report=job?reportFor(job):null;
+    const recovery=report&&report.recovery_monitoring?report.recovery_monitoring:{};
+    const safeFailure=report&&report.final_status==="safe_failure";
+    const recoveryLabel=safeFailure?"안전 중단":recovery.recovery_success===true?"성공":recovery.recovery_success===false?"실패":null;
+    const terminal=Boolean(job&&TERMINAL.has(status));
+    const visualStatus=recoveryLabel==="성공"?"success":recoveryLabel==="실패"||safeFailure?"danger":statusClass(status);
+    const title=!job?"실행 대기":terminal&&recoveryLabel?`실험 ${recoveryLabel}`:`실험 ${jobStatusLabel(status)}`;
+    let message="시나리오와 실행 모드를 선택한 뒤 실험을 실행하세요.";
+    if(job){
+      if(status==="queued")message="실험 Job이 실행 대기열에 등록되었습니다.";
+      else if(status==="running")message="장애 주입, Evidence 수집, Agent 판단, 안전 검증과 복구 확인을 실행 중입니다.";
+      else if(status==="completed"&&recoveryLabel==="성공")message="복구가 완료되었습니다. 결과 상세에서 Evidence와 Agent Reward를 확인하세요.";
+      else if(status==="completed"&&recoveryLabel==="실패")message="실험은 종료되었지만 복구 결과가 실패로 기록되었습니다. 결과 상세에서 원인을 확인하세요.";
+      else if(status==="completed")message="실험이 완료되었습니다. 결과 상세에서 실행 결과와 평가를 확인하세요.";
+      else if(status==="blocked")message="안전 정책에 의해 실행이 중단되었습니다. 차단 사유를 확인하세요.";
+      else if(status==="failed")message=job.error||"실험 중 오류가 발생했습니다. 로그와 이벤트를 확인하세요.";
+      else if(status==="cancelled")message="실험이 취소되었습니다.";
+      else if(status==="interrupted")message="서버 재시작으로 실험이 중단되었습니다.";
+    }
+    panel.className=`surface recovery-run-status ${visualStatus}`;
+    const icon=$("recovery-run-status-icon");
+    if(icon){ icon.className=`recovery-run-status-icon ${visualStatus}`; icon.textContent=visualStatus==="success"?"✓":visualStatus==="danger"?"!":status==="running"?"…":terminal?"—":"○"; }
+    text("recovery-run-status-title",title);
+    text("recovery-run-status-message",message);
+    text("recovery-run-status-id",job&&job.experiment_id?`Experiment ID · ${job.experiment_id}`:"Experiment ID · —");
+    const resultButton=$("recovery-view-result");
+    if(resultButton)resultButton.hidden=!terminal;
+  }
+
   function renderJob(job){
     state.job=job;
     state.experimentId=job.experiment_id;
     state.running=!TERMINAL.has(job.status);
+    renderRecoveryRunStatus(job);
     if(job.request){
       if(state.scenarios[job.request.scenario_id])state.selectedScenario=job.request.scenario_id;
       if(job.request.mode)state.selectedMode=job.request.mode;
@@ -143,7 +178,7 @@
   function startTimer(createdAt){ stopTimer(); state.startedAt=createdAt?new Date(createdAt):new Date(); const tick=()=>{ const seconds=Math.max(0,Math.floor((Date.now()-state.startedAt.getTime())/1000)); text("elapsed-time",`${String(Math.floor(seconds/60)).padStart(2,"0")}:${String(seconds%60).padStart(2,"0")}`); }; tick(); state.timer=window.setInterval(tick,1000); }
   function stopTimer(){ if(state.timer)window.clearInterval(state.timer); state.timer=null; }
   function showError(error){ text("control-error",error instanceof Error?error.message:String(error)); }
-  async function runExperiment(){ text("control-error",""); const item=scenario(),controller=$("controller-select").value; if(controller==="autogen"&&!(state.connections.autogen&&state.connections.autogen.ready)){ showError(new Error("AutoGen은 OpenAI API 키와 runtime 준비가 필요합니다.")); return; } const payload={scenario_id:state.selectedScenario,namespace:item.namespace,deployment:item.deployment,metric:item.metric,threshold:item.threshold,mode:state.selectedMode,backend:"python",protocol_profile:controllerProfile(),repetitions:Number($("repetitions-select").value),controller,model:controller === "autogen" ? $("model-input").value.trim() : "",incident_source:"chaos_mesh",benchmark_id:""}; if(state.selectedMode==="real"){ const confirmation=window.prompt("실제 Kubernetes 장애 주입과 복구를 실행하려면 EXECUTE REAL EXPERIMENT를 입력하세요."); if(confirmation!=="EXECUTE REAL EXPERIMENT")return; payload.real_confirmation="EXECUTE REAL EXPERIMENT"; } try{ const job=await api("/api/experiments",{method:"POST",body:JSON.stringify(payload)}); state.events=[]; $("event-log").replaceChildren(); renderJob(job); startTimer(job.created_at); connectEvents(); selectPlatformView("experiment"); }catch(error){showError(error);} }
+  async function runExperiment(){ text("control-error",""); const item=scenario(),controller=$("controller-select").value; if(controller==="autogen"&&!(state.connections.autogen&&state.connections.autogen.ready)){ showError(new Error("AutoGen은 OpenAI API 키와 runtime 준비가 필요합니다.")); return; } const payload={scenario_id:state.selectedScenario,namespace:item.namespace,deployment:item.deployment,metric:item.metric,threshold:item.threshold,mode:state.selectedMode,backend:"python",protocol_profile:controllerProfile(),repetitions:Number($("repetitions-select").value),controller,model:controller === "autogen" ? $("model-input").value.trim() : "",incident_source:"chaos_mesh",benchmark_id:""}; if(state.selectedMode==="real"){ const confirmation=window.prompt("실제 Kubernetes 장애 주입과 복구를 실행하려면 EXECUTE REAL EXPERIMENT를 입력하세요."); if(confirmation!=="EXECUTE REAL EXPERIMENT")return; payload.real_confirmation="EXECUTE REAL EXPERIMENT"; } try{ const job=await api("/api/experiments",{method:"POST",body:JSON.stringify(payload)}); state.events=[]; $("event-log").replaceChildren(); renderJob(job); startTimer(job.created_at); connectEvents(); selectPlatformView("experiment"); }catch(error){ renderRecoveryRunStatus({status:"failed",error:error instanceof Error?error.message:String(error)}); showError(error);} }
   async function cancelExperiment(){ if(!state.experimentId)return; try{renderJob(await api(`/api/experiments/${state.experimentId}/cancel`,{method:"POST"}));}catch(error){showError(error);} }
 
   function normalizeConnectionKey(key){ return String(key||"").toLowerCase().replace(/[^a-z0-9]/g,""); }
@@ -253,4 +288,7 @@
   async function boot(){bindControls();renderResearchDocuments();renderScenarioButtons();renderCondition();resetEvidenceView();selectMode("mock");await Promise.all([loadScenarios(),loadConnections(),loadAIOpsLabBenchmarks(),loadRecoveryComparison(),loadExperimentHistory()]);await Promise.all([restoreLatestJob(),restoreLatestAIOpsLabJob(),restoreLatestRecoveryComparison()]);}
   window.addEventListener("beforeunload",()=>{closeEvents();closeAIOpsLabEvents();closeComparisonEvents();});
   boot();
+  ensureActionPolicyControl();
+  const researchFetch=window.fetch.bind(window);
+  window.fetch=(input,options={})=>{const url=typeof input==="string"?input:input&&input.url;if(url&&url.endsWith("/api/experiments")&&options.body){try{const payload=JSON.parse(options.body);payload.action_policy=$("action-policy-select")?.value||"baseline";options={...options,body:JSON.stringify(payload)};}catch(_error){return researchFetch(input,options);}}return researchFetch(input,options);};
 })();

@@ -183,6 +183,25 @@ def test_overview_runtime_rendering_is_split_by_research_responsibility():
     assert "post_execution_reviews" in script
 
 
+def test_recovery_run_surfaces_live_and_terminal_outcomes():
+    html = source(INDEX)
+    app = source(APP)
+    styles = source(STYLES)
+    for marker in (
+        'id="recovery-run-status"',
+        'id="recovery-run-status-title"',
+        'id="recovery-run-status-message"',
+        'id="recovery-view-result"',
+    ):
+        assert marker in html
+    assert "function renderRecoveryRunStatus" in app
+    assert "recoveryLabel" in app
+    assert "recovery-run-status-title" in app
+    assert "recovery-run-status-message" in app
+    assert ".recovery-run-status.success" in styles
+    assert ".recovery-run-status.danger" in styles
+
+
 def test_experiment_results_sync_filters_to_url_and_paginate():
     script = source(REFERENCE)
     for name in ("period", "scenario", "controller", "mode", "status", "q", "page", "page_size"):

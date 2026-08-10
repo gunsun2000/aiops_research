@@ -244,6 +244,20 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
 .performance-panel th{color:#5d6b82;background:#fbfcfe}
 .performance-panel tbody tr:last-child td{border-bottom:0}
 
+/* Keep the recovery outcome visible after the hidden workflow is updated. */
+.recovery-run-status{display:grid;grid-template-columns:48px minmax(0,1fr) auto;align-items:center;gap:14px;margin-top:14px;padding:16px 18px;border-left:4px solid #cbd5e1;background:#fff}
+.recovery-run-status.success{border-left-color:var(--green)}
+.recovery-run-status.warning{border-left-color:var(--orange)}
+.recovery-run-status.danger{border-left-color:var(--red)}
+.recovery-run-status-icon{width:38px;height:38px;display:grid;place-items:center;border-radius:50%;color:#63728a;background:#eef2f7;font-size:22px;font-weight:800}
+.recovery-run-status-icon.success{color:#078b56;background:#e7f8f0}
+.recovery-run-status-icon.warning{color:#a86608;background:#fff4e2}
+.recovery-run-status-icon.danger{color:#be3340;background:#fff0f1}
+.recovery-run-status-copy>span,.recovery-run-status-copy>small{display:block;color:var(--muted);font-size:11px}
+.recovery-run-status-copy h3{margin-top:4px;font-size:16px}
+.recovery-run-status-copy p{margin-top:4px;color:#52627f;font-size:12px;line-height:1.5}
+.recovery-run-status-copy small{margin-top:6px}
+
 @media(max-width:1350px){
   .aiopslab-reference-grid{grid-template-columns:1fr 1fr}
   .benchmark-run{grid-column:1/-1}
@@ -265,4 +279,6 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
   [data-result-panel="history"] .filter-bar{grid-template-columns:1fr}
   .benchmark-meta-grid{grid-template-columns:1fr}
   .evaluator-reward-grid,.evaluator-components{grid-template-columns:1fr 1fr}
+  .recovery-run-status{grid-template-columns:40px minmax(0,1fr)}
+  .recovery-run-status .secondary-action{grid-column:1/-1;width:100%}
 }

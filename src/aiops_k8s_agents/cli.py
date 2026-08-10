@@ -51,6 +51,12 @@ from aiops_k8s_agents.aiopslab_results import (
     summarize_aiopslab_reports,
     write_aiopslab_summary_files,
 )
+from aiops_k8s_agents.action_policy import (
+    ContextualBanditPolicy,
+    PolicyContext,
+    load_policy_samples,
+    write_policy_samples,
+)
 from aiops_k8s_agents.kubernetes_status import collect_kubernetes_snapshot
 from aiops_k8s_agents.models import (
     AlertEvent,
@@ -246,6 +252,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     recovery_statistics_parser.add_argument("--input", required=True)
     recovery_statistics_parser.add_argument("--output-dir", required=True)
+
+    action_policy_dataset_parser = subparsers.add_parser(
+        "build-action-policy-dataset",
+        help="Convert recovery outcome JSONL into advisory action-policy samples.",
+    )
+    action_policy_dataset_parser.add_argument("--input", required=True)
+    action_policy_dataset_parser.add_argument("--output", required=True)
+
+    action_policy_recommend_parser = subparsers.add_parser(
+        "recommend-action",
+        help="Recommend one existing bounded action with baseline or learned policy.",
+    )
+    action_policy_recommend_parser.add_argument(
+        "--mode", choices=["baseline", "learned"], default="baseline"
+    )
+    action_policy_recommend_parser.add_argument("--samples", default="")
+    action_policy_recommend_parser.add_argument("--scenario", required=True)
+    action_policy_recommend_parser.add_argument("--metric", default="")
+    action_policy_recommend_parser.add_argument("--cause", default="")
+    action_policy_recommend_parser.add_argument("--severity", default="")
 
     recovery_matrix_parser = subparsers.add_parser(
         "run-recovery-experiments",
@@ -550,6 +576,16 @@ def main(
         _emit_json_report(args, report)
         return 0 if report["valid"] else 2
 
+    if args.command == "build-action-policy-dataset":
+        report = build_action_policy_dataset_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report["valid"] else 2
+
+    if args.command == "recommend-action":
+        report = recommend_action_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report["valid"] else 2
+
     if args.command == "run-recovery-experiments":
         try:
             report = run_recovery_experiment_matrix(args)
@@ -809,6 +845,54 @@ def summarize_recovery_statistics_cli(args: argparse.Namespace) -> dict[str, Any
     write_recovery_statistics(report, args.output_dir)
     report["output_dir"] = args.output_dir
     return report
+
+
+def build_action_policy_dataset_cli(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        samples = load_policy_samples(args.input)
+        output = write_policy_samples(samples, args.output)
+    except (OSError, ValueError) as exc:
+        return {
+            "command": "build-action-policy-dataset",
+            "valid": False,
+            "input": args.input,
+            "output": args.output,
+            "stderr": str(exc),
+        }
+    return {
+        "command": "build-action-policy-dataset",
+        "valid": True,
+        "input": args.input,
+        **output,
+    }
+
+
+def recommend_action_cli(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        policy = ContextualBanditPolicy(mode=args.mode)
+        if args.mode == "learned":
+            if not args.samples:
+                raise ValueError("--samples is required for learned mode")
+            policy.fit(load_policy_samples(args.samples))
+        context = PolicyContext(
+            scenario=args.scenario,
+            metric=args.metric,
+            cause=args.cause,
+            severity=args.severity,
+        )
+        recommendation = policy.recommend(context)
+    except (OSError, ValueError) as exc:
+        return {
+            "command": "recommend-action",
+            "valid": False,
+            "stderr": str(exc),
+        }
+    return {
+        "command": "recommend-action",
+        "valid": True,
+        "samples": args.samples,
+        **recommendation.to_dict(),
+    }
 
 
 def run_recovery_experiment_matrix(args: argparse.Namespace) -> dict[str, Any]:

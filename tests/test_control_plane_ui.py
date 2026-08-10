@@ -25,8 +25,8 @@ def test_console_has_four_primary_research_views():
     assert "복구 실험" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=23" in html
-    assert "app.js?v=23" in html
+    assert "styles.css?v=24" in html
+    assert "app.js?v=24" in html
     assert "reference-ui.js?v=3" in html
 
 

@@ -1220,3 +1220,92 @@ def test_cli_summarizes_full_stack_runs(tmp_path, capsys):
     assert output["real_scale_verified_scenarios"] == 1
     assert (tmp_path / "final_summary.md").exists()
     assert (tmp_path / "final_summary.csv").exists()
+
+
+def test_cli_builds_action_policy_dataset(tmp_path, capsys):
+    input_path = tmp_path / "outcomes.jsonl"
+    output_path = tmp_path / "policy_samples.jsonl"
+    input_path.write_text(
+        json.dumps(
+            {
+                "scenario": "cpu-stress",
+                "metric": "cpu",
+                "cause": "cpu_saturation",
+                "action": {"kind": "scale_out"},
+                "recovery_success": True,
+                "safety_valid": True,
+                "measurement_valid": True,
+                "observed_reward": 0.85,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "build-action-policy-dataset",
+            "--input",
+            str(input_path),
+            "--output",
+            str(output_path),
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["valid"] is True
+    assert output["total_samples"] == 1
+    assert output["eligible_samples"] == 1
+    assert json.loads(output_path.read_text(encoding="utf-8"))["action"] == "scale_out"
+
+
+def test_cli_recommends_learned_action_from_samples(tmp_path, capsys):
+    sample_path = tmp_path / "policy_samples.jsonl"
+    sample_path.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "scenario": "cpu-stress",
+                    "metric": "cpu",
+                    "cause": "cpu_saturation",
+                    "action": action,
+                    "observed_reward": reward,
+                    "recovery_success": True,
+                    "safety_valid": True,
+                    "measurement_valid": True,
+                    "eligible": True,
+                }
+            )
+            for action, reward in (
+                ("observe_only", 0.20),
+                ("rollout_restart", 0.40),
+                ("scale_out", 0.85),
+            )
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "recommend-action",
+            "--mode",
+            "learned",
+            "--samples",
+            str(sample_path),
+            "--scenario",
+            "cpu-stress",
+            "--metric",
+            "cpu",
+            "--cause",
+            "cpu_saturation",
+        ]
+    )
+    output = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert output["valid"] is True
+    assert output["selected_action"] == "scale_out"
+    assert output["training_samples"] == 3
+    assert output["advisory_only"] is True

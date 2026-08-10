@@ -118,6 +118,7 @@ def test_validate_experiment_is_preflight_only_for_mock_mode():
             "mode": "mock",
             "backend": "python",
             "protocol_profile": "four-agent-role-veto-v1",
+            "action_policy": "learned",
         },
     )
 
@@ -128,6 +129,7 @@ def test_validate_experiment_is_preflight_only_for_mock_mode():
     assert payload["controller"] == "mutual_supervision"
     assert payload["safety_bounds"]["min_replicas"] == 1
     assert payload["safety_bounds"]["max_replicas"] == 5
+    assert payload["resolved"]["detection_context"]["action_policy"] == "learned"
 
 
 def test_validate_autogen_requires_ready_connection():
