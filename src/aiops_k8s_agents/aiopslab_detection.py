@@ -51,28 +51,28 @@ class AIOpsLabDetectionPolicy:
                     AgentDecision(
                         agent="AIServiceHASupportAgent",
                         action="ha_collect_logs",
-                        reward=0.50,
+                        reward=0.0,
                         approved=True,
                         reason="Collect service logs before deciding anomaly status.",
                     ),
                     AgentDecision(
                         agent="AIApplicationManagementAgent",
                         action="app_observe_service_logs",
-                        reward=0.45,
+                        reward=0.0,
                         approved=True,
                         reason="Use application logs as the first evidence source.",
                     ),
                     AgentDecision(
                         agent="AISemiconductorInfraOpsAgent",
                         action="infra_no_change",
-                        reward=0.30,
+                        reward=0.0,
                         approved=True,
                         reason="No infrastructure control action is needed yet.",
                     ),
                     AgentDecision(
                         agent="CostOptimizationAgent",
                         action="cost_no_change",
-                        reward=0.30,
+                        reward=0.0,
                         approved=True,
                         reason="Observation-only step has no additional resource cost.",
                     ),
@@ -146,28 +146,28 @@ def _anomaly_metric_decisions() -> list[AgentDecision]:
         AgentDecision(
             agent="AIServiceHASupportAgent",
             action="ha_anomaly_detected",
-            reward=0.95,
+            reward=0.0,
             approved=True,
             reason="Service logs contain a strong availability anomaly signal.",
         ),
         AgentDecision(
             agent="AIApplicationManagementAgent",
             action="app_collect_metrics",
-            reward=0.80,
+            reward=0.0,
             approved=True,
             reason="Collect Prometheus metrics before final AIOpsLab submission.",
         ),
         AgentDecision(
             agent="AISemiconductorInfraOpsAgent",
             action="infra_dependency_failure_detected",
-            reward=0.75,
+            reward=0.0,
             approved=True,
             reason="The service cannot reach its backing dependency.",
         ),
         AgentDecision(
             agent="CostOptimizationAgent",
             action="cost_observation_only",
-            reward=0.60,
+            reward=0.0,
             approved=True,
             reason="Metric collection does not change cluster resource allocation.",
         ),
@@ -179,28 +179,28 @@ def _clean_log_metric_decisions() -> list[AgentDecision]:
         AgentDecision(
             agent="AIServiceHASupportAgent",
             action="ha_no_log_anomaly",
-            reward=0.55,
+            reward=0.0,
             approved=True,
             reason="Logs do not yet show a direct availability anomaly.",
         ),
         AgentDecision(
             agent="AIApplicationManagementAgent",
             action="app_collect_metrics",
-            reward=0.70,
+            reward=0.0,
             approved=True,
             reason="Use metrics to confirm that the service is healthy.",
         ),
         AgentDecision(
             agent="AISemiconductorInfraOpsAgent",
             action="infra_observe_only",
-            reward=0.45,
+            reward=0.0,
             approved=True,
             reason="No infrastructure fault is confirmed from logs.",
         ),
         AgentDecision(
             agent="CostOptimizationAgent",
             action="cost_observation_only",
-            reward=0.60,
+            reward=0.0,
             approved=True,
             reason="Metric collection is a low-cost diagnostic action.",
         ),
@@ -212,14 +212,14 @@ def _submit_decisions(has_anomaly: bool) -> list[AgentDecision]:
         AgentDecision(
             agent="AIServiceHASupportAgent",
             action="ha_submit_anomaly_yes" if has_anomaly else "ha_submit_anomaly_no",
-            reward=0.95 if has_anomaly else 0.70,
+            reward=0.0,
             approved=True,
             reason="Submit the final service anomaly decision.",
         ),
         AgentDecision(
             agent="AIApplicationManagementAgent",
             action="app_submit_detection_result",
-            reward=0.85,
+            reward=0.0,
             approved=True,
             reason="The AIOpsLab detection task expects a Yes/No submission.",
         ),
@@ -230,14 +230,14 @@ def _submit_decisions(has_anomaly: bool) -> list[AgentDecision]:
                 if has_anomaly
                 else "infra_no_fault_scope_confirmed"
             ),
-            reward=0.70,
+            reward=0.0,
             approved=True,
             reason="The decision does not require direct infrastructure mutation.",
         ),
         AgentDecision(
             agent="CostOptimizationAgent",
             action="cost_no_remediation_cost",
-            reward=0.60,
+            reward=0.0,
             approved=True,
             reason="Detection submission has no additional runtime cost.",
         ),
@@ -270,8 +270,4 @@ def _metadata(
         "actions": "|".join(
             f"{decision.agent}:{decision.action}" for decision in decisions
         ),
-        "rewards": "|".join(
-            f"{decision.agent}:{decision.reward:.2f}" for decision in decisions
-        ),
-        "reward_total": f"{sum(decision.reward for decision in decisions):.2f}",
     }
