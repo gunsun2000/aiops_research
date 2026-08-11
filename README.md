@@ -66,7 +66,9 @@ export AIOPS_AUTO_PORT_FORWARD=auto
 export AIOPSLAB_ROOT="$HOME/geonhae/external/AIOpsLab"
 export AIOPSLAB_PYTHON="$HOME/anaconda3/envs/aiopslab/bin/python"
 export AIOPS_BIND_ADDRESS="127.0.0.1"
-export PORT=18181
+# Ubuntu 원격 서버에서 Control Plane이 듣는 포트입니다.
+# VS Code Ports 탭에서는 이 포트를 로컬 18181로 전달합니다.
+export PORT=18180
 
 aiops-control-plane
 ```
@@ -89,7 +91,7 @@ export AIOPS_OPENAI_MODEL="gpt-5.5"
 실행 후 연결 상태는 다음 명령으로 확인합니다.
 
 ```bash
-curl -sS http://127.0.0.1:18181/api/connections | python -m json.tool
+curl -sS http://127.0.0.1:18180/api/connections | python -m json.tool
 ```
 
 Windows 로컬 기준:
@@ -133,22 +135,28 @@ Job과 이벤트는 기본적으로
 그대로 적용됩니다. Windows에서 통과한 테스트와 `mock` 결과는 실제 클러스터
 실험 근거가 아닙니다.
 
-Control Plane 실행에는 위 `빠른 실행` 블록을 사용합니다. 연구실 서버 표준 포트는
-`18181`이며 `PORT` 환경변수로 변경할 수 있습니다.
+Control Plane 실행에는 위 `빠른 실행` 블록을 사용합니다. Ubuntu 연구실 서버의
+표준 포트는 `18180`이며 `PORT` 환경변수로 변경할 수 있습니다. `18181`은
+VS Code Remote SSH에서 원격 `18180`을 Windows로 전달할 때 사용할 로컬 포트입니다.
 
 Ubuntu 서버에서 직접 브라우저를 실행할 때:
 
 ```text
-http://127.0.0.1:18181/
+http://127.0.0.1:18180/
 ```
 
 Windows에서 VS Code Remote SSH로 서버에 접속할 때는 VS Code의 Ports 탭에서
-원격 포트 `18181`을 전달하고, Ports 탭에 표시된 전달 주소를 사용합니다. 로컬
-포트도 `18181`로 배정된 경우 다음 주소로 접속합니다.
+원격 포트 `18180`을 전달하고, 로컬 포트는 `18181`로 배정합니다. Ports 탭에
+`18180 -> 127.0.0.1:18181`처럼 표시되면 Windows 브라우저에서는 다음 주소로
+접속합니다.
 
 ```text
 http://127.0.0.1:18181/
 ```
+
+원격 서버에서 `PORT=18181`로 실행하고 VS Code가 원격 `18180`을 전달하도록
+두 포트를 섞으면 브라우저가 연결되지 않습니다. 원격은 `18180`, Windows
+브라우저는 전달된 `18181`을 사용해야 합니다.
 
 브라우저에서 상태가 갱신되지 않으면 `Ctrl+Shift+R`로 캐시를 새로고침합니다.
 
