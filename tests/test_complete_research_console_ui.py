@@ -56,7 +56,7 @@ def test_data_first_visual_polish_is_loaded_without_fabricated_values():
     bulk = source(BULK)
     polish = source(POLISH)
     styles = source(STYLES)
-    assert "/static/research-console-polish.js?v=2" in bulk
+    assert "/static/research-console-polish.js?v=3" in bulk
     assert "/api/benchmarks/aiopslab/jobs?limit=6" in polish
     assert "renderRecentBenchmarkResults" in polish
     assert "experiment-id-search" in polish
@@ -234,7 +234,7 @@ def test_experiment_result_deletion_requires_confirmation_and_refreshes_history(
 def test_bulk_experiment_result_deletion_reloads_after_success_headers_without_waiting_for_json():
     html = source(INDEX)
     script = source(BULK)
-    assert "/static/bulk-delete-ui.js?v=2" in html
+    assert "/static/bulk-delete-ui.js?v=3" in html
     assert "delete-all-experiments" in script
     assert "전체 삭제" in script
     assert "deleteAllExperimentResults" in script

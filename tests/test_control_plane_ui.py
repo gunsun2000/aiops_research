@@ -27,8 +27,15 @@ def test_console_has_four_primary_research_views():
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
     assert "styles.css?v=24" in html
-    assert "app.js?v=24" in html
-    assert "reference-ui.js?v=3" in html
+    assert "app.js?v=25" in html
+
+
+def test_dynamic_console_scripts_use_fresh_cache_versions():
+    html = _source(INDEX_HTML)
+    bulk_script = _source(ROOT / "ui" / "control_plane_static" / "bulk-delete-ui.js")
+    assert "reference-ui.js?v=4" in html
+    assert "bulk-delete-ui.js?v=3" in html
+    assert "research-console-polish.js?v=3" in bulk_script
 
 
 def test_reference_images_define_the_page_structure():

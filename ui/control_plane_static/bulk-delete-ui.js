@@ -138,7 +138,7 @@
   function ensurePolishScript() {
     if (document.querySelector('script[data-research-console-polish]')) return;
     const script = document.createElement("script");
-    script.src = "/static/research-console-polish.js?v=2";
+    script.src = "/static/research-console-polish.js?v=3";
     script.defer = true;
     script.dataset.researchConsolePolish = "1";
     document.head.append(script);
