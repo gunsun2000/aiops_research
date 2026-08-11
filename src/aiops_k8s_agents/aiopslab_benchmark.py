@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,6 +13,39 @@ from typing import Any, Mapping
 
 from aiops_k8s_agents.aiopslab_evaluator import attach_aiopslab_evaluation
 from aiops_k8s_agents.aiopslab_jobs import AIOpsLabBenchmarkRequest
+
+
+def resolve_aiopslab_python(
+    *,
+    env: Mapping[str, str] | None = None,
+    home: str | Path | None = None,
+    current_python: str | Path | None = None,
+) -> Path:
+    """Resolve the interpreter used by the external AIOpsLab runtime.
+
+    The web server commonly runs in ``aiops_research`` while AIOpsLab's
+    dependencies live in its own conda environment.  Prefer an explicit
+    server-owned path, then discover the conventional conda locations before
+    falling back to the interpreter running this process.
+    """
+
+    environment = os.environ if env is None else env
+    explicit = str(environment.get("AIOPSLAB_PYTHON", "")).strip()
+    if explicit:
+        return Path(explicit).expanduser().resolve()
+
+    home_path = Path.home() if home is None else Path(home).expanduser()
+    candidates = (
+        home_path / "anaconda3" / "envs" / "aiopslab" / "bin" / "python",
+        home_path / "miniconda3" / "envs" / "aiopslab" / "bin" / "python",
+        home_path / "anaconda3" / "envs" / "aiopslab" / "python.exe",
+        home_path / "miniconda3" / "envs" / "aiopslab" / "python.exe",
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate.resolve()
+
+    return Path(current_python or sys.executable).expanduser().resolve()
 
 
 @dataclass(frozen=True)

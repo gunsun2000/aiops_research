@@ -117,3 +117,59 @@ def test_aiopslab_job_store_rejects_duplicate_event_sequence(tmp_path):
 
     with pytest.raises(ValueError, match="event already exists"):
         store.append_event(_event(job.job_id, 1))
+
+
+def test_aiopslab_job_store_deletes_terminal_job_and_cascades_events(tmp_path):
+    store = SQLiteAIOpsLabJobStore(tmp_path / "jobs.sqlite3")
+    job = store.create(
+        AIOpsLabBenchmarkRequest("hotel-reservation-detection-v1"),
+        job_id="lab-job-delete",
+    )
+    store.append_event(_event(job.job_id, 1))
+    store.set_result(
+        job.job_id,
+        status=ExperimentJobStatus.COMPLETED,
+        result={"total_runs": 1},
+    )
+
+    deleted = store.delete(job.job_id)
+
+    assert deleted.job_id == job.job_id
+    assert store.get(job.job_id) is None
+    with pytest.raises(KeyError):
+        store.events_after(job.job_id)
+
+
+def test_aiopslab_job_store_refuses_deleting_nonterminal_job(tmp_path):
+    store = SQLiteAIOpsLabJobStore(tmp_path / "jobs.sqlite3")
+    job = store.create(
+        AIOpsLabBenchmarkRequest("hotel-reservation-detection-v1"),
+        job_id="lab-job-active",
+    )
+
+    with pytest.raises(ValueError, match="active benchmark job"):
+        store.delete(job.job_id)
+
+
+def test_aiopslab_job_store_deletes_all_terminal_jobs_only(tmp_path):
+    store = SQLiteAIOpsLabJobStore(tmp_path / "jobs.sqlite3")
+    completed = store.create(
+        AIOpsLabBenchmarkRequest("hotel-reservation-detection-v1"),
+        job_id="lab-job-completed",
+    )
+    active = store.create(
+        AIOpsLabBenchmarkRequest("hotel-reservation-detection-v1"),
+        job_id="lab-job-active",
+    )
+    store.set_result(
+        completed.job_id,
+        status=ExperimentJobStatus.FAILED,
+        result={},
+        error="benchmark failed",
+    )
+
+    deleted = store.delete_terminal_jobs()
+
+    assert deleted == (completed.job_id,)
+    assert store.get(completed.job_id) is None
+    assert store.get(active.job_id) is not None

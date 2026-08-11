@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import importlib.util
 import os
+import shutil
 import subprocess
-import sys
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -27,6 +27,7 @@ from aiops_k8s_agents.control_plane_data import (
 from aiops_k8s_agents.aiopslab_benchmark import (
     AIOpsLabBenchmarkCatalog,
     AIOpsLabBenchmarkExecutor,
+    resolve_aiopslab_python,
 )
 from aiops_k8s_agents.aiopslab_job_runner import AIOpsLabJobRunner
 from aiops_k8s_agents.aiopslab_jobs import (
@@ -440,6 +441,45 @@ def api_aiopslab_jobs(request: Request, limit: int = 50) -> dict[str, object]:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"jobs": [_aiopslab_job_payload(state, job) for job in jobs]}
+
+
+@router.delete("/api/benchmarks/aiopslab/jobs")
+def api_delete_aiopslab_jobs(request: Request) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    jobs = state.aiopslab_job_store.list(limit=1_000_000)
+    deleted_job_ids = state.aiopslab_job_store.delete_terminal_jobs()
+    artifacts_deleted = sum(
+        _delete_aiopslab_artifacts(state, job_id) for job_id in deleted_job_ids
+    )
+    return {
+        "deleted_count": len(deleted_job_ids),
+        "deleted_job_ids": list(deleted_job_ids),
+        "artifacts_deleted_count": artifacts_deleted,
+        "skipped_active_count": sum(not job.status.terminal for job in jobs),
+    }
+
+
+@router.delete("/api/benchmarks/aiopslab/jobs/{job_id}")
+def api_delete_aiopslab_job(job_id: str, request: Request) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    job = state.aiopslab_job_store.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="AIOpsLab benchmark job not found")
+    if not job.status.terminal:
+        raise HTTPException(
+            status_code=409,
+            detail="active benchmark job cannot be deleted; cancel it first",
+        )
+    try:
+        state.aiopslab_job_store.delete(job_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="AIOpsLab benchmark job not found") from exc
+    artifacts_deleted = _delete_aiopslab_artifacts(state, job_id)
+    return {
+        "deleted": True,
+        "job_id": job_id,
+        "artifacts_deleted": artifacts_deleted,
+    }
 
 
 @router.get("/api/benchmarks/aiopslab/jobs/{job_id}")
@@ -1058,6 +1098,19 @@ def _aiopslab_artifact_path(
     return path
 
 
+def _delete_aiopslab_artifacts(state: RuntimeApiState, job_id: str) -> bool:
+    root = state.aiopslab_artifact_root.resolve()
+    candidate = (root / job_id).resolve()
+    try:
+        candidate.relative_to(root)
+    except ValueError:
+        return False
+    if candidate == root or not candidate.exists():
+        return False
+    shutil.rmtree(candidate)
+    return True
+
+
 def _recovery_comparison_job_payload(
     state: RuntimeApiState,
     job: Any,
@@ -1244,7 +1297,7 @@ def create_app(
             "AIOPSLAB_ROOT",
             root.parent / "external" / "AIOpsLab",
         ),
-        python_executable=os.environ.get("AIOPSLAB_PYTHON", sys.executable),
+        python_executable=resolve_aiopslab_python(),
         kubeconfig=os.environ.get(
             "KUBECONFIG",
             root / "config" / "missing-kubeconfig",

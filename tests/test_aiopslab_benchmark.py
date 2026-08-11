@@ -7,6 +7,7 @@ import pytest
 from aiops_k8s_agents.aiopslab_benchmark import (
     AIOpsLabBenchmarkCatalog,
     AIOpsLabBenchmarkExecutor,
+    resolve_aiopslab_python,
     sanitize_benchmark_output,
 )
 from aiops_k8s_agents.aiopslab_jobs import AIOpsLabBenchmarkRequest
@@ -126,6 +127,33 @@ def test_executor_rejects_missing_runtime_before_subprocess(tmp_path):
 
     assert readiness["ready"] is False
     assert "AIOpsLab root" in " ".join(readiness["reasons"])
+
+
+def test_resolve_aiopslab_python_prefers_explicit_environment_path(tmp_path):
+    explicit = tmp_path / "explicit-python"
+    explicit.write_text("python", encoding="utf-8")
+
+    resolved = resolve_aiopslab_python(
+        env={"AIOPSLAB_PYTHON": str(explicit)},
+        home=tmp_path / "home",
+        current_python=tmp_path / "current-python",
+    )
+
+    assert resolved == explicit.resolve()
+
+
+def test_resolve_aiopslab_python_discovers_conda_environment_when_unset(tmp_path):
+    discovered = tmp_path / "home" / "anaconda3" / "envs" / "aiopslab" / "bin" / "python"
+    discovered.parent.mkdir(parents=True)
+    discovered.write_text("python", encoding="utf-8")
+
+    resolved = resolve_aiopslab_python(
+        env={},
+        home=tmp_path / "home",
+        current_python=tmp_path / "current-python",
+    )
+
+    assert resolved == discovered.resolve()
 
 
 def test_executor_rejects_repetition_above_registered_limit(tmp_path):

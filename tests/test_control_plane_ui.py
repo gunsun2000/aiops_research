@@ -139,12 +139,16 @@ def test_aiopslab_has_its_own_benchmark_runtime_and_sse():
     assert 'data-view-panel="aiopslab"' in html
     for element_id in (
         "aiopslab-benchmark-select", "aiopslab-repetitions", "aiopslab-run",
-        "aiopslab-cancel", "aiopslab-accuracy", "aiopslab-ttd",
+        "aiopslab-cancel", "aiopslab-delete-current", "aiopslab-delete-all",
+        "aiopslab-accuracy", "aiopslab-ttd",
         "aiopslab-steps", "aiopslab-reward", "aiopslab-scenario-list",
     ):
         assert f'id="{element_id}"' in html
     assert 'api("/api/benchmarks/aiopslab")' in script
     assert 'api("/api/benchmarks/aiopslab/jobs",' in script
+    assert "deleteCurrentAIOpsLabJob" in script
+    assert "deleteAllAIOpsLabJobs" in script
+    assert 'api("/api/benchmarks/aiopslab/jobs",{method:"DELETE"})' in script
     assert "new EventSource(`/api/benchmarks/aiopslab/jobs/${state.aiopslabJobId}/events`)" in script
     assert "`/api/benchmarks/aiopslab/jobs/${state.aiopslabJobId}/cancel`" in script
 

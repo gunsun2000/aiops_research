@@ -896,6 +896,72 @@ def test_aiopslab_job_completes_persists_and_exposes_artifacts(tmp_path):
     assert restored.json()["result"]["total_runs"] == 2
 
 
+def test_aiopslab_job_delete_removes_terminal_record_and_artifacts(tmp_path):
+    database = tmp_path / "jobs.sqlite3"
+    catalog = _aiopslab_catalog_path(tmp_path)
+    artifact_root = tmp_path / "runs"
+    test_app = create_app(
+        job_database_path=database,
+        aiopslab_catalog_path=catalog,
+        aiopslab_executor=_ApiAIOpsLabExecutor(),
+        aiopslab_artifact_root=artifact_root,
+        aiopslab_job_id_factory=lambda: "lab-api-delete",
+    )
+    test_client = TestClient(test_app)
+
+    created = test_client.post(
+        "/api/benchmarks/aiopslab/jobs",
+        json={"benchmark_id": "hotel-reservation-detection-v1", "repetitions": 1},
+    ).json()
+    finished = _wait_for_aiopslab_job(test_client, created["job_id"])
+    assert finished["status"] == "completed"
+    assert (artifact_root / created["job_id"]).is_dir()
+
+    deleted = test_client.delete(
+        f"/api/benchmarks/aiopslab/jobs/{created['job_id']}"
+    )
+
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+    assert deleted.json()["job_id"] == created["job_id"]
+    assert test_client.get(
+        f"/api/benchmarks/aiopslab/jobs/{created['job_id']}"
+    ).status_code == 404
+    assert not (artifact_root / created["job_id"]).exists()
+
+
+def test_aiopslab_delete_all_removes_terminal_jobs_and_preserves_active_job(tmp_path):
+    database = tmp_path / "jobs.sqlite3"
+    catalog = _aiopslab_catalog_path(tmp_path)
+    artifact_root = tmp_path / "runs"
+    executor = _ApiAIOpsLabExecutor(block=True)
+    test_app = create_app(
+        job_database_path=database,
+        aiopslab_catalog_path=catalog,
+        aiopslab_executor=executor,
+        aiopslab_artifact_root=artifact_root,
+    )
+    test_client = TestClient(test_app)
+
+    active = test_client.post(
+        "/api/benchmarks/aiopslab/jobs",
+        json={"benchmark_id": "hotel-reservation-detection-v1", "repetitions": 3},
+    ).json()
+    assert executor.started.wait(timeout=1)
+
+    response = test_client.delete("/api/benchmarks/aiopslab/jobs")
+
+    assert response.status_code == 200
+    assert response.json()["deleted_count"] == 0
+    assert response.json()["skipped_active_count"] == 1
+    assert test_client.get(
+        f"/api/benchmarks/aiopslab/jobs/{active['job_id']}"
+    ).status_code == 200
+
+    test_client.post(f"/api/benchmarks/aiopslab/jobs/{active['job_id']}/cancel")
+    _wait_for_aiopslab_job(test_client, active["job_id"])
+
+
 def test_aiopslab_sse_replays_events_and_finishes(tmp_path):
     test_app = create_app(
         job_database_path=tmp_path / "jobs.sqlite3",

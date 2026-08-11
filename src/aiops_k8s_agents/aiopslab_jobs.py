@@ -273,6 +273,53 @@ class SQLiteAIOpsLabJobStore:
             )
         return self._required(job_id)
 
+    def delete(self, job_id: str) -> AIOpsLabBenchmarkJob:
+        """Delete one terminal benchmark job and its persisted events."""
+
+        with self._lock:
+            existing = self._required(job_id)
+            if not existing.status.terminal:
+                raise ValueError("cannot delete an active benchmark job")
+            with self._connect() as connection:
+                connection.execute(
+                    "DELETE FROM aiopslab_events WHERE job_id = ?",
+                    (job_id,),
+                )
+                connection.execute(
+                    "DELETE FROM aiopslab_jobs WHERE job_id = ?",
+                    (job_id,),
+                )
+        return existing
+
+    def delete_terminal_jobs(self) -> tuple[str, ...]:
+        """Delete all terminal benchmark jobs and return their identifiers."""
+
+        terminal_statuses = tuple(
+            status.value for status in ExperimentJobStatus if status.terminal
+        )
+        placeholders = ", ".join("?" for _ in terminal_statuses)
+        with self._lock, self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT job_id FROM aiopslab_jobs
+                WHERE status IN ({placeholders})
+                ORDER BY rowid ASC
+                """,
+                terminal_statuses,
+            ).fetchall()
+            job_ids = tuple(row["job_id"] for row in rows)
+            if job_ids:
+                job_placeholders = ", ".join("?" for _ in job_ids)
+                connection.execute(
+                    f"DELETE FROM aiopslab_events WHERE job_id IN ({job_placeholders})",
+                    job_ids,
+                )
+                connection.execute(
+                    f"DELETE FROM aiopslab_jobs WHERE job_id IN ({job_placeholders})",
+                    job_ids,
+                )
+        return job_ids
+
     def interrupt_nonterminal_jobs(self) -> tuple[str, ...]:
         statuses = (
             ExperimentJobStatus.QUEUED.value,
