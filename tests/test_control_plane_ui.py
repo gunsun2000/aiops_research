@@ -4,6 +4,7 @@ ROOT = Path(__file__).resolve().parents[1]
 INDEX_HTML = ROOT / "ui" / "control_plane_static" / "index.html"
 APP_JS = ROOT / "ui" / "control_plane_static" / "app.js"
 REFERENCE_JS = ROOT / "ui" / "control_plane_static" / "reference-ui.js"
+POLISH_JS = ROOT / "ui" / "control_plane_static" / "research-console-polish.js"
 STYLES_CSS = ROOT / "ui" / "control_plane_static" / "styles.css"
 
 
@@ -151,6 +152,14 @@ def test_aiopslab_has_its_own_benchmark_runtime_and_sse():
     assert 'api("/api/benchmarks/aiopslab/jobs",{method:"DELETE"})' in script
     assert "new EventSource(`/api/benchmarks/aiopslab/jobs/${state.aiopslabJobId}/events`)" in script
     assert "`/api/benchmarks/aiopslab/jobs/${state.aiopslabJobId}/cancel`" in script
+
+
+def test_aiopslab_recent_results_have_individual_delete_actions():
+    script = _source(POLISH_JS)
+    assert "data-aiopslab-delete-job" in script
+    assert "deleteAIOpsLabRow" in script
+    assert 'method: "DELETE"' in script
+    assert "aiops:aiopslab-jobs-updated" in script
 
 
 def test_results_include_history_comparison_dashboard_and_mock_warning():

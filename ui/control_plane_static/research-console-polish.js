@@ -21,8 +21,11 @@
   const supportedAIOpsLabMetrics = ["Accuracy", "Average TTD", "Average Steps", "Average Reward"];
   let benchmarkCatalog = [];
 
-  async function requestJson(path) {
-    const response = await fetch(path, { headers: { Accept: "application/json" } });
+  async function requestJson(path, options = {}) {
+    const response = await fetch(path, {
+      ...options,
+      headers: { Accept: "application/json", ...(options.headers || {}) },
+    });
     const payload = await response.json().catch(() => null);
     if (!response.ok) throw new Error(payload?.detail || `요청 실패 (${response.status})`);
     return payload;
@@ -189,9 +192,39 @@
       const result = job.result || {};
       const metrics = metricCells(result);
       const benchmark = benchmarkDisplayName(job.request?.benchmark_id);
-      return `<tr><td><strong>${esc(benchmark)}</strong></td><td>${esc(statusLabel(job.status))}</td><td>${esc(fmtDate(job.started_at || job.created_at))}</td><td>${metrics.accuracy}</td><td>${metrics.ttd}</td><td>${metrics.steps}</td><td>${metrics.reward}</td></tr>`;
+      return `<tr><td><strong>${esc(benchmark)}</strong></td><td>${esc(statusLabel(job.status))}</td><td>${esc(fmtDate(job.started_at || job.created_at))}</td><td>${metrics.accuracy}</td><td>${metrics.ttd}</td><td>${metrics.steps}</td><td>${metrics.reward}</td><td><button type="button" class="table-action" data-aiopslab-delete-job="${esc(job.job_id)}" ${["completed", "failed", "blocked", "cancelled", "interrupted"].includes(job.status) ? "" : "disabled"}>삭제</button></td></tr>`;
     }).join("");
-    return `<div class="recent-benchmark-table-wrap"><table class="recent-benchmark-table"><thead><tr><th>Benchmark</th><th>상태</th><th>실행 시간</th><th>${supportedAIOpsLabMetrics[0]}</th><th>${supportedAIOpsLabMetrics[1]}</th><th>${supportedAIOpsLabMetrics[2]}</th><th>${supportedAIOpsLabMetrics[3]}</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    return `<div class="recent-benchmark-table-wrap"><table class="recent-benchmark-table"><thead><tr><th>Benchmark</th><th>상태</th><th>실행 시간</th><th>${supportedAIOpsLabMetrics[0]}</th><th>${supportedAIOpsLabMetrics[1]}</th><th>${supportedAIOpsLabMetrics[2]}</th><th>${supportedAIOpsLabMetrics[3]}</th><th>관리</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  }
+
+  async function deleteAIOpsLabRow(jobId, button) {
+    if (!jobId || button?.dataset.busy === "1") return;
+    if (!window.confirm("이 AIOpsLab Benchmark 결과와 산출물을 삭제할까요?")) return;
+    if (button) {
+      button.dataset.busy = "1";
+      button.disabled = true;
+      button.textContent = "삭제 중";
+    }
+    try {
+      await requestJson(`/api/benchmarks/aiopslab/jobs/${encodeURIComponent(jobId)}`, { method: "DELETE" });
+      await renderRecentBenchmarkResults(true);
+      window.dispatchEvent(new CustomEvent("aiops:aiopslab-jobs-updated"));
+    } catch (error) {
+      if (button) {
+        button.dataset.busy = "0";
+        button.disabled = false;
+        button.textContent = "삭제";
+      }
+      window.alert(`삭제 실패: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  function bindRecentBenchmarkActions() {
+    document.querySelectorAll("[data-aiopslab-delete-job]").forEach((button) => {
+      if (button.dataset.bound === "1") return;
+      button.dataset.bound = "1";
+      button.addEventListener("click", () => deleteAIOpsLabRow(button.dataset.aiopslabDeleteJob, button));
+    });
   }
 
   async function renderRecentBenchmarkResults(force = false) {
@@ -212,6 +245,7 @@
       content.innerHTML = jobs.length
         ? `${recentBenchmarkTable(jobs)}<div class="recent-benchmark-note">실제 저장된 AIOpsLab Job만 표시합니다. 값이 없는 지표는 — 로 유지합니다.</div>`
         : '<div class="recent-benchmark-empty">저장된 Benchmark 실행 결과가 없습니다.</div>';
+      bindRecentBenchmarkActions();
     } catch (error) {
       content.innerHTML = `<div class="recent-benchmark-empty">최근 결과를 불러오지 못했습니다: ${esc(error instanceof Error ? error.message : String(error))}</div>`;
       section.dataset.dataFirstLoaded = "0";
@@ -263,6 +297,7 @@
       renderRecentBenchmarkResults(true);
     }, 0));
     window.addEventListener("aiops:history-updated", () => setTimeout(polishResultTable, 0));
+    window.addEventListener("aiops:aiopslab-jobs-updated", () => setTimeout(() => renderRecentBenchmarkResults(true), 0));
   }
 
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", bootstrap);
