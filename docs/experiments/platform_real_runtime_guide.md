@@ -28,20 +28,29 @@ node status, and pod output before any real run.
 
 ## 2. Prometheus readiness
 
-In a separate terminal, port-forward the Prometheus service if necessary:
+The Control Plane manages the local Prometheus port-forward automatically when
+it runs on Ubuntu with a usable Kubernetes context. Set the target URL if you
+use a different local port:
 
 ```bash
-kubectl port-forward -n monitoring-full \
-  service/kube-prometheus-stack-prometheus 9091:9090
+export PROMETHEUS_URL="http://127.0.0.1:9091"
+export AIOPS_AUTO_PORT_FORWARD=auto
 ```
 
-Then verify the endpoint and a registered metric:
+The platform reuses an already-ready endpoint and otherwise starts
+`kubectl port-forward` for the lifetime of the server. Verify the managed
+connection from the platform API:
 
 ```bash
+curl -fsS "http://127.0.0.1:${PORT}/api/connections"
 curl -fsS "$PROMETHEUS_URL/-/ready"
 curl -fsSG "$PROMETHEUS_URL/api/v1/query" \
   --data-urlencode 'query=up'
 ```
+
+Set `AIOPS_AUTO_PORT_FORWARD=false` to keep the previous externally managed
+port-forward behavior. This is useful when Prometheus is exposed through an
+SSH tunnel or another process.
 
 Expected result: `/-/ready` returns HTTP success and the query returns a
 Prometheus `status: success` response. This proves Prometheus readiness and

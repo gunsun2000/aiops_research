@@ -50,6 +50,9 @@ from aiops_k8s_agents.recovery_comparison_runner import (
     RecoveryComparisonJobRunner,
 )
 from aiops_k8s_agents.research_protocol import load_protocol_profiles
+from aiops_k8s_agents.prometheus_port_forward import (
+    PrometheusPortForwardManager,
+)
 
 try:
     from fastapi import APIRouter, FastAPI, HTTPException, Request
@@ -712,6 +715,9 @@ def api_platform(request: Request) -> dict[str, object]:
 @router.get("/api/connections")
 def api_connections(request: Request) -> dict[str, object]:
     state: RuntimeApiState = request.app.state.runtime_api
+    port_forward = getattr(request.app.state, "prometheus_port_forward", None)
+    if port_forward is not None:
+        port_forward.ensure_running()
     connections: dict[str, dict[str, object]] = {}
     required = set(_required_real_connections(state))
     for name in _connection_names(state):
@@ -735,6 +741,8 @@ def api_connections(request: Request) -> dict[str, object]:
             "required_for_real": name in required,
             **details,
         }
+    if port_forward is not None:
+        connections["prometheus"]["port_forward"] = port_forward.status()
     missing = [
         name for name, result in connections.items()
         if not result["ready"] and result["required_for_real"]
@@ -1180,15 +1188,26 @@ def create_app(
     recovery_comparison_executor: Any | None = None,
     recovery_comparison_artifact_root: str | Path | None = None,
     recovery_comparison_job_id_factory: Callable[[], str] | None = None,
+    prometheus_port_forward_manager: Any | None = None,
 ) -> FastAPI:
     root = project_root()
     config_path = Path(configuration_path or root / "config" / "experiment_runtime.json")
     configuration = load_runtime_configuration(config_path)
     protocol_profiles = load_protocol_profiles(root / "config" / "protocol_profiles")
+    effective_prometheus_url = (
+        prometheus_url
+        or os.environ.get("PROMETHEUS_URL")
+        or "http://127.0.0.1:9091"
+    )
+    port_forward = prometheus_port_forward_manager
+    if port_forward is None and connection_probes is None:
+        port_forward = PrometheusPortForwardManager.from_environment(
+            effective_prometheus_url
+        )
     factory = runtime_factory or (
         lambda: build_experiment_runtime(
             configuration_path=config_path,
-            prometheus_url=prometheus_url or os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9090"),
+            prometheus_url=effective_prometheus_url,
             event_sink=EmptyEventSink(),
             autogen_decision_provider_factory=autogen_decision_provider_factory,
             autogen_model_client_factory=autogen_model_client_factory,
@@ -1208,8 +1227,7 @@ def create_app(
     runtime_builder = job_runtime_factory or (
         lambda event_sink, cancellation_event, experiment_id: build_experiment_runtime(
             configuration_path=config_path,
-            prometheus_url=prometheus_url
-            or os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9090"),
+            prometheus_url=effective_prometheus_url,
             event_sink=event_sink,
             experiment_id_factory=lambda: experiment_id,
             cancellation_event=cancellation_event,
@@ -1257,10 +1275,7 @@ def create_app(
     comparison_executor = recovery_comparison_executor or RecoveryComparisonExecutor(
         repo_root=root,
         config_path=root / "config" / "recovery_action_experiments.json",
-        prometheus_url=(
-            prometheus_url
-            or os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9091")
-        ),
+        prometheus_url=effective_prometheus_url,
         kubeconfig=os.environ.get(
             "KUBECONFIG",
             root / "config" / "missing-kubeconfig",
@@ -1281,8 +1296,7 @@ def create_app(
         connection_probes
         or _default_connection_probes(
             root,
-            prometheus_url
-            or os.environ.get("PROMETHEUS_URL", "http://127.0.0.1:9090"),
+            effective_prometheus_url,
         )
     )
     if connection_probes is None:
@@ -1290,9 +1304,13 @@ def create_app(
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
+        if port_forward is not None:
+            port_forward.start()
         try:
             yield
         finally:
+            if port_forward is not None:
+                port_forward.stop()
             job_runner.shutdown(wait=True)
             aiopslab_job_runner.shutdown(wait=True)
             recovery_comparison_job_runner.shutdown(wait=True)
@@ -1304,6 +1322,7 @@ def create_app(
         redoc_url=None,
         lifespan=lifespan,
     )
+    app_instance.state.prometheus_port_forward = port_forward
     app_instance.state.runtime_api = RuntimeApiState(
         configuration=configuration,
         protocol_profiles=protocol_profiles,
