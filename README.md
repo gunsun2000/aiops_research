@@ -51,14 +51,45 @@ Agent 등록 정보는 [config/agent_registry.json](config/agent_registry.json)�
 
 ## 빠른 실행
 
-서버 기준:
+Ubuntu 연구실 서버 기준:
 
 ```bash
 cd ~/geonhae/aiops_research
 git pull origin master
 conda activate aiops_research
 python -m pip install -e ".[dev,autogen,ui,docs]"
-python -m pytest
+
+export PATH="$HOME/bin:$PATH"
+export KUBECONFIG="$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml"
+export PROMETHEUS_URL="http://127.0.0.1:9091"
+export AIOPS_AUTO_PORT_FORWARD=auto
+export AIOPSLAB_ROOT="$HOME/geonhae/external/AIOpsLab"
+export AIOPSLAB_PYTHON="$HOME/anaconda3/envs/aiopslab/bin/python"
+export AIOPS_BIND_ADDRESS="127.0.0.1"
+export PORT=18181
+
+aiops-control-plane
+```
+
+Control Plane은 시작 시 Kubernetes와 Chaos Mesh를 확인하고, 로컬 Prometheus가
+응답하지 않으면 `9091:9090` 포트포워딩을 자동으로 생성합니다. 준비된 외부
+AIOpsLab 경로도 함께 확인하므로, 위 사전 환경이 설치되어 있으면 사이드바에
+`Kubernetes 연결됨`, `Prometheus 자동 연결됨`, `Chaos Mesh 연결됨`,
+`AIOpsLab 연결됨`이 표시됩니다. 플랫폼은 Kubernetes, Chaos Mesh, AIOpsLab을
+새로 설치하지는 않습니다.
+
+AutoGen까지 활성화할 때만 API 키를 서버 환경에 별도로 설정합니다. 키를 README나
+Git 저장소에 기록하지 마십시오.
+
+```bash
+export OPENAI_API_KEY="<your-api-key>"
+export AIOPS_OPENAI_MODEL="gpt-5.5"
+```
+
+실행 후 연결 상태는 다음 명령으로 확인합니다.
+
+```bash
+curl -sS http://127.0.0.1:18181/api/connections | python -m json.tool
 ```
 
 Windows 로컬 기준:
@@ -102,29 +133,24 @@ Job과 이벤트는 기본적으로
 그대로 적용됩니다. Windows에서 통과한 테스트와 `mock` 결과는 실제 클러스터
 실험 근거가 아닙니다.
 
-```bash
-python -m pip install -e ".[ui,dev,autogen]"
-aiops-control-plane
-```
-
-Control Plane은 다른 로컬 프로젝트와 포트가 겹치지 않도록 기본적으로 `18180` 포트를 사용합니다.
-`PORT` 환경변수를 명시하면 다른 포트로 덮어쓸 수 있습니다.
+Control Plane 실행에는 위 `빠른 실행` 블록을 사용합니다. 연구실 서버 표준 포트는
+`18181`이며 `PORT` 환경변수로 변경할 수 있습니다.
 
 Ubuntu 서버에서 직접 브라우저를 실행할 때:
-
-```text
-http://127.0.0.1:18180/
-```
-
-Windows에서 VS Code Remote SSH로 서버에 접속할 때는 VS Code의 Ports 탭에서
-원격 포트 `18180`을 로컬 포트 `18181`로 전달한 뒤 다음 주소를 사용합니다.
 
 ```text
 http://127.0.0.1:18181/
 ```
 
-`18181`은 접속용 로컬 전달 포트이며 Ubuntu Control Plane의 `PORT`를 `18181`로
-변경하는 것이 아닙니다. VS Code Ports 탭에는 `18180 -> 127.0.0.1:18181`로 표시되어야 합니다.
+Windows에서 VS Code Remote SSH로 서버에 접속할 때는 VS Code의 Ports 탭에서
+원격 포트 `18181`을 전달하고, Ports 탭에 표시된 전달 주소를 사용합니다. 로컬
+포트도 `18181`로 배정된 경우 다음 주소로 접속합니다.
+
+```text
+http://127.0.0.1:18181/
+```
+
+브라우저에서 상태가 갱신되지 않으면 `Ctrl+Shift+R`로 캐시를 새로고침합니다.
 
 상세 UI 가이드는 [docs/submission/control_plane_ui_guide.md](docs/submission/control_plane_ui_guide.md)에,
 real runtime 검증 절차는 [docs/experiments/platform_real_runtime_guide.md](docs/experiments/platform_real_runtime_guide.md)에 있습니다.
