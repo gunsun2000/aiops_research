@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="안전 제어형 4-Agent AIOps 연구 운영 플랫폼" />
   <title>4-Agent AIOps Research Platform</title>
-  <link rel="stylesheet" href="/static/styles.css?v=25" />
-  <script defer src="/static/app.js?v=26"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=27" />
+  <script defer src="/static/app.js?v=27"></script>
   <script defer src="/static/reference-ui.js?v=4"></script>
   <script defer src="/static/bulk-delete-ui.js?v=3"></script>
 </head>
@@ -52,7 +52,7 @@
         </div>
       </section>
 
-      <section class="view-panel" data-view-panel="experiment" aria-labelledby="experiment-title" hidden>
+      <section class="view-panel" id="recovery-workspace" data-view-panel="experiment" data-recovery-phase="design" aria-labelledby="experiment-title" hidden>
         <header class="page-heading recovery-header"><div><h2 id="experiment-title">복구 실험</h2><p>장애 시나리오를 선택하고 4-Agent 자율 복구 실험을 실행합니다.</p></div><div class="recovery-header-meta"><span><small>Controller</small><strong id="recovery-header-controller">Deterministic</strong></span><span><small>실행 모드</small><strong id="experiment-mode-badge" class="mode-chip mock">Mock</strong></span><button type="button" id="recovery-header-run" class="primary-action">▶ 실험 실행</button></div></header>
         <section class="surface recovery-run-status neutral" id="recovery-run-status" aria-live="polite"><div class="recovery-run-status-icon neutral" id="recovery-run-status-icon">○</div><div class="recovery-run-status-copy"><span>현재 실험 상태</span><h3 id="recovery-run-status-title">실행 대기</h3><p id="recovery-run-status-message">시나리오와 실행 모드를 선택한 뒤 실험을 실행하세요.</p><small id="recovery-run-status-id">Experiment ID · —</small></div><button type="button" id="recovery-view-result" class="secondary-action" data-view-link="history" hidden>실험 결과 보기</button></section>
         <nav class="recovery-phase-nav" aria-label="복구 실험 진행 단계">

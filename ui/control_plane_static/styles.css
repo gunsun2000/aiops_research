@@ -321,6 +321,24 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
 .recovery-review-metrics strong{margin-top:7px;font-size:13px;overflow-wrap:anywhere}
 .recovery-review-note{margin-top:12px;color:#65748b;font-size:11px;line-height:1.5}
 
+/* Keep the recovery workspace phase-scoped so setup, execution, and review do not compete for attention. */
+#recovery-workspace[data-recovery-phase="design"] .recovery-observation-panel,
+#recovery-workspace[data-recovery-phase="design"] .recovery-review-panel,
+#recovery-workspace[data-recovery-phase="observe"] .reference-recovery-setup,
+#recovery-workspace[data-recovery-phase="observe"] .recovery-review-panel,
+#recovery-workspace[data-recovery-phase="review"] .reference-recovery-setup,
+#recovery-workspace[data-recovery-phase="review"] .recovery-observation-panel{display:none}
+#recovery-workspace[data-recovery-phase="review"] .recovery-review-panel{display:block}
+.recovery-detail-disclosure{margin-top:12px;border-top:1px solid var(--line);background:#fbfcfe}
+.recovery-detail-disclosure>summary{padding:10px 12px;color:#52617a;font-size:11px;font-weight:800;cursor:pointer;list-style:none}
+.recovery-detail-disclosure>summary::-webkit-details-marker{display:none}
+.recovery-detail-disclosure>summary::before{content:"+";display:inline-block;width:18px;color:#0b67ef;font-size:15px}
+.recovery-detail-disclosure[open]>summary::before{content:"-"}
+.recovery-detail-disclosure>.recovery-observation-agents,
+.recovery-detail-disclosure>.recovery-event-strip{padding:0 12px 12px}
+.recovery-detail-disclosure .recovery-event-strip{margin-top:0;border-top:0}
+#recovery-workspace[data-recovery-phase="review"] .recovery-run-status{margin-bottom:14px}
+
 @media(max-width:1350px){
   .aiopslab-reference-grid{grid-template-columns:1fr 1fr}
   .benchmark-run{grid-column:1/-1}

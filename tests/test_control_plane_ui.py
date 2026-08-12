@@ -26,8 +26,8 @@ def test_console_has_four_primary_research_views():
     assert "복구 실험" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=25" in html
-    assert "app.js?v=26" in html
+    assert "styles.css?v=27" in html
+    assert "app.js?v=27" in html
 
 
 def test_dynamic_console_scripts_use_fresh_cache_versions():
@@ -76,6 +76,10 @@ def test_recovery_workspace_exposes_design_observe_review_flow():
     assert 'id="recovery-review-panel"' in html
     assert 'id="live-workflow"' in html
     assert 'class="recovery-phase-nav"' in html
+    assert 'id="recovery-workspace"' in html
+    assert 'data-recovery-phase="design"' in html
+    assert "recovery-detail-disclosure" in script
+    assert "dataset.recoveryPhase=phase" in script
     assert "function updateRecoveryPhase" in script
     assert "function renderRecoveryReview" in script
 
