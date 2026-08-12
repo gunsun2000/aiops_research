@@ -26,8 +26,8 @@ def test_console_has_four_primary_research_views():
     assert "복구 실험" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=28" in html
-    assert "app.js?v=28" in html
+    assert "styles.css?v=29" in html
+    assert "app.js?v=29" in html
 
 
 def test_dynamic_console_scripts_use_fresh_cache_versions():
@@ -86,6 +86,8 @@ def test_recovery_workspace_exposes_design_observe_review_flow():
     assert "function renderRecoveryReview" in script
     assert "function renderRecoveryReviewContext" in script
     assert "Role-based veto · 2 rounds" in script
+    assert "function renderExperimentDirection" in script
+    assert "function ensureExperimentDirection" in script
 
 
 def test_sidebar_exposes_runtime_connection_statuses():
