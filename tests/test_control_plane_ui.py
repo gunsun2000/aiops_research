@@ -26,8 +26,8 @@ def test_console_has_four_primary_research_views():
     assert "복구 실험" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=24" in html
-    assert "app.js?v=25" in html
+    assert "styles.css?v=25" in html
+    assert "app.js?v=26" in html
 
 
 def test_dynamic_console_scripts_use_fresh_cache_versions():
@@ -63,6 +63,21 @@ def test_reference_console_has_semantic_page_actions_and_workspace_sections():
     assert 'class="surface selected-summary" aria-label="선택된 실험 요약"' in html
     assert 'aria-label="실험 결과 필터"' in html
     assert 'aria-label="실험 상세 탭"' in html
+
+
+def test_recovery_workspace_exposes_design_observe_review_flow():
+    html = _source(INDEX_HTML)
+    script = _source(APP_JS)
+    for phase in ("design", "observe", "review"):
+        assert f'data-recovery-phase="{phase}"' in html
+    assert "설계" in html
+    assert "실행·관찰" in html
+    assert "결과 검토" in html
+    assert 'id="recovery-review-panel"' in html
+    assert 'id="live-workflow"' in html
+    assert 'class="recovery-phase-nav"' in html
+    assert "function updateRecoveryPhase" in script
+    assert "function renderRecoveryReview" in script
 
 
 def test_sidebar_exposes_runtime_connection_statuses():
