@@ -59,10 +59,14 @@ echo "control plane: http://${AIOPS_BIND_ADDRESS}:${PORT}"
 kubectl config current-context
 kubectl get nodes --no-headers
 kubectl get namespace online-boutique monitoring-full >/dev/null
-kubectl api-resources --api-group=chaos-mesh.org --no-headers | grep -q . || {
+CHAOS_RESOURCES="$(kubectl api-resources --api-group=chaos-mesh.org --no-headers)"
+if [[ -z "$CHAOS_RESOURCES" || \
+      "$CHAOS_RESOURCES" != *networkchaos* || \
+      "$CHAOS_RESOURCES" != *podchaos* || \
+      "$CHAOS_RESOURCES" != *stresschaos* ]]; then
   echo "error: Chaos Mesh API resources were not found" >&2
   exit 1
-}
+fi
 
 if [[ -z "$AIOPSLAB_ROOT" || ! -d "$AIOPSLAB_ROOT" ]]; then
   echo "error: AIOPSLAB_ROOT must point to an external AIOpsLab checkout" >&2
