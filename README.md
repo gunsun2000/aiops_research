@@ -136,9 +136,17 @@ kubectl port-forward -n monitoring-full \
 http://127.0.0.1:18180/
 ```
 
-VS Code Remote SSH를 사용하면 원격 `18180`을 로컬 포트로 전달합니다. 예를 들어
-로컬 포트가 `18181`이면 브라우저에서 `http://127.0.0.1:18181/`을 사용합니다.
-원격 서버의 `PORT`와 VS Code 로컬 전달 포트를 혼동하지 마십시오.
+Ubuntu 원격 서버의 Control Plane은 항상 **Ubuntu 원격 포트 `18180`**에서 실행합니다.
+VS Code Remote SSH를 사용하면 VS Code가 이 원격 포트를 Windows의 **로컬 포트**로
+전달합니다. 로컬 포트 번호는 VS Code가 선택하므로 `18181`로 고정하지 마십시오.
+VS Code의 Ports 탭에서 원격 포트 `18180`을 열고 `Open in Browser`를 누릅니다.
+
+저장소의 `.vscode/settings.json`은 `18180` 자동 전달과 브라우저 열기를 요청합니다.
+`.vscode/tasks.json`의 `AIOps: start research console` 작업으로 서버를 시작할 수도
+있습니다. 서버를 실행하는 터미널은 접속하는 동안 종료하지 마십시오.
+
+Windows에서 `127.0.0.1:18180`을 직접 여는 것은 Ubuntu 원격 서버에 자동 연결되는
+방법이 아닙니다. 반드시 VS Code Ports 탭에 표시된 **로컬 전달 주소**를 사용합니다.
 
 ## AutoGen 사용하기
 

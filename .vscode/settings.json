@@ -1,0 +1,12 @@
+{
+  "remote.autoForwardPorts": true,
+  "remote.restoreForwardedPorts": true,
+  "remote.portsAttributes": {
+    "18180": {
+      "label": "AIOps Research Control Plane",
+      "protocol": "http",
+      "onAutoForward": "openBrowser",
+      "visibility": "private"
+    }
+  }
+}

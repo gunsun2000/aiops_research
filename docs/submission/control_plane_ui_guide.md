@@ -104,14 +104,16 @@ http://127.0.0.1:18180/
 ```
 
 Windows의 VS Code Remote SSH에서 확인할 때는 VS Code Ports 탭에서 원격 포트
-`18180`을 로컬 포트 `18181`로 전달합니다. 이 경우 Windows 브라우저에서는 다음 주소를 엽니다.
+`18180`을 로컬 포트로 전달합니다. 로컬 포트 번호는 VS Code가 선택하므로
+`18181`로 고정하지 않습니다. 해당 포트의 `Open in Browser`를 사용합니다.
 
 ```text
-http://127.0.0.1:18181/
+VS Code Ports 탭의 `Forwarded Address`에 표시된 로컬 주소
 ```
 
-VS Code Ports 탭의 정상적인 표기는 `18180 -> 127.0.0.1:18181`입니다.
-접속용 로컬 포트만 `18181`로 보이며, Ubuntu에서 실행하는 Control Plane의 `PORT=18180`은 유지합니다.
+정상적인 구성은 원격 포트가 `18180`으로 표시되고, 접속용 로컬 포트는 VS Code가
+선택한 값으로 표시되는 것입니다. Ubuntu에서 실행하는 Control Plane의
+`PORT=18180`은 그대로 유지합니다.
 
 Windows PowerShell:
 
