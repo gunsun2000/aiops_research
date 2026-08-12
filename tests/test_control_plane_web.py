@@ -8,7 +8,12 @@ from time import monotonic, sleep
 
 from fastapi.testclient import TestClient
 
-from aiops_k8s_agents.control_plane_web import app, create_app
+from aiops_k8s_agents.control_plane_web import (
+    _aiopslab_probe,
+    _chaos_mesh_probe,
+    app,
+    create_app,
+)
 from aiops_k8s_agents.autogen_groupchat import parse_autogen_decision
 from aiops_k8s_agents.aiopslab_benchmark import (
     AIOpsLabExecutionCancelled,
@@ -99,6 +104,44 @@ def test_connections_expose_safe_autogen_readiness_reason():
         "status": "missing_credentials",
         "reason": "OpenAI credentials are not configured",
     }
+
+
+def test_chaos_mesh_probe_requires_recovery_resource_kinds(monkeypatch):
+    class Completed:
+        returncode = 0
+        stdout = "networkchaos\npodchaos\nstresschaos\n"
+
+    monkeypatch.setattr(
+        "aiops_k8s_agents.control_plane_web.subprocess.run",
+        lambda *args, **kwargs: Completed(),
+    )
+
+    assert _chaos_mesh_probe() is True
+
+    Completed.stdout = "pods\ndeployments\n"
+
+    assert _chaos_mesh_probe() is False
+
+
+def test_aiopslab_probe_checks_external_python_import(tmp_path, monkeypatch):
+    aiopslab_root = tmp_path / "AIOpsLab"
+    aiopslab_root.mkdir()
+    aiopslab_python = tmp_path / "python"
+    aiopslab_python.write_text("binary", encoding="utf-8")
+
+    class Completed:
+        returncode = 0
+
+    calls = []
+    monkeypatch.setenv("AIOPSLAB_ROOT", str(aiopslab_root))
+    monkeypatch.setenv("AIOPSLAB_PYTHON", str(aiopslab_python))
+    monkeypatch.setattr(
+        "aiops_k8s_agents.control_plane_web.subprocess.run",
+        lambda command, **kwargs: (calls.append(command) or Completed()),
+    )
+
+    assert _aiopslab_probe(tmp_path) is True
+    assert calls == [[str(aiopslab_python), "-c", "import aiopslab, rich"]]
 
 
 def test_validate_experiment_is_preflight_only_for_mock_mode():

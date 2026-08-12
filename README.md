@@ -75,33 +75,42 @@ export AIOPSLAB_PYTHON="$HOME/anaconda3/envs/aiopslab/bin/python"
 
 ### 2. 한 번에 연결 확인 후 Control Plane 시작
 
+최초 설치가 끝난 뒤에는 아래 명령만 사용합니다. 현재 Conda 환경이 `base`여도
+스크립트가 `aiops_research` Python을 자동으로 찾습니다. 기존 Control Plane은 안전하게
+재시작하고, 서버는 백그라운드에서 유지됩니다.
+
 ```bash
 cd ~/geonhae/aiops_research
-conda activate aiops_research
-
-export PATH="$HOME/bin:$PATH"
-export KUBECONFIG="${KUBECONFIG:-$HOME/geonhae/kubeconfigs/kind-geonhae-aiops.yaml}"
-export PROMETHEUS_URL="${PROMETHEUS_URL:-http://127.0.0.1:9091}"
-export AIOPS_AUTO_PORT_FORWARD=auto
-export AIOPSLAB_ROOT="${AIOPSLAB_ROOT:-$HOME/geonhae/external/AIOpsLab}"
-export AIOPSLAB_PYTHON="${AIOPSLAB_PYTHON:-$HOME/anaconda3/envs/aiopslab/bin/python}"
-export AIOPS_BIND_ADDRESS=127.0.0.1
-export PORT=18180
-
+git pull origin master
 bash scripts/start_research_console.sh
 ```
 
-이 스크립트가 시작 전에 다음을 확인합니다.
+스크립트는 다음 작업을 한 번에 수행합니다.
 
-- Kubernetes context와 node
-- `online-boutique`, `monitoring-full` namespace
-- Chaos Mesh API resource
-- 외부 AIOpsLab Python runtime
-- AutoGen API 키 설정 여부
+- `aiops_research` Python 환경 자동 선택
+- 필요한 UI 패키지가 없을 때 저장소 자동 설치
+- 기존 Control Plane 안전 재시작과 포트 충돌 확인
+- `/healthz` 기반 실제 준비 완료 확인
+- Kubernetes context와 Chaos Mesh API 자동 탐색
+- Prometheus 자동 포트포워딩
+- 외부 AIOpsLab Python runtime 자동 탐색
+- AutoGen API 키 설정 여부 표시
+
+상태 확인과 종료도 같은 스크립트를 사용합니다.
+
+```bash
+bash scripts/start_research_console.sh status
+bash scripts/start_research_console.sh stop
+```
+
+클러스터 또는 AIOpsLab이 잠시 준비되지 않아도 Mock 웹 콘솔은 시작됩니다. 이 경우
+미연결 항목과 원인은 시작 결과와 웹의 `시스템 연결 상태`에 표시됩니다. AutoGen은
+API 키가 없으면 `설정 필요`로 표시되며 deterministic Controller는 계속 사용할 수 있습니다.
 
 ### 3. 연결 상태 확인
 
-Control Plane을 실행한 터미널은 켜 둔 채, 두 번째 터미널에서 실행합니다.
+시작 명령이 `/healthz`와 연결 상태를 직접 확인해 출력합니다. 필요하면 다음 명령으로
+같은 내용을 다시 확인할 수 있습니다.
 
 ```bash
 curl -sS http://127.0.0.1:18180/healthz
@@ -142,8 +151,9 @@ VS Code Remote SSH를 사용하면 VS Code가 이 원격 포트를 Windows의 **
 VS Code의 Ports 탭에서 원격 포트 `18180`을 열고 `Open in Browser`를 누릅니다.
 
 저장소의 `.vscode/settings.json`은 `18180` 자동 전달과 브라우저 열기를 요청합니다.
-`.vscode/tasks.json`의 `AIOps: start research console` 작업으로 서버를 시작할 수도
-있습니다. 서버를 실행하는 터미널은 접속하는 동안 종료하지 마십시오.
+`.vscode/tasks.json`에는 `AIOps: start research console`, `AIOps: console status`,
+`AIOps: stop research console` 작업이 있습니다. 서버는 백그라운드에서 유지되므로 시작
+터미널을 계속 열어둘 필요가 없습니다.
 
 Windows에서 `127.0.0.1:18180`을 직접 여는 것은 Ubuntu 원격 서버에 자동 연결되는
 방법이 아닙니다. 반드시 VS Code Ports 탭에 표시된 **로컬 전달 주소**를 사용합니다.
@@ -156,7 +166,7 @@ deterministic, mock, dry-run 경로는 계속 사용할 수 있습니다.
 ```bash
 export OPENAI_API_KEY="<your-api-key>"
 export AIOPS_OPENAI_MODEL="gpt-5.5"
-aiops-control-plane
+bash scripts/start_research_console.sh
 ```
 
 키는 README, shell history, 요청 body, 결과 파일, Git에 저장하지 마십시오.

@@ -1182,13 +1182,56 @@ def _prometheus_probe(url: str) -> RuntimeProbe:
     return probe
 
 
+def _chaos_mesh_probe() -> bool:
+    try:
+        completed = subprocess.run(
+            ["kubectl", "api-resources", "--api-group=chaos-mesh.org", "--no-headers"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    if completed.returncode != 0:
+        return False
+    resources = completed.stdout.lower()
+    return all(
+        resource in resources
+        for resource in ("networkchaos", "podchaos", "stresschaos")
+    )
+
+
+def _aiopslab_probe(root: Path) -> bool:
+    aiopslab_root = Path(
+        os.environ.get("AIOPSLAB_ROOT", root.parent / "external" / "AIOpsLab")
+    ).expanduser()
+    python_executable = os.environ.get("AIOPSLAB_PYTHON", "").strip()
+    if not aiopslab_root.is_dir() or not python_executable:
+        return False
+    python_path = Path(python_executable).expanduser()
+    if not python_path.is_file():
+        return False
+    try:
+        completed = subprocess.run(
+            [str(python_path), "-c", "import aiopslab, rich"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return completed.returncode == 0
+
+
 def _default_connection_probes(root: Path, prometheus_url: str) -> dict[str, RuntimeProbe]:
     return {
         "kubernetes": _default_probe(["kubectl", "get", "--raw=/version"]),
         "prometheus": _prometheus_probe(prometheus_url),
-        "chaos_mesh": _default_probe(["kubectl", "api-resources"]),
+        "chaos_mesh": _chaos_mesh_probe,
         "autogen": _autogen_probe,
-        "aiopslab": lambda: Path(os.environ.get("AIOPSLAB_ROOT", root / "AIOpsLab")).is_dir(),
+        "aiopslab": lambda: _aiopslab_probe(root),
         "artifact_directory": lambda: (root / "runs").is_dir(),
     }
 
@@ -1352,9 +1395,6 @@ def create_app(
             effective_prometheus_url,
         )
     )
-    if connection_probes is None:
-        probes["aiopslab"] = benchmark_executor.readiness
-
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
         if port_forward is not None:

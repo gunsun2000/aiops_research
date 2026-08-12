@@ -8,7 +8,7 @@
       "options": {
         "cwd": "${workspaceFolder}"
       },
-      "isBackground": true,
+      "isBackground": false,
       "problemMatcher": [],
       "presentation": {
         "reveal": "always",
@@ -16,6 +16,24 @@
         "focus": true,
         "clear": true
       }
+    },
+    {
+      "label": "AIOps: console status",
+      "type": "shell",
+      "command": "bash scripts/start_research_console.sh status",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "AIOps: stop research console",
+      "type": "shell",
+      "command": "bash scripts/start_research_console.sh stop",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": []
     }
   ]
 }
