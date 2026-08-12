@@ -403,15 +403,11 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
   .recovery-stage-timeline li:nth-child(even)::after{display:none}
   .observation-facts,.recovery-observation-agents,.recovery-review-metrics,.recovery-review-context{grid-template-columns:1fr}
 }
-/* Keep the research question visible across design, execution, and review. */
-.recovery-direction{margin-bottom:14px;padding:15px 17px;border-top:3px solid #0b67ef}
-.recovery-direction-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:16px}
-.recovery-direction-heading h3{margin-top:4px;font-size:16px}
-.recovery-direction-heading p{margin-top:4px;color:var(--muted);font-size:11px;line-height:1.45}
-.recovery-direction-grid{display:grid;grid-template-columns:1.05fr 1.35fr 1.55fr .8fr 1.4fr .55fr;gap:8px;margin-top:13px}
-.recovery-direction-grid article{min-width:0;padding:9px 10px;border:1px solid var(--line);border-radius:6px;background:#f7f9fc}
-.recovery-direction-grid span,.recovery-direction-grid strong{display:block}
-.recovery-direction-grid span{color:#77859a;font-size:10px}
-.recovery-direction-grid strong{margin-top:5px;font-size:11px;overflow-wrap:anywhere}
-@media(max-width:1350px){.recovery-direction-grid{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media(max-width:760px){.recovery-direction-heading{display:block}.recovery-direction-heading .status-badge{margin-top:9px}.recovery-direction-grid{grid-template-columns:1fr 1fr}}
+/* Keep the research direction visible without duplicating the setup panels. */
+.recovery-direction-bar{display:flex;align-items:center;gap:9px;min-height:38px;margin:0 0 14px;padding:8px 12px;border:1px solid #d7e1ef;border-left:3px solid #0b67ef;border-radius:6px;background:#f8fbff;color:#52617a;font-size:11px;white-space:nowrap;overflow:hidden}
+.recovery-direction-label{color:#0b57c9;font-size:10px;font-weight:850;letter-spacing:.04em;text-transform:uppercase}
+.recovery-direction-bar strong{color:#1d3558;font-weight:800}
+.recovery-direction-bar>span:not(.recovery-direction-label):not(.direction-separator):not(.status-badge){overflow:hidden;text-overflow:ellipsis}
+.direction-separator{color:#aab7c8}
+.recovery-direction-bar .status-badge{margin-left:auto;flex:none}
+@media(max-width:760px){.recovery-direction-bar{align-items:flex-start;flex-wrap:wrap;white-space:normal}.recovery-direction-bar .status-badge{margin-left:0}.direction-separator{display:none}}
