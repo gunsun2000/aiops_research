@@ -192,14 +192,18 @@ def test_recovery_run_surfaces_live_and_terminal_outcomes():
         'id="recovery-run-status-title"',
         'id="recovery-run-status-message"',
         'id="recovery-view-result"',
+        'id="recovery-progress-summary"',
     ):
         assert marker in html
     assert "function renderRecoveryRunStatus" in app
+    assert "function renderRecoveryCompletionSummary" in app
+    assert "function focusRecoveryProgress" in app
     assert "recoveryLabel" in app
     assert "recovery-run-status-title" in app
     assert "recovery-run-status-message" in app
     assert ".recovery-run-status.success" in styles
     assert ".recovery-run-status.danger" in styles
+    assert ".recovery-progress-summary" in styles
 
 
 def test_experiment_results_sync_filters_to_url_and_paginate():

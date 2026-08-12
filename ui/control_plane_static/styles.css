@@ -259,9 +259,9 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
 .recovery-run-status-copy p{margin-top:4px;color:#52627f;font-size:12px;line-height:1.5}
 .recovery-run-status-copy small{margin-top:6px}
 
-/* Recovery workspace: one experiment, three readable phases. */
+/* Recovery workspace: design and live observation in one experiment view. */
 .recovery-phase-nav{margin:0 0 14px;padding:10px 14px;border:1px solid var(--line);border-radius:8px;background:#fff}
-.recovery-phase-nav ol{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0;padding:0;list-style:none}
+.recovery-phase-nav ol{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin:0;padding:0;list-style:none}
 .recovery-phase-nav li{display:grid;grid-template-columns:34px 1fr;align-items:center;gap:10px;min-height:54px;padding:9px 12px;border:1px solid #e2e8f1;border-radius:7px;color:#78869b;background:#fbfcfe}
 .recovery-phase-nav li>span{width:30px;height:30px;display:grid;place-items:center;border:1px solid #cbd6e5;border-radius:50%;font-size:11px;font-weight:850}
 .recovery-phase-nav li strong,.recovery-phase-nav li small{display:block}
@@ -273,28 +273,14 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
 .recovery-phase-nav li.is-complete{border-color:#c6e8d8;background:#f5fcf8}
 .recovery-phase-nav li.is-complete>span{color:#078c57;border-color:#75c9a4;background:#e9f9f1}
 .recovery-phase-nav li.is-complete strong{color:#078c57}
-.recovery-observation-panel,.recovery-review-panel{margin-top:14px;padding:18px 20px}
+.recovery-observation-panel{margin-top:14px;padding:18px 20px}
 .recovery-observation-panel{display:block;border-top:3px solid #0b67ef}
-.recovery-review-panel{border-top:3px solid #8d67ee}
-.recovery-review-panel.is-current{box-shadow:0 0 0 2px rgba(141,103,238,.08)}
 .recovery-panel-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:18px}
 .recovery-panel-heading h3{margin-top:4px;font-size:17px}
 .recovery-panel-heading p{margin-top:5px;color:var(--muted);font-size:11px;line-height:1.5}
 .panel-kicker{color:#0b67ef;font-size:10px;font-weight:850;letter-spacing:.08em}
-.recovery-review-panel .panel-kicker{color:#7653cf}
 .recovery-runtime-meta{display:flex;align-items:center;gap:9px;white-space:nowrap}
 .recovery-runtime-meta strong{font-variant-numeric:tabular-nums;font-size:15px}
-.recovery-stage-timeline{display:grid;grid-template-columns:repeat(9,minmax(0,1fr));gap:0;margin:18px 0 17px;padding:0;list-style:none}
-.recovery-stage-timeline li{position:relative;min-height:47px;padding:29px 5px 0;color:#8793a5;text-align:center;font-size:10px;line-height:1.35}
-.recovery-stage-timeline li::before{content:"";position:absolute;left:50%;top:8px;width:13px;height:13px;transform:translateX(-50%);border:2px solid #c8d3e2;border-radius:50%;background:#fff;z-index:1}
-.recovery-stage-timeline li:not(:last-child)::after{content:"";position:absolute;left:calc(50% + 7px);right:calc(-50% + 7px);top:14px;height:2px;background:#e2e8f0}
-.recovery-stage-timeline li.done{color:#078c57}
-.recovery-stage-timeline li.done::before{border-color:#0bb46c;background:#0bb46c;box-shadow:inset 0 0 0 3px #fff}
-.recovery-stage-timeline li.done:not(:last-child)::after{background:#90d9b8}
-.recovery-stage-timeline li.active{color:#0b57c9;font-weight:800}
-.recovery-stage-timeline li.active::before{border-color:#0b67ef;background:#eaf2ff;box-shadow:0 0 0 4px rgba(11,103,239,.12)}
-.recovery-stage-timeline li.failed{color:#c62f3a;font-weight:800}
-.recovery-stage-timeline li.failed::before{border-color:#d94a55;background:#fff0f1}
 .recovery-observation-grid{display:grid;grid-template-columns:1.3fr .9fr;gap:12px;padding-top:13px;border-top:1px solid var(--line)}
 .observation-facts{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
 .observation-facts>div,.observation-decision{min-height:65px;padding:10px;border:1px solid var(--line);border-radius:6px;background:#fbfcfe}
@@ -314,43 +300,10 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
 .recovery-event-strip{display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start;margin-top:12px;padding-top:11px;border-top:1px solid var(--line)}
 .recovery-event-strip>span{color:#77859a;font-size:10px;white-space:nowrap}
 .recovery-event-strip ol{display:grid;gap:4px;max-height:96px;margin:0;padding:0;overflow:auto;list-style:none;color:#65748b;font-size:10px}
-.recovery-review-metrics{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-top:15px}
-.recovery-review-metrics article{min-height:65px;padding:11px;border:1px solid var(--line);border-radius:6px;background:#fbfcfe}
-.recovery-review-metrics span,.recovery-review-metrics strong{display:block}
-.recovery-review-metrics span{color:#77859a;font-size:10px}
-.recovery-review-metrics strong{margin-top:7px;font-size:13px;overflow-wrap:anywhere}
-.recovery-review-note{margin-top:12px;color:#65748b;font-size:11px;line-height:1.5}
 
-/* Keep the recovery workspace phase-scoped so setup, execution, and review do not compete for attention. */
-#recovery-workspace[data-recovery-phase="design"] .recovery-observation-panel,
-#recovery-workspace[data-recovery-phase="design"] .recovery-review-panel,
-#recovery-workspace[data-recovery-phase="observe"] .reference-recovery-setup,
-#recovery-workspace[data-recovery-phase="observe"] .recovery-review-panel,
-#recovery-workspace[data-recovery-phase="review"] .reference-recovery-setup,
-#recovery-workspace[data-recovery-phase="review"] .recovery-observation-panel{display:none}
-#recovery-workspace[data-recovery-phase="review"] .recovery-review-panel{display:block}
-#recovery-workspace[data-recovery-phase="observe"] .reference-recovery-setup,
-#recovery-workspace[data-recovery-phase="review"] .reference-recovery-setup{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:10px}
-#recovery-workspace[data-recovery-phase="observe"] .recovery-step,
-#recovery-workspace[data-recovery-phase="review"] .recovery-step{padding:13px 14px}
-#recovery-workspace[data-recovery-phase="observe"] .recovery-step h3,
-#recovery-workspace[data-recovery-phase="review"] .recovery-step h3{margin-bottom:10px;font-size:13px}
-#recovery-workspace[data-recovery-phase="observe"] .scenario-grid,
-#recovery-workspace[data-recovery-phase="review"] .scenario-grid{gap:8px}
-#recovery-workspace[data-recovery-phase="observe"] .scenario-list button,
-#recovery-workspace[data-recovery-phase="review"] .scenario-list button{min-height:92px;padding:10px 7px}
-#recovery-workspace[data-recovery-phase="observe"] .scenario-list button::before,
-#recovery-workspace[data-recovery-phase="review"] .scenario-list button::before{margin-bottom:6px;font-size:22px}
-#recovery-workspace[data-recovery-phase="observe"] .controller-options,
-#recovery-workspace[data-recovery-phase="review"] .controller-options{gap:8px}
-#recovery-workspace[data-recovery-phase="observe"] .controller-option,
-#recovery-workspace[data-recovery-phase="review"] .controller-option{min-height:92px;padding:11px 12px}
-#recovery-workspace[data-recovery-phase="observe"] .mode-cards,
-#recovery-workspace[data-recovery-phase="review"] .mode-cards{gap:8px}
-#recovery-workspace[data-recovery-phase="observe"] .mode-cards button,
-#recovery-workspace[data-recovery-phase="review"] .mode-cards button{min-height:76px;padding:10px}
-#recovery-workspace[data-recovery-phase="observe"] .recovery-advanced summary,
-#recovery-workspace[data-recovery-phase="review"] .recovery-advanced summary{padding:11px 14px}
+/* Keep experiment design and progress in one workspace. */
+#recovery-workspace .reference-recovery-setup{display:grid}
+#recovery-workspace .recovery-observation-panel{display:block;scroll-margin-top:18px}
 .recovery-detail-disclosure{margin-top:12px;border-top:1px solid var(--line);background:#fbfcfe}
 .recovery-detail-disclosure>summary{padding:10px 12px;color:#52617a;font-size:11px;font-weight:800;cursor:pointer;list-style:none}
 .recovery-detail-disclosure>summary::-webkit-details-marker{display:none}
@@ -359,19 +312,10 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
 .recovery-detail-disclosure>.recovery-observation-agents,
 .recovery-detail-disclosure>.recovery-event-strip{padding:0 12px 12px}
 .recovery-detail-disclosure .recovery-event-strip{margin-top:0;border-top:0}
-#recovery-workspace[data-recovery-phase="review"] .recovery-run-status{margin-bottom:14px}
-.recovery-review-context{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin-top:15px}
-.recovery-review-context article{padding:10px 11px;border:1px solid var(--line);border-radius:6px;background:#f7f9fc}
-.recovery-review-context span,.recovery-review-context strong{display:block}
-.recovery-review-context span{color:#77859a;font-size:10px}
-.recovery-review-context strong{margin-top:6px;font-size:11px;overflow-wrap:anywhere}
 
 @media(max-width:1350px){
   .aiopslab-reference-grid{grid-template-columns:1fr 1fr}
   .benchmark-run{grid-column:1/-1}
-  .recovery-stage-timeline{grid-template-columns:repeat(5,minmax(0,1fr));row-gap:12px}
-  .recovery-stage-timeline li:nth-child(5)::after{display:none}
-  .recovery-review-metrics{grid-template-columns:repeat(3,minmax(0,1fr))}
 }
 
 @media(max-width:900px){
@@ -382,9 +326,7 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
   .evaluator-reward-grid{grid-template-columns:repeat(3,minmax(0,1fr))}
   .evaluator-components{grid-template-columns:repeat(2,minmax(0,1fr))}
   .recovery-phase-nav ol,.recovery-observation-grid{grid-template-columns:1fr}
-  .recovery-stage-timeline{grid-template-columns:repeat(3,minmax(0,1fr))}
-  .recovery-stage-timeline li:nth-child(3n)::after{display:none}
-  .observation-facts,.recovery-review-metrics,.recovery-review-context{grid-template-columns:1fr 1fr}
+  .observation-facts{grid-template-columns:1fr 1fr}
 }
 
 @media(max-width:760px){
@@ -398,10 +340,7 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
   .recovery-run-status .secondary-action{grid-column:1/-1;width:100%}
   .recovery-panel-heading{display:block}
   .recovery-runtime-meta{margin-top:10px}
-  .recovery-stage-timeline{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .recovery-stage-timeline li:nth-child(3n)::after{display:block}
-  .recovery-stage-timeline li:nth-child(even)::after{display:none}
-  .observation-facts,.recovery-observation-agents,.recovery-review-metrics,.recovery-review-context{grid-template-columns:1fr}
+  .observation-facts,.recovery-observation-agents{grid-template-columns:1fr}
 }
 /* Keep the research direction visible without duplicating the setup panels. */
 .recovery-direction-bar{display:flex;align-items:center;gap:9px;min-height:38px;margin:0 0 14px;padding:8px 12px;border:1px solid #d7e1ef;border-left:3px solid #0b67ef;border-radius:6px;background:#f8fbff;color:#52617a;font-size:11px;white-space:nowrap;overflow:hidden}
@@ -410,23 +349,35 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
 .recovery-direction-bar>span:not(.recovery-direction-label):not(.direction-separator):not(.status-badge){overflow:hidden;text-overflow:ellipsis}
 .direction-separator{color:#aab7c8}
 
-/* Live recovery progress: use readable stage cards instead of a compressed
-   single-line timeline. The state classes are applied by app.js. */
-.recovery-stage-timeline{counter-reset:stage;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:16px 0 18px}
-.recovery-stage-timeline li{counter-increment:stage;display:flex;align-items:center;min-height:68px;padding:13px 48px 13px 52px;border:1px solid #d9e2ee;border-radius:8px;background:#fbfcfe;color:#687890;text-align:left;font-size:12px;font-weight:700;line-height:1.4;box-shadow:0 1px 2px rgba(12,35,70,.03)}
-.recovery-stage-timeline li::before{content:counter(stage,decimal-leading-zero);left:16px;top:50%;width:27px;height:27px;transform:translateY(-50%);border:1px solid #c4d0df;color:#71819a;background:#fff;font-size:11px;font-weight:850;box-shadow:none}
-.recovery-stage-timeline li:not(:last-child)::after{content:"대기";left:auto;right:12px;top:50%;height:auto;transform:translateY(-50%);background:none;color:#9aa7b8;font-size:10px;font-weight:700}
-.recovery-stage-timeline li.done{border-color:#bde4d1;background:#f3fbf7;color:#087b50}
-.recovery-stage-timeline li.done::before{content:"✓";border-color:#0bb46c;color:#fff;background:#0bb46c;box-shadow:none}
-.recovery-stage-timeline li.done:not(:last-child)::after{content:"완료";background:none;color:#07955b}
-.recovery-stage-timeline li.active{border-color:#6aa7ff;background:#f3f8ff;color:#0754c8;box-shadow:0 0 0 2px rgba(7,94,234,.1)}
-.recovery-stage-timeline li.active::before{border-color:#075eea;color:#fff;background:#075eea;box-shadow:0 0 0 4px rgba(7,94,234,.12)}
-.recovery-stage-timeline li.active::after{content:"진행 중";background:none;color:#075eea}
-.recovery-stage-timeline li.failed{border-color:#efb7bc;background:#fff7f7;color:#b92e39}
-.recovery-stage-timeline li.failed::before{border-color:#d94a55;color:#fff;background:#d94a55;box-shadow:none}
-.recovery-stage-timeline li.failed::after{content:"실패";background:none;color:#c62f3a}
-@media (max-width: 1400px){.recovery-stage-timeline{grid-template-columns:repeat(3,minmax(0,1fr))}}
-@media (max-width: 900px){.recovery-stage-timeline{grid-template-columns:repeat(2,minmax(0,1fr))}}
-@media (max-width: 760px){.recovery-stage-timeline{grid-template-columns:1fr}}
+/* Live recovery progress stays visible and the active node rotates. */
+.recovery-stage-timeline{counter-reset:stage;display:grid;grid-template-columns:repeat(9,minmax(108px,1fr));gap:0;margin:18px 0 20px;padding:0 4px 8px;overflow-x:auto;list-style:none}
+.recovery-stage-timeline li{position:relative;counter-increment:stage;display:block;min-height:64px;padding:39px 7px 0;border:0;background:transparent;color:#75849a;text-align:center;font-size:10px;font-weight:700;line-height:1.35;box-shadow:none}
+.recovery-stage-timeline li::before{content:counter(stage,decimal-leading-zero);position:absolute;left:50%;top:5px;width:24px;height:24px;display:grid;place-items:center;transform:translateX(-50%);border:2px solid #c8d3e2;border-radius:50%;color:#71819a;background:#fff;font-size:9px;font-weight:850;box-shadow:0 0 0 4px #fff;z-index:1}
+.recovery-stage-timeline li:not(:last-child)::after{content:"";position:absolute;left:calc(50% + 14px);right:calc(-50% + 14px);top:17px;height:2px;transform:none;background:#dce4ef}
+.recovery-stage-timeline li.done{color:#078c57}
+.recovery-stage-timeline li.done::before{content:"✓";border-color:#0bb46c;color:#fff;background:#0bb46c;box-shadow:0 0 0 4px #fff}
+.recovery-stage-timeline li.done:not(:last-child)::after{content:"";background:#72cba0}
+.recovery-stage-timeline li.active{color:#0754c8;font-weight:850}
+.recovery-stage-timeline li.active::before{content:"";border:3px solid #cfe0fb;border-top-color:#075eea;border-right-color:#075eea;background:#fff;box-shadow:0 0 0 4px #fff;animation:recovery-stage-spin .8s linear infinite}
+.recovery-stage-timeline li.active::after{content:"";background:#dce4ef}
+.recovery-stage-timeline li.failed{color:#b92e39;font-weight:850}
+.recovery-stage-timeline li.failed::before{content:"!";border-color:#d94a55;color:#fff;background:#d94a55;box-shadow:0 0 0 4px #fff}
+.recovery-stage-timeline li.failed::after{content:"";background:#dce4ef}
+@keyframes recovery-stage-spin{to{transform:translateX(-50%) rotate(360deg)}}
+.recovery-progress-summary{margin-top:14px;padding:14px 16px;border:1px solid #d9e3ef;border-left:4px solid #70839c;border-radius:8px;background:#f9fbfd}
+.recovery-progress-summary[hidden]{display:none}
+.recovery-progress-summary.success{border-left-color:#0aa466;background:#f4fbf7}
+.recovery-progress-summary.danger{border-left-color:#d94a55;background:#fff7f7}
+.recovery-progress-summary-heading{display:flex;align-items:center;justify-content:space-between;gap:18px}
+.recovery-progress-summary-heading span,.recovery-progress-summary-heading small{display:block;color:#74839a;font-size:10px}
+.recovery-progress-summary-heading strong{display:block;margin:4px 0;color:#132b4e;font-size:16px}
+.recovery-progress-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin-top:12px}
+.recovery-progress-metrics article{padding:10px 12px;border:1px solid #dce4ee;border-radius:6px;background:#fff}
+.recovery-progress-metrics span,.recovery-progress-metrics strong{display:block}
+.recovery-progress-metrics span{color:#75849a;font-size:10px}
+.recovery-progress-metrics strong{margin-top:5px;font-size:13px}
+@media (max-width: 1400px){.recovery-stage-timeline{grid-template-columns:repeat(9,minmax(104px,1fr))}}
+@media (max-width: 900px){.recovery-phase-nav ol,.recovery-observation-grid{grid-template-columns:1fr}.recovery-progress-summary-heading{align-items:flex-start;flex-direction:column}}
+@media (max-width: 760px){.recovery-progress-metrics{grid-template-columns:1fr}.recovery-progress-summary-heading .secondary-action{width:100%}}
 .recovery-direction-bar .status-badge{margin-left:auto;flex:none}
 @media(max-width:760px){.recovery-direction-bar{align-items:flex-start;flex-wrap:wrap;white-space:normal}.recovery-direction-bar .status-badge{margin-left:0}.direction-separator{display:none}}

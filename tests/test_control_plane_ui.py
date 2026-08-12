@@ -26,8 +26,8 @@ def test_console_has_four_primary_research_views():
     assert "복구 실험" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=31" in html
-    assert "app.js?v=30" in html
+    assert "styles.css?v=32" in html
+    assert "app.js?v=31" in html
 
 
 def test_dynamic_console_scripts_use_fresh_cache_versions():
@@ -65,16 +65,25 @@ def test_reference_console_has_semantic_page_actions_and_workspace_sections():
     assert 'aria-label="실험 상세 탭"' in html
 
 
-def test_recovery_workspace_exposes_design_observe_review_flow():
+def test_recovery_workspace_keeps_live_progress_and_links_to_detailed_results():
     html = _source(INDEX_HTML)
     script = _source(APP_JS)
-    for phase in ("design", "observe", "review"):
+    assert 'id="run-experiment" class="primary-action"' in html
+    assert 'id="recovery-header-run"' not in html
+    for phase in ("design", "observe"):
         assert f'data-recovery-phase="{phase}"' in html
     assert "설계" in html
     assert "실행·관찰" in html
-    assert "결과 검토" in html
-    assert 'id="recovery-review-panel"' in html
-    for element_id in ("recovery-review-scenario", "recovery-review-controller", "recovery-review-mode", "recovery-review-config"):
+    assert 'data-recovery-phase="review"' not in html
+    assert 'id="recovery-review-panel"' not in html
+    assert "결과 검토" not in html
+    for element_id in (
+        "recovery-progress-summary",
+        "recovery-progress-outcome",
+        "recovery-progress-action",
+        "recovery-progress-mttr",
+        "recovery-progress-reward",
+    ):
         assert f'id="{element_id}"' in html
     assert 'id="live-workflow"' in html
     assert 'class="recovery-phase-nav"' in html
@@ -83,8 +92,12 @@ def test_recovery_workspace_exposes_design_observe_review_flow():
     assert "recovery-detail-disclosure" in script
     assert "dataset.recoveryPhase=phase" in script
     assert "function updateRecoveryPhase" in script
-    assert "function renderRecoveryReview" in script
-    assert "function renderRecoveryReviewContext" in script
+    assert "function focusRecoveryProgress" in script
+    assert 'scrollIntoView({behavior:"smooth",block:"start"})' in script
+    assert "function renderRecoveryCompletionSummary" in script
+    assert "function renderRecoveryReview" not in script
+    assert "function renderRecoveryReviewContext" not in script
+    assert "실험 결과에서 상세 보기" in html
     assert "Role-based veto · 2 rounds" in script
     assert "function renderExperimentDirection" in script
     assert "function ensureExperimentDirection" in script
@@ -130,6 +143,11 @@ def test_recovery_timeline_is_readable_and_status_coded():
     assert 'content:"✓"' in css
     assert ".recovery-stage-timeline li.active::before" in css
     assert ".recovery-stage-timeline li.failed::before" in css
+    assert "position:absolute;left:50%;top:5px" in css
+    assert "border-radius:50%" in css
+    assert "position:absolute;left:calc(50% + 14px)" in css
+    assert "@keyframes recovery-stage-spin" in css
+    assert "animation:recovery-stage-spin" in css
     assert "@media (max-width: 1400px)" in css
 
 
