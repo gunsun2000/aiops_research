@@ -26,7 +26,7 @@ def test_console_has_four_primary_research_views():
     assert "복구 실험" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=30" in html
+    assert "styles.css?v=31" in html
     assert "app.js?v=30" in html
 
 
@@ -121,6 +121,16 @@ def test_recovery_ui_has_eight_stage_workflow_and_safe_modes():
         assert f'data-mode="{mode}"' in html
     assert "Mock" in html
     assert "DRY-RUN" in _source(APP_JS)
+
+
+def test_recovery_timeline_is_readable_and_status_coded():
+    css = _source(STYLES_CSS)
+
+    assert "counter-reset:stage" in css
+    assert 'content:"✓"' in css
+    assert ".recovery-stage-timeline li.active::before" in css
+    assert ".recovery-stage-timeline li.failed::before" in css
+    assert "@media (max-width: 1400px)" in css
 
 
 def test_console_preserves_experiment_job_sse_cancel_and_real_gate():

@@ -409,5 +409,24 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
 .recovery-direction-bar strong{color:#1d3558;font-weight:800}
 .recovery-direction-bar>span:not(.recovery-direction-label):not(.direction-separator):not(.status-badge){overflow:hidden;text-overflow:ellipsis}
 .direction-separator{color:#aab7c8}
+
+/* Live recovery progress: use readable stage cards instead of a compressed
+   single-line timeline. The state classes are applied by app.js. */
+.recovery-stage-timeline{counter-reset:stage;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:16px 0 18px}
+.recovery-stage-timeline li{counter-increment:stage;display:flex;align-items:center;min-height:68px;padding:13px 48px 13px 52px;border:1px solid #d9e2ee;border-radius:8px;background:#fbfcfe;color:#687890;text-align:left;font-size:12px;font-weight:700;line-height:1.4;box-shadow:0 1px 2px rgba(12,35,70,.03)}
+.recovery-stage-timeline li::before{content:counter(stage,decimal-leading-zero);left:16px;top:50%;width:27px;height:27px;transform:translateY(-50%);border:1px solid #c4d0df;color:#71819a;background:#fff;font-size:11px;font-weight:850;box-shadow:none}
+.recovery-stage-timeline li:not(:last-child)::after{content:"대기";left:auto;right:12px;top:50%;height:auto;transform:translateY(-50%);background:none;color:#9aa7b8;font-size:10px;font-weight:700}
+.recovery-stage-timeline li.done{border-color:#bde4d1;background:#f3fbf7;color:#087b50}
+.recovery-stage-timeline li.done::before{content:"✓";border-color:#0bb46c;color:#fff;background:#0bb46c;box-shadow:none}
+.recovery-stage-timeline li.done:not(:last-child)::after{content:"완료";background:none;color:#07955b}
+.recovery-stage-timeline li.active{border-color:#6aa7ff;background:#f3f8ff;color:#0754c8;box-shadow:0 0 0 2px rgba(7,94,234,.1)}
+.recovery-stage-timeline li.active::before{border-color:#075eea;color:#fff;background:#075eea;box-shadow:0 0 0 4px rgba(7,94,234,.12)}
+.recovery-stage-timeline li.active::after{content:"진행 중";background:none;color:#075eea}
+.recovery-stage-timeline li.failed{border-color:#efb7bc;background:#fff7f7;color:#b92e39}
+.recovery-stage-timeline li.failed::before{border-color:#d94a55;color:#fff;background:#d94a55;box-shadow:none}
+.recovery-stage-timeline li.failed::after{content:"실패";background:none;color:#c62f3a}
+@media (max-width: 1400px){.recovery-stage-timeline{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media (max-width: 900px){.recovery-stage-timeline{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width: 760px){.recovery-stage-timeline{grid-template-columns:1fr}}
 .recovery-direction-bar .status-badge{margin-left:auto;flex:none}
 @media(max-width:760px){.recovery-direction-bar{align-items:flex-start;flex-wrap:wrap;white-space:normal}.recovery-direction-bar .status-badge{margin-left:0}.direction-separator{display:none}}
