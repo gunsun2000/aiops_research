@@ -119,6 +119,7 @@ def build_experiment_runtime(
         {
             scenario_id: scenario.manifest
             for scenario_id, scenario in configuration.scenarios.items()
+            if scenario.incident_source == "chaos_mesh"
         },
         runner=subprocess_runner,
         repository_root=repository_root,

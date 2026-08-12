@@ -64,6 +64,20 @@ def test_runtime_factory_builds_real_dependencies_from_registered_config(tmp_pat
     )
 
 
+def test_runtime_factory_does_not_register_aiopslab_as_a_chaos_manifest(tmp_path):
+    runtime = build_experiment_runtime(
+        configuration_path=write_runtime_config(tmp_path),
+        prometheus_url="http://127.0.0.1:9091",
+        event_sink=RecordingEventSink(),
+        subprocess_runner=lambda _argv: (0, "StressChaos NetworkChaos PodChaos", ""),
+    )
+
+    result = runtime.chaos.preflight_scenario("aiopslab-hotel-reservation")
+
+    assert result.valid is False
+    assert result.missing_prerequisites == ("scenario:aiopslab-hotel-reservation",)
+
+
 def test_runtime_factory_accepts_job_identity_and_cancellation_signal(tmp_path):
     cancellation = Event()
 
