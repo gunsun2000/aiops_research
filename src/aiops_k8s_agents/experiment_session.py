@@ -235,6 +235,8 @@ def _result_status(
     final_status: str,
     recovery: Mapping[str, Any],
 ) -> str:
+    if final_status == "dry_run_validated":
+        return "completed"
     if recovery:
         recovered = recovery.get(
             "recovered",

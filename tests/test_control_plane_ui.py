@@ -134,6 +134,7 @@ def test_recovery_ui_has_eight_stage_workflow_and_safe_modes():
         assert f'data-mode="{mode}"' in html
     assert "Mock" in html
     assert "DRY-RUN" in _source(APP_JS)
+    assert "Dry-run 검증 완료" in _source(APP_JS)
 
 
 def test_recovery_timeline_is_readable_and_status_coded():

@@ -468,7 +468,11 @@ class MutualSupervisionCoordinator:
                         "executed_actions",
                         {
                             **execution_event,
-                            "event_type": "execution_dispatched",
+                            "event_type": (
+                                "validation_dispatched"
+                                if self.mode == ExecutionMode.DRY_RUN
+                                else "execution_dispatched"
+                            ),
                         },
                         run_id,
                     )
@@ -479,11 +483,63 @@ class MutualSupervisionCoordinator:
                         "executed_actions",
                         {
                             **execution_event,
-                            "event_type": "execution_completed",
+                            "event_type": (
+                                "validation_completed"
+                                if self.mode == ExecutionMode.DRY_RUN
+                                else "execution_completed"
+                            ),
                             "execution_result": asdict(execution),
                         },
                         run_id,
                     )
+                    if self.mode == ExecutionMode.DRY_RUN:
+                        if not execution.valid:
+                            replanning_attempts.append(
+                                {
+                                    "failed_action": selected_action.kind.value,
+                                    "reason": execution.stderr or "dry-run validation failed",
+                                    "next_step": (
+                                        "try_next_candidate"
+                                        if candidate_index + 1 < max_attempts
+                                        else "human_review_required"
+                                    ),
+                                }
+                            )
+                            continue
+                        report = self._base_report(
+                            run_id=run_id,
+                            evidence=evidence,
+                            diagnosis=diagnosis,
+                            initial_decisions=initial_decisions,
+                            peer_reviews=all_reviews,
+                            rounds=all_rounds,
+                            final_status="dry_run_validated",
+                            human_review_required=False,
+                        )
+                        report.update(
+                            {
+                                "valid": True,
+                                "selected_action": to_serializable(selected_action),
+                                "safety_validation": validation,
+                                "execution_result": asdict(execution),
+                                "recovery_monitoring": {
+                                    "status": "not_measured",
+                                    "recovery_success": None,
+                                    "recovery_seconds": None,
+                                    "reason": (
+                                        "dry-run validates the bounded command without "
+                                        "mutating Kubernetes"
+                                    ),
+                                },
+                                "validated_actions": [
+                                    to_serializable(selected_action)
+                                ],
+                                "executed_actions": [],
+                                "post_execution_reviews": [],
+                                "replanning_attempts": replanning_attempts,
+                            }
+                        )
+                        return self._finalize_report(report)
                     if execution.valid:
                         executed_actions.append(selected_action)
                     after_evidence = self.evidence_provider.collect(
@@ -986,6 +1042,7 @@ class MutualSupervisionCoordinator:
                 _empty_result(self.mode.value, "no action executed")
             ),
             "recovery_monitoring": {},
+            "validated_actions": [],
             "executed_actions": [],
             "post_execution_reviews": [],
             "replanning_attempts": [],

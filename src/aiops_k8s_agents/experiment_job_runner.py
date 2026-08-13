@@ -256,6 +256,7 @@ def _job_status(runtime_status: str) -> ExperimentJobStatus:
         "recovered",
         "recovered_after_replan",
         "no_action_required",
+        "dry_run_validated",
     }:
         return ExperimentJobStatus.COMPLETED
     if normalized in {"cancelled", "cancelling"}:

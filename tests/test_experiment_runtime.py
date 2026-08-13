@@ -341,6 +341,31 @@ def test_runtime_preserves_timeout_status_and_always_cleans_up():
     assert chaos.calls[-1] == "cleanup:cpu-stress"
 
 
+def test_dry_run_validation_does_not_claim_recovery_evaluation():
+    report = approved_report("dry-run-report")
+    report.update(
+        {
+            "mode": "dry-run",
+            "final_status": "dry_run_validated",
+            "recovery_monitoring": {
+                "status": "not_measured",
+                "recovery_success": None,
+            },
+        }
+    )
+    request = replace(real_request(), mode=ExecutionMode.DRY_RUN)
+
+    result = runtime_with(
+        coordinator=FakeCoordinator(report, mode=ExecutionMode.DRY_RUN)
+    ).run(request)
+
+    assert result.status == "dry_run_validated"
+    assert result.session.status == "dry_run_validated"
+    assert result.session.stages["result"]["status"] == "completed"
+    assert result.report["evaluation"]["status"] == "not_applicable"
+    assert result.report["evaluation"]["team_reward"] is None
+
+
 def test_runtime_marks_cleanup_failure_for_human_review_without_hiding_primary_error():
     chaos = FakeChaosAdapter(cleanup_result={"valid": False, "stderr": "delete failed"})
     result = runtime_with(coordinator=RaisingCoordinator(), chaos=chaos).run(real_request())

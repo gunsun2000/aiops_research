@@ -872,6 +872,49 @@ def test_failed_recovery_replans_to_next_bounded_candidate():
     assert len(report["replanning_attempts"]) == 1
 
 
+def test_dry_run_finishes_after_validation_without_recovery_assessment(monkeypatch):
+    class RecoveryMonitorMustNotRun:
+        def assess(self, *_args, **_kwargs):
+            raise AssertionError("dry-run must not assess real recovery")
+
+    def accept_server_dry_run(_executor, action):
+        return CommandResult(
+            command=f"validated {action.kind.value}",
+            mode="dry-run",
+            valid=True,
+            stdout="server-side dry-run accepted",
+            stderr="",
+        )
+
+    monkeypatch.setattr(
+        mutual_supervision_module.KubernetesExecutor,
+        "execute_recovery",
+        accept_server_dry_run,
+    )
+    coordinator = MutualSupervisionCoordinator(
+        validator=_validator(),
+        evidence_provider=FakeEvidenceProvider.cpu_saturation(
+            "online-boutique", "paymentservice", 95.0
+        ),
+        recovery_monitor=RecoveryMonitorMustNotRun(),
+        mode=ExecutionMode.DRY_RUN,
+        policy=_policy(),
+    )
+
+    report = coordinator.run(
+        "online-boutique", "paymentservice", "cpu", 80.0
+    )
+
+    assert report["valid"] is True
+    assert report["final_status"] == "dry_run_validated"
+    assert report["human_review_required"] is False
+    assert report["execution_result"]["valid"] is True
+    assert report["recovery_monitoring"]["status"] == "not_measured"
+    assert report["recovery_monitoring"]["recovery_success"] is None
+    assert report["executed_actions"] == []
+    assert report["validated_actions"][0]["kind"] == "scale_out"
+
+
 def test_successful_execution_receives_four_role_specific_post_reviews():
     coordinator = _coordinator()
 

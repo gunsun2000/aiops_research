@@ -406,6 +406,11 @@ class ExperimentRuntime:
                 (RuntimeStage.EXECUTING, "execution_result"),
                 (RuntimeStage.OBSERVING_RECOVERY, "recovery_monitoring"),
             ):
+                if (
+                    key == "recovery_monitoring"
+                    and primary_status == "dry_run_validated"
+                ):
+                    continue
                 if report.get(key):
                     bridge.emit(stage, f"runtime stage: {key}")
             report["final_status"] = primary_status
@@ -468,9 +473,27 @@ class ExperimentRuntime:
         if request.incident_source == "chaos_mesh":
             bridge.emit(
                 RuntimeStage.ANALYZING,
-                "evaluating recovery outcome with RecoveryEvaluatorAgent",
+                (
+                    "recording dry-run validation without recovery scoring"
+                    if request.mode == ExecutionMode.DRY_RUN
+                    else "evaluating recovery outcome with RecoveryEvaluatorAgent"
+                ),
             )
-            attach_recovery_evaluation(report)
+            if request.mode == ExecutionMode.DRY_RUN:
+                report["evaluation"] = {
+                    "status": "not_applicable",
+                    "evaluator": "RecoveryEvaluatorAgent",
+                    "rubric_version": "recovery-evaluator-v1",
+                    "team_reward": None,
+                    "agent_rewards": {},
+                    "components": {},
+                    "reason": (
+                        "dry-run does not mutate Kubernetes, so recovery outcome "
+                        "and reward are not measured"
+                    ),
+                }
+            else:
+                attach_recovery_evaluation(report)
         bridge.emit(RuntimeStage.COMPLETED, f"experiment {status}")
         report["runtime_events"] = [event.to_dict() for event in bridge._events]
         if bridge.artifact_store is not None and hasattr(bridge.artifact_store, "paths"):

@@ -303,3 +303,27 @@ def test_safe_failure_is_persisted_as_safety_block_not_runtime_failure(tmp_path)
 
     assert finished.status is ExperimentJobStatus.BLOCKED
     assert finished.result["attempts"][0]["status"] == "safe_failure"
+
+
+def test_dry_run_validation_is_persisted_as_completed(tmp_path):
+    store = SQLiteExperimentJobStore(tmp_path / "jobs.sqlite3")
+
+    class DryRunRuntime(_ImmediateRuntime):
+        def run(self, request):
+            result = super().run(request)
+            return _Result(result.experiment_id, "dry_run_validated")
+
+    runner = ExperimentJobRunner(
+        store,
+        runtime_factory=lambda sink, _cancel, experiment_id: DryRunRuntime(
+            sink, experiment_id
+        ),
+        experiment_id_factory=lambda: "exp-dry-run-validated",
+    )
+
+    job = runner.submit(_request())
+    finished = _wait_for_terminal(store, job.experiment_id)
+    runner.shutdown()
+
+    assert finished.status is ExperimentJobStatus.COMPLETED
+    assert finished.result["attempts"][0]["status"] == "dry_run_validated"
