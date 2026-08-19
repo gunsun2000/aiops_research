@@ -1,0 +1,7 @@
+{
+  "signal": "latency_slo_violation",
+  "device_id": "",
+  "source_device": "",
+  "target_device": "",
+  "details": "Observed end-to-end latency exceeded the approved SLO."
+}

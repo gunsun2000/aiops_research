@@ -1,0 +1,176 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+from aiops_k8s_agents.partition_models import (
+    FederatedRoundPlan,
+    PartitionExecutionPlan,
+)
+
+
+@dataclass(frozen=True)
+class PartitionValidationResult:
+    valid: bool
+    errors: tuple[str, ...]
+    checked_rules: tuple[str, ...]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "valid": self.valid,
+            "errors": list(self.errors),
+            "checked_rules": list(self.checked_rules),
+        }
+
+
+class PartitionPlanValidator:
+    CHECKED_RULES = (
+        "plan_identity",
+        "approved_mode_provenance",
+        "layer_coverage",
+        "partition_devices",
+        "memory_capacity",
+        "execution_graph_nodes",
+        "execution_graph_dag",
+        "network_links",
+        "job_constraints",
+    )
+
+    def validate(
+        self,
+        round_plan: FederatedRoundPlan,
+        plan: PartitionExecutionPlan,
+    ) -> PartitionValidationResult:
+        errors: list[str] = []
+        if plan.job_id != round_plan.job_id:
+            errors.append("job_id_mismatch")
+        if plan.model_id != round_plan.model_id:
+            errors.append("model_id_mismatch")
+        if plan.approved_execution_mode != round_plan.execution_mode.name:
+            errors.append("approved_execution_mode_mismatch")
+        if (
+            not round_plan.execution_mode.approved
+            or not round_plan.execution_mode.approved_by
+            or not round_plan.execution_mode.approval_ref
+        ):
+            errors.append("approved_mode_provenance_missing")
+        selected = plan.selected_candidate
+        if selected is None:
+            errors.append("selected_candidate_required")
+            return self._result(errors)
+        if not plan.valid or not selected.valid:
+            errors.append("selected_plan_not_valid")
+
+        expected_layer_names = tuple(layer.name for layer in round_plan.layers)
+        actual_layer_names = tuple(
+            layer_name
+            for partition in selected.partitions
+            for layer_name in partition.layer_names
+        )
+        if actual_layer_names != expected_layer_names:
+            errors.append("layer_coverage_mismatch")
+
+        layers = {layer.name: layer for layer in round_plan.layers}
+        devices = {device.device_id: device for device in round_plan.devices}
+        participants = set(round_plan.participants)
+        partitions_by_id = {
+            partition.partition_id: partition for partition in selected.partitions
+        }
+        if len(partitions_by_id) != len(selected.partitions):
+            errors.append("duplicate_partition_id")
+        for partition in selected.partitions:
+            if not partition.layer_names:
+                errors.append(f"empty_partition:{partition.partition_id}")
+            if partition.device_id not in participants or partition.device_id not in devices:
+                errors.append(f"unknown_partition_device:{partition.device_id}")
+                continue
+            if any(name not in layers for name in partition.layer_names):
+                errors.append(f"unknown_partition_layer:{partition.partition_id}")
+                continue
+            assigned_layers = tuple(layers[name] for name in partition.layer_names)
+            expected_memory = (
+                sum(layer.parameter_bytes for layer in assigned_layers)
+                + sum(layer.working_memory_bytes for layer in assigned_layers)
+                + max(layer.activation_bytes for layer in assigned_layers)
+            )
+            if partition.memory_demand_bytes != expected_memory:
+                errors.append(f"memory_demand_mismatch:{partition.partition_id}")
+            allowed_memory = int(
+                devices[partition.device_id].memory_available_bytes
+                * (1.0 - round_plan.constraints.minimum_memory_headroom_ratio)
+            )
+            if expected_memory > allowed_memory:
+                errors.append(f"memory_capacity_exceeded:{partition.device_id}")
+
+        expected_nodes = {
+            (partition.partition_id, partition.device_id)
+            for partition in selected.partitions
+        }
+        actual_nodes = {
+            (node.partition_id, node.device_id) for node in selected.graph_nodes
+        }
+        if actual_nodes != expected_nodes:
+            errors.append("graph_node_partition_mismatch")
+
+        node_ids = {node.partition_id for node in selected.graph_nodes}
+        adjacency: dict[str, set[str]] = {node_id: set() for node_id in node_ids}
+        link_pairs = {
+            (link.source_device, link.target_device)
+            for link in round_plan.network_links
+        }
+        for edge in selected.graph_edges:
+            if edge.source_partition not in node_ids or edge.target_partition not in node_ids:
+                errors.append("graph_edge_unknown_node")
+                continue
+            adjacency[edge.source_partition].add(edge.target_partition)
+            source = partitions_by_id.get(edge.source_partition)
+            target = partitions_by_id.get(edge.target_partition)
+            if source is None or target is None:
+                errors.append("graph_edge_unknown_partition")
+            elif (source.device_id, target.device_id) not in link_pairs:
+                errors.append(
+                    f"missing_network_link:{source.device_id}->{target.device_id}"
+                )
+        if self._has_cycle(adjacency):
+            errors.append("execution_graph_cycle")
+
+        if (
+            round_plan.constraints.max_end_to_end_latency_ms is not None
+            and selected.estimated_total_latency_ms
+            > round_plan.constraints.max_end_to_end_latency_ms
+        ):
+            errors.append("latency_slo_exceeded")
+        if (
+            round_plan.constraints.max_transfer_bytes is not None
+            and selected.total_transfer_bytes
+            > round_plan.constraints.max_transfer_bytes
+        ):
+            errors.append("max_transfer_bytes_exceeded")
+        return self._result(errors)
+
+    def _result(self, errors: list[str]) -> PartitionValidationResult:
+        unique_errors = tuple(dict.fromkeys(errors))
+        return PartitionValidationResult(
+            valid=not unique_errors,
+            errors=unique_errors,
+            checked_rules=self.CHECKED_RULES,
+        )
+
+    @staticmethod
+    def _has_cycle(adjacency: dict[str, set[str]]) -> bool:
+        visiting: set[str] = set()
+        visited: set[str] = set()
+
+        def visit(node: str) -> bool:
+            if node in visiting:
+                return True
+            if node in visited:
+                return False
+            visiting.add(node)
+            if any(visit(target) for target in adjacency.get(node, ())):
+                return True
+            visiting.remove(node)
+            visited.add(node)
+            return False
+
+        return any(visit(node) for node in adjacency)

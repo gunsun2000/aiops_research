@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 import pytest
 
@@ -10,7 +11,7 @@ from aiops_k8s_agents.agent_registry import (
 )
 
 
-def test_default_agent_registry_loads_four_research_agents():
+def test_default_agent_registry_loads_research_agents():
     registry = load_agent_registry("config/agent_registry.json")
 
     assert set(registry.agent_names()) == {
@@ -18,6 +19,7 @@ def test_default_agent_registry_loads_four_research_agents():
         "AIApplicationManagementAgent",
         "AISemiconductorInfraOpsAgent",
         "CostOptimizationAgent",
+        "ModelPartitionOrchestrationAgent",
     }
     assert registry.validate_action(
         "AIApplicationManagementAgent",
@@ -31,6 +33,24 @@ def test_default_agent_registry_loads_four_research_agents():
         "AIApplicationManagementAgent",
         "kubectl_delete_namespace",
     )
+
+
+def test_model_partition_agent_is_registered_without_joining_recovery_profiles():
+    registry = load_agent_registry("config/agent_registry.json")
+    profile = registry.get("ModelPartitionOrchestrationAgent")
+
+    assert profile.enabled is True
+    assert profile.implementation_id == "deterministic-model-partition"
+    assert profile.capabilities == ("partition_plan", "partition_replan")
+    assert registry.validate_action(
+        profile.name,
+        "partition_build_execution_graph",
+    )
+
+    for protocol_path in Path("config/protocol_profiles").glob("*.json"):
+        protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
+        names = {agent["name"] for agent in protocol["agents"]}
+        assert profile.name not in names
 
 
 def test_agent_registry_rejects_duplicate_agent_names(tmp_path):

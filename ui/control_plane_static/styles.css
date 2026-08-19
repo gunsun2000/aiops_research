@@ -381,3 +381,92 @@ body{color:var(--ink);font-size:14px;letter-spacing:0}
 @media (max-width: 760px){.recovery-progress-metrics{grid-template-columns:1fr}.recovery-progress-summary-heading .secondary-action{width:100%}}
 .recovery-direction-bar .status-badge{margin-left:auto;flex:none}
 @media(max-width:760px){.recovery-direction-bar{align-items:flex-start;flex-wrap:wrap;white-space:normal}.recovery-direction-bar .status-badge{margin-left:0}.direction-separator{display:none}}
+
+/* Model Partition Orchestration is a separate workload-planning workspace. */
+.partition-workspace{--partition-accent:#1857a6;--partition-soft:#edf4fb}
+.partition-heading{align-items:center}
+.partition-heading-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.partition-scope-note{display:flex;align-items:center;gap:12px;margin:0 0 14px;padding:10px 14px;border-left:3px solid var(--partition-accent);background:#f5f8fb;color:#52627a;font-size:11px;line-height:1.5}
+.partition-scope-note strong{flex:none;color:#163c6b}
+.partition-layout{display:grid;grid-template-columns:minmax(230px,280px) minmax(480px,1fr) minmax(240px,300px);align-items:start;gap:14px}
+.partition-layout>*{min-width:0}
+.partition-input-panel,.partition-candidate-panel,.partition-plan-panel,.partition-review-panel,.partition-boundary-panel{padding:18px}
+.partition-section-title{display:flex;align-items:center;gap:10px;padding-bottom:13px;border-bottom:1px solid var(--line)}
+.partition-section-title>span{width:28px;height:28px;display:grid;place-items:center;flex:none;border:1px solid #b9cee6;border-radius:50%;color:var(--partition-accent);background:#f7faff;font-size:10px;font-weight:850}
+.partition-section-title h3,.partition-section-title p{margin:0}
+.partition-section-title h3{font-size:13px}
+.partition-section-title p{margin-top:3px;color:var(--muted);font-size:10px}
+.partition-provenance{margin:12px 0 0}
+.partition-provenance>div,.partition-boundary-panel dl>div{display:grid;grid-template-columns:88px minmax(0,1fr);gap:8px;padding:9px 0;border-bottom:1px solid #edf1f6}
+.partition-provenance dt,.partition-boundary-panel dt{color:#77859a;font-size:10px}
+.partition-provenance dd,.partition-boundary-panel dd{margin:0;overflow-wrap:anywhere;font-size:11px;font-weight:750}
+.partition-input-summary{margin-top:14px;padding:12px;border:1px solid #d9e5f2;border-radius:7px;background:var(--partition-soft)}
+.partition-input-summary span,.partition-input-summary strong,.partition-input-summary small{display:block}
+.partition-input-summary span,.partition-input-summary small{color:#65758d;font-size:10px}
+.partition-input-summary strong{margin:5px 0;color:#174c8e;font-size:12px}
+.partition-error{margin:12px 0 0;color:#b3313d;font-size:10px;line-height:1.5}
+.partition-center,.partition-review-column{display:grid;gap:14px}
+.partition-center>*,.partition-review-column>*{min-width:0}
+.partition-candidates{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:14px}
+.partition-candidate{min-width:0;padding:12px;border:1px solid #dce4ee;border-radius:7px;background:#fff}
+.partition-candidate.is-selected{border-color:#2d70bc;background:#f4f8fd;box-shadow:inset 3px 0 #2d70bc}
+.partition-candidate.is-rejected{background:#fafafa;opacity:.72}
+.partition-candidate header{display:grid;grid-template-columns:1fr auto;gap:4px;align-items:center}
+.partition-candidate header span{grid-column:1/-1;color:#718099;font-size:9px;font-weight:850}
+.partition-candidate header strong{overflow-wrap:anywhere;font-size:12px}
+.partition-candidate header em{color:#16815b;font-size:9px;font-style:normal;font-weight:800}
+.partition-candidate.is-rejected header em{color:#b04a53}
+.partition-candidate dl{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:10px 0 0}
+.partition-candidate dl>div{padding:7px;background:#f7f9fc}
+.partition-candidate dt{color:#77859a;font-size:9px}
+.partition-candidate dd{margin:4px 0 0;font-size:10px;font-weight:750}
+.partition-candidate>p{margin:9px 0 0;color:#9d3b44;font-size:9px}
+.partition-selected-plan{margin-top:14px}
+.partition-plan-meta{padding:11px 12px;border-left:3px solid var(--partition-accent);background:#f5f8fb}
+.partition-plan-meta span,.partition-plan-meta strong{display:block}
+.partition-plan-meta span{color:#75849a;font-size:9px}
+.partition-plan-meta strong{margin-top:4px;overflow-wrap:anywhere;font-size:11px}
+.partition-plan-meta p{margin:6px 0 0;color:#5d6d84;font-size:10px;line-height:1.45}
+.partition-assignment-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin-top:10px}
+.partition-assignment-list article{padding:12px;border:1px solid #dbe4ef;border-radius:7px;background:#fff}
+.partition-assignment-list span,.partition-assignment-list strong,.partition-assignment-list small{display:block}
+.partition-assignment-list span,.partition-assignment-list small{color:#75849a;font-size:9px}
+.partition-assignment-list strong{margin-top:4px;color:#174c8e;font-size:12px}
+.partition-assignment-list p{min-height:32px;margin:8px 0;color:#3f5069;font-size:10px;line-height:1.5}
+.partition-execution-graph{display:flex;align-items:stretch;gap:34px;margin-top:12px;padding:14px;overflow-x:auto;border:1px solid #dce4ef;border-radius:7px;background:#fbfcfe}
+.partition-graph-node{position:relative;min-width:150px;padding:11px;border:1px solid #bcd0e7;border-radius:6px;background:#fff}
+.partition-graph-node:not(:last-child)::after{content:"→";position:absolute;right:-25px;top:50%;transform:translateY(-50%);color:#67809f;font-size:16px}
+.partition-graph-node span,.partition-graph-node strong,.partition-graph-node small{display:block}
+.partition-graph-node span{color:#7b8aa0;font-size:9px}
+.partition-graph-node strong{margin-top:4px;font-size:11px}
+.partition-graph-node small{margin-top:4px;color:#1857a6;font-size:10px}
+.partition-validation,.partition-evaluation{padding-top:13px}
+.partition-validation strong,.partition-validation p{display:block;margin-top:9px}
+.partition-validation strong{font-size:11px}
+.partition-validation p,.partition-evaluation p{color:#68778e;font-size:10px;line-height:1.5}
+.partition-evaluation>strong{display:block;color:#174c8e;font-size:28px}
+.partition-evaluation>span{display:block;margin-top:3px;font-size:10px;font-weight:750}
+.partition-evaluation dl{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin:11px 0 0}
+.partition-evaluation dl>div{padding:7px;background:#f7f9fc}
+.partition-evaluation dt{color:#74839a;font-size:8px;text-transform:capitalize}
+.partition-evaluation dd{margin:4px 0 0;font-size:10px;font-weight:750}
+.partition-boundary-panel{border-top:3px solid #637a96;background:#fbfcfe}
+.partition-boundary-panel h3{font-size:12px}
+.partition-boundary-panel>p{margin:7px 0 0;color:#65748b;font-size:10px;line-height:1.5}
+.partition-boundary-panel dl{margin:10px 0 0}
+
+@media(max-width:1280px){
+  .partition-layout{grid-template-columns:250px minmax(0,1fr)}
+  .partition-review-column{grid-column:1/-1;grid-template-columns:1fr 1fr 1.2fr}
+}
+@media(max-width:900px){
+  .partition-layout{grid-template-columns:1fr}
+  .partition-review-column{grid-column:auto;grid-template-columns:1fr}
+  .partition-candidates,.partition-assignment-list{grid-template-columns:1fr}
+  .partition-execution-graph{max-width:100%}
+}
+@media(max-width:760px){
+  .partition-heading-actions{width:100%;margin-top:10px}
+  .partition-heading-actions button{flex:1}
+  .partition-scope-note{align-items:flex-start;flex-direction:column}
+}

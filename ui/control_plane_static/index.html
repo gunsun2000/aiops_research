@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="안전 제어형 4-Agent AIOps 연구 운영 플랫폼" />
   <title>4-Agent AIOps Research Platform</title>
-  <link rel="stylesheet" href="/static/styles.css?v=32" />
-  <script defer src="/static/app.js?v=31"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=33" />
+  <script defer src="/static/app.js?v=32"></script>
   <script defer src="/static/reference-ui.js?v=4"></script>
   <script defer src="/static/bulk-delete-ui.js?v=3"></script>
 </head>
@@ -18,6 +18,7 @@
     <nav class="platform-nav" id="platform-nav" aria-label="주요 화면">
       <button type="button" data-view="overview" aria-pressed="true"><span class="nav-icon">⌂</span><span><b>시스템 개요</b><small>전체 현황 확인</small></span></button>
       <button type="button" data-view="experiment" aria-pressed="false"><span class="nav-icon">⚗</span><span><b>복구 실험</b><small>장애 주입 및 복구 실행</small></span></button>
+      <button type="button" data-view="orchestration" aria-pressed="false"><span class="nav-icon">▤</span><span><b>AI Workload Orchestration</b><small>모델 분할 계획</small></span></button>
       <button type="button" data-view="aiopslab" aria-pressed="false"><span class="nav-icon">▥</span><span><b>AIOpsLab Benchmark</b><small>탐지 성능 벤치마크</small></span></button>
       <button type="button" data-view="analysis" aria-pressed="false"><span class="nav-icon">▣</span><span><b>실험 결과</b><small>결과 조회 및 분석</small></span></button>
     </nav>
@@ -84,6 +85,42 @@
       <section class="view-panel" data-view-panel="agents" hidden><div class="page-heading"><div><h2 id="agents-title">Multi-Agent 의사결정</h2><p>각 Agent의 판단 및 Peer Review 근거를 확인합니다.</p></div></div><div class="agent-inspector-layout"><aside class="surface agent-tabs" id="agent-tabs"><button data-agent-tab="AIServiceHASupportAgent" aria-pressed="true">HA Agent</button><button data-agent-tab="AIApplicationManagementAgent">Application Agent</button><button data-agent-tab="AISemiconductorInfraOpsAgent">Infra Agent</button><button data-agent-tab="CostOptimizationAgent">Cost Agent</button></aside><section class="surface decision-inspector" id="decision-inspector"><h3 id="selected-agent">AIServiceHASupportAgent</h3><span id="agent-approval" class="status-badge neutral">대기</span><dl><dt>판단</dt><dd id="agent-decision">실험 Evidence 수집 후 표시</dd><dt>Controller</dt><dd id="controller-provenance">Deterministic Mutual Supervision</dd><dt>Reward</dt><dd id="agent-reward">—</dd></dl><p id="agent-statement">실제 실행 결과의 Agent 판단 근거만 표시합니다.</p><ul id="peer-reviews"><li>상호검토 기록 대기</li></ul><section id="autogen-transcript-panel" hidden><ol id="autogen-transcript"></ol></section></section></div></section>
 
       <section class="view-panel" data-view-panel="observability" hidden><div class="page-heading"><div><h2 id="observability-title">관측 데이터</h2><p>Incident Source와 Evidence Provider를 분리하여 확인합니다.</p></div></div><div class="evidence-layout"><section class="surface evidence-source-card"><dl><div><dt>Incident Source</dt><dd id="observed-incident-source">Chaos Mesh Simulation</dd></div><div><dt>Evidence Provider</dt><dd id="observed-provider">SyntheticEvidenceProvider</dd></div><div><dt>Scenario</dt><dd id="observed-scenario">CPU Saturation</dd></div><div><dt>Target</dt><dd id="observed-target">online-boutique/paymentservice</dd></div><div><dt>Metric</dt><dd id="observed-metric">cpu · threshold 80</dd></div><div><dt>Collection Time</dt><dd id="observed-collected-at">수집되지 않음</dd></div></dl></section><section class="surface evidence-values"><div id="observed-metrics"></div></section></div><section class="surface before-after"><h3>복구 전 / 후 Evidence</h3><table><tbody id="evidence-comparison-body"><tr><td>복구 전후 Evidence가 수집되지 않았습니다.</td></tr></tbody></table></section></section>
+
+      <section class="view-panel partition-workspace" data-view-panel="orchestration" aria-labelledby="partition-title" hidden>
+        <header class="page-heading partition-heading"><div><h2 id="partition-title">Model Partition Orchestration</h2><p>승인된 상위 Round Plan을 입력으로 받아 논리 분할, 실행 그래프, 자원 요구량을 계획합니다.</p></div><div class="partition-heading-actions"><span id="partition-status" class="status-badge neutral">입력 대기</span><button type="button" id="partition-load-example" class="secondary-action">예제 불러오기</button><button type="button" id="partition-plan-run" class="primary-action" disabled>분할 계획 생성</button></div></header>
+        <div class="partition-scope-note"><strong>책임 경계</strong><span>실행 모드는 이 화면에서 선택하지 않습니다. Federated Coordination 계층이 승인한 모드와 출처만 검증해 사용합니다.</span></div>
+        <div class="partition-layout">
+          <aside class="surface partition-input-panel">
+            <div class="partition-section-title"><span>01</span><div><h3>상위 계획 출처</h3><p>FederatedRoundPlan provenance</p></div></div>
+            <dl class="partition-provenance">
+              <div><dt>Job</dt><dd id="partition-job-id">—</dd></div>
+              <div><dt>Model</dt><dd id="partition-model-id">—</dd></div>
+              <div><dt>승인된 실행 모드</dt><dd id="partition-mode-name">—</dd></div>
+              <div><dt>승인 주체</dt><dd id="partition-approved-by">—</dd></div>
+              <div><dt>Approval Ref</dt><dd id="partition-approval-ref">—</dd></div>
+              <div><dt>참여 노드</dt><dd id="partition-participants">—</dd></div>
+            </dl>
+            <div class="partition-input-summary"><span>정책</span><strong>partition-policy-v1</strong><small>Deterministic candidate generation · fail closed</small></div>
+            <p id="partition-error" class="partition-error" aria-live="polite"></p>
+          </aside>
+          <section class="partition-center">
+            <article class="surface partition-candidate-panel">
+              <div class="partition-section-title"><span>02</span><div><h3>후보 분할 비교</h3><p>Latency · Memory · Communication</p></div></div>
+              <div id="partition-candidates" class="partition-candidates"><p class="empty-state">계획 생성 후 후보별 추정치를 표시합니다.</p></div>
+            </article>
+            <article class="surface partition-plan-panel">
+              <div class="partition-section-title"><span>03</span><div><h3>선택된 논리 분할</h3><p>PartitionExecutionPlan</p></div></div>
+              <div id="partition-selected-plan" class="partition-selected-plan"><p class="empty-state">선택된 계획이 없습니다.</p></div>
+              <div id="partition-execution-graph" class="partition-execution-graph" aria-label="모델 분할 실행 그래프"><p class="empty-state">실행 그래프 대기</p></div>
+            </article>
+          </section>
+          <aside class="partition-review-column">
+            <section class="surface partition-review-panel"><div class="partition-section-title"><span>04</span><div><h3>독립 검증</h3><p>PartitionPlanValidator</p></div></div><div id="partition-validation" class="partition-validation"><span class="status-badge neutral">대기</span><p>Layer coverage, DAG, memory headroom, SLO를 다시 계산합니다.</p></div></section>
+            <section class="surface partition-review-panel"><div class="partition-section-title"><span>05</span><div><h3>계획 평가</h3><p>PartitionPlanEvaluator</p></div></div><div id="partition-evaluation" class="partition-evaluation"><strong>—</strong><span>Reward 대기</span><p>실행 전에는 예측 Evidence, 실행 후에는 관측 Evidence로 구분합니다.</p></div></section>
+            <section class="surface partition-boundary-panel"><h3>다음 계층으로 전달</h3><p>검증된 PartitionExecutionPlan만 Scheduling Agent의 입력 계약으로 전달됩니다.</p><dl><div><dt>Mode selection</dt><dd>상위 계층 책임</dd></div><div><dt>Runtime execution</dt><dd>후속 Controller 책임</dd></div><div><dt>현재 범위</dt><dd>Planning · Validation · Evaluation</dd></div></dl></section>
+          </aside>
+        </div>
+      </section>
 
       <section class="view-panel" data-view-panel="aiopslab" hidden>
         <div class="page-heading"><div><h2 id="aiopslab-title">AIOpsLab Benchmark</h2><p>AIOpsLab 데이터를 활용하여 Agent의 이상 탐지 성능을 평가하고 벤치마크합니다.</p></div></div>

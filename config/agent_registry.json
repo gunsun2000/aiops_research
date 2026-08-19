@@ -105,6 +105,33 @@
       "supported_runtimes": ["deterministic"],
       "capabilities": ["review"],
       "enabled": true
+    },
+    {
+      "name": "ModelPartitionOrchestrationAgent",
+      "korean_name": "모델 분할 오케스트레이션 에이전트",
+      "role": "Generate and validate logical model partition plans from an approved federated round plan.",
+      "responsibilities": [
+        "Consume an approved FederatedRoundPlan without selecting the execution mode.",
+        "Generate split candidates, logical partitions, and a directed execution graph.",
+        "Estimate compute, memory, and communication demand and reject infeasible candidates.",
+        "Perform bounded replanning after supported execution failures."
+      ],
+      "bounded_actions": [
+        "partition_generate_candidates",
+        "partition_select_split",
+        "partition_build_execution_graph",
+        "partition_estimate_resource_demand",
+        "partition_replan"
+      ],
+      "reward_signals": [
+        "Positive reward for validated low-latency, memory-safe, communication-efficient plans.",
+        "Penalty for invalid plans or violated constraints.",
+        "Predicted reward remains explicitly separated from observed runtime reward."
+      ],
+      "implementation_id": "deterministic-model-partition",
+      "supported_runtimes": ["deterministic"],
+      "capabilities": ["partition_plan", "partition_replan"],
+      "enabled": true
     }
   ]
 }

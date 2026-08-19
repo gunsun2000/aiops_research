@@ -1,0 +1,13 @@
+{
+  "version": "partition-policy-v1",
+  "weights": {
+    "latency": 0.5,
+    "memory_pressure": 0.3,
+    "communication": 0.2
+  },
+  "normalization": {
+    "latency_reference_ms": 1000.0,
+    "transfer_reference_bytes": 5000000
+  },
+  "max_replan_attempts": 2
+}

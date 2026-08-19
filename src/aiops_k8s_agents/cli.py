@@ -64,6 +64,8 @@ from aiops_k8s_agents.models import (
     RecoveryAction,
     RecoveryActionKind,
 )
+from aiops_k8s_agents.partition_models import PartitionContractError
+from aiops_k8s_agents.partition_service import run_partition_planning
 from aiops_k8s_agents.mutual_supervision import (
     MutualSupervisionCoordinator,
     mutual_supervision_controller_name,
@@ -444,7 +446,44 @@ def build_parser() -> argparse.ArgumentParser:
     register_agent_parser.add_argument("--overwrite", action="store_true")
     _add_result_logging_argument(register_agent_parser)
 
+    partition_parser = subparsers.add_parser(
+        "plan-model-partition",
+        help=(
+            "Generate, validate, and evaluate a logical model partition plan "
+            "from an approved federated round plan."
+        ),
+    )
+    _add_partition_planning_arguments(partition_parser)
+
+    replan_parser = subparsers.add_parser(
+        "replan-model-partition",
+        help="Replan a model partition after a supported execution failure.",
+    )
+    _add_partition_planning_arguments(replan_parser)
+    replan_parser.add_argument("--previous-plan", required=True)
+    replan_parser.add_argument("--failure", required=True)
+    replan_parser.add_argument("--attempt", type=int, default=1)
+
     return parser
+
+
+def _add_partition_planning_arguments(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--input", required=True, help="FederatedRoundPlan JSON path.")
+    parser.add_argument(
+        "--policy",
+        default="config/model_partition_policy.json",
+        help="Versioned model partition policy JSON path.",
+    )
+    parser.add_argument(
+        "--artifact-root",
+        default="runs/model-partition",
+        help="Root directory for partition research artifacts.",
+    )
+    parser.add_argument(
+        "--observed",
+        default="",
+        help="Optional observed runtime metrics JSON path.",
+    )
 
 
 def _add_alert_arguments(parser: argparse.ArgumentParser) -> None:
@@ -644,8 +683,54 @@ def main(
         _emit_json_report(args, report)
         return 0 if report["valid"] else 2
 
+    if args.command in {"plan-model-partition", "replan-model-partition"}:
+        report = run_model_partition_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report.get("status") == "planned" else 2
+
     parser.error(f"unsupported command: {args.command}")
     return 2
+
+
+def run_model_partition_cli(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        payload = _load_json_object(args.input)
+        observed = _load_json_object(args.observed) if args.observed else None
+        replanning: dict[str, Any] = {}
+        if args.command == "replan-model-partition":
+            replanning = {
+                "previous_plan_payload": _load_json_object(args.previous_plan),
+                "failure_payload": _load_json_object(args.failure),
+                "replan_attempt": args.attempt,
+            }
+        return run_partition_planning(
+            payload,
+            policy_path=args.policy,
+            artifact_root=args.artifact_root,
+            observed=observed,
+            **replanning,
+        )
+    except PartitionContractError as exc:
+        return {
+            "kind": "model_partition_orchestration",
+            "status": "blocked",
+            "valid": False,
+            "error": {"code": exc.code, "message": exc.message},
+        }
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return {
+            "kind": "model_partition_orchestration",
+            "status": "blocked",
+            "valid": False,
+            "error": {"code": "invalid_input", "message": str(exc)},
+        }
+
+
+def _load_json_object(path: str | Path) -> dict[str, Any]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError(f"JSON document must be an object: {path}")
+    return payload
 
 
 def list_registered_agents(args: argparse.Namespace) -> dict[str, Any]:

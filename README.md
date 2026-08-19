@@ -1,7 +1,9 @@
-# AIOps 4-Agent Kubernetes 장애 복구 연구
+# AIOps Multi-Agent Research Framework
 
-4개의 역할 기반 Agent가 Kubernetes 장애를 진단하고, 상호 검토와 안전 검증을
-통과한 복구 Action만 실행하는 연구 프레임워크입니다.
+역할 기반 Agent의 판단·상호 검토·안전 검증·실행 결과를 재현 가능한 실험으로
+구성하는 대학원 연구 프레임워크입니다. 현재 검증된 기본 프로파일은 Kubernetes
+장애 복구이며, AI workload orchestration 연구를 위한 모델 분할 계획 프로파일을
+별도 모듈로 제공합니다.
 
 ![AIOps 4-Agent architecture](docs/assets/architecture_overview.png)
 
@@ -27,6 +29,20 @@ Chaos Mesh / AIOpsLab
 | Python Validator | allowlist, namespace, deployment, replica, 명령 안전성 검증 |
 | AutoGen | 선택 가능한 LLM GroupChat 경로. API 키가 있을 때만 사용 |
 | AIOpsLab | 별도 장애 탐지 benchmark. Chaos Mesh 복구 실험과 구분 |
+| Model Partition Orchestration Agent | 승인된 상위 Round Plan을 논리 분할·실행 DAG·자원 요구량 계획으로 변환 |
+
+## 연구 프로파일
+
+| 프로파일 | Agent 구성 | 연구 범위 |
+| --- | --- | --- |
+| 장애 복구 | HA / Application / Infrastructure / Cost | 장애 진단, 복구 Action 합의, 안전한 Kubernetes 제어 |
+| 모델 분할 오케스트레이션 | Model Partition Orchestration Agent | 승인된 실행 모드에 대한 후보 분할 비교, 실행 DAG, 자원·통신 추정, 독립 검증 |
+
+모델 분할 Agent는 장애 복구의 다섯 번째 Agent가 아닙니다. 또한 FL, SL, 일반 분산
+추론 중 어떤 실행 모드를 사용할지 결정하지 않습니다. 상위 Federated Coordination
+계층이 승인한 `execution_mode`, `approved_by`, `approval_ref`를 입력으로 받으며,
+승인 provenance가 없으면 fail-closed로 계획을 거부합니다. 검증된
+`PartitionExecutionPlan`은 후속 Scheduling Agent가 사용할 수 있는 계약입니다.
 
 ## 실행 모드
 
@@ -235,6 +251,22 @@ bash scripts/server_aiopslab_auto_detection.sh
 bash scripts/server_aiopslab_repeat_detection.sh
 bash scripts/server_aiopslab_summarize_runs.sh
 ```
+
+### Model Partition Orchestration
+
+웹의 `AI Workload Orchestration` 화면에서 승인된 예제 Round Plan을 불러오고 후보
+분할을 생성할 수 있습니다. 같은 엔진은 CLI에서도 실행되며 결과는 plan, 독립 검증,
+예측 Reward와 함께 JSON artifact로 저장됩니다.
+
+```bash
+aiops-k8s-agents plan-model-partition \
+  --input config/examples/model_partition_job.json \
+  --policy config/model_partition_policy.json \
+  --artifact-root runs/model-partition
+```
+
+초기 구현은 planning·validation·predicted evaluation 범위입니다. 실제 runtime 실행과
+관측값 기반 평가는 후속 Scheduling / Execution Controller 연결 범위로 분리합니다.
 
 ## 코드 검증
 

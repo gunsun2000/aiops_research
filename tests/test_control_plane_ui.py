@@ -16,18 +16,42 @@ def _compact(source: str) -> str:
     return "".join(source.split())
 
 
-def test_console_has_four_primary_research_views():
+def test_console_has_five_primary_research_views():
     html = _source(INDEX_HTML)
     assert '<html lang="ko">' in html
-    for view in ("overview", "experiment", "aiopslab", "analysis"):
+    for view in ("overview", "experiment", "orchestration", "aiopslab", "analysis"):
         assert f'data-view="{view}"' in html
         assert f'data-view-panel="{view}"' in html
     assert "시스템 개요" in html
     assert "복구 실험" in html
+    assert "AI Workload Orchestration" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=32" in html
-    assert "app.js?v=31" in html
+    assert "styles.css?v=33" in html
+    assert "app.js?v=32" in html
+
+
+def test_model_partition_workspace_preserves_upstream_approval_boundary():
+    html = _source(INDEX_HTML)
+    script = _source(APP_JS)
+
+    for element_id in (
+        "partition-load-example",
+        "partition-plan-run",
+        "partition-mode-name",
+        "partition-approval-ref",
+        "partition-candidates",
+        "partition-selected-plan",
+        "partition-execution-graph",
+        "partition-validation",
+        "partition-evaluation",
+    ):
+        assert f'id="{element_id}"' in html
+    assert "승인된 실행 모드" in html
+    assert 'id="partition-mode-select"' not in html
+    assert "/api/model-partition/examples" in script
+    assert "/api/model-partition/plans" in script
+    assert "Estimated reward" in script
 
 
 def test_dynamic_console_scripts_use_fresh_cache_versions():

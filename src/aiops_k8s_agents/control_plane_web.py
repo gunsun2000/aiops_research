@@ -54,6 +54,8 @@ from aiops_k8s_agents.research_protocol import load_protocol_profiles
 from aiops_k8s_agents.prometheus_port_forward import (
     PrometheusPortForwardManager,
 )
+from aiops_k8s_agents.partition_models import PartitionContractError
+from aiops_k8s_agents.partition_service import run_partition_planning
 
 try:
     from fastapi import APIRouter, FastAPI, HTTPException, Request
@@ -90,6 +92,10 @@ class RuntimeApiState:
     recovery_comparison_job_store: SQLiteRecoveryComparisonJobStore
     recovery_comparison_job_runner: RecoveryComparisonJobRunner
     recovery_comparison_artifact_root: Path
+    model_partition_service: Callable[..., dict[str, Any]]
+    model_partition_policy_path: Path
+    model_partition_artifact_root: Path
+    model_partition_example_path: Path
 
 
 class EmptyEventSink:
@@ -149,6 +155,14 @@ class RecoveryComparisonCreateRequest(BaseModel):
     real_confirmation: str = ""
 
 
+class ModelPartitionPlanRequest(BaseModel):
+    round_plan: dict[str, Any]
+    observed: dict[str, Any] | None = None
+    previous_plan: dict[str, Any] | None = None
+    failure: dict[str, Any] | None = None
+    replan_attempt: int = Field(default=1, ge=1)
+
+
 @router.get("/", response_class=HTMLResponse)
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
@@ -172,6 +186,70 @@ def api_agents() -> dict[str, object]:
 @router.get("/api/scenarios")
 def api_scenarios() -> dict[str, object]:
     return {"scenarios": scenario_catalog()}
+
+
+@router.get("/api/model-partition/examples")
+def api_model_partition_examples(request: Request) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        round_plan = json.loads(
+            state.model_partition_example_path.read_text(encoding="utf-8")
+        )
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(
+            status_code=500,
+            detail="model partition example is unavailable",
+        ) from exc
+    return {
+        "examples": [
+            {
+                "id": "two-participant-transformer",
+                "name": "Two-participant transformer partition",
+                "round_plan": round_plan,
+                "scope": {
+                    "selects_execution_mode": False,
+                    "requires_approved_upstream_mode": True,
+                    "produces": "PartitionExecutionPlan",
+                },
+            }
+        ]
+    }
+
+
+@router.post("/api/model-partition/plans")
+def api_model_partition_plan(
+    body: ModelPartitionPlanRequest,
+    request: Request,
+) -> dict[str, Any]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    if (body.previous_plan is None) != (body.failure is None):
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "code": "incomplete_replan_context",
+                "message": "previous_plan and failure must be provided together",
+            },
+        )
+    try:
+        return state.model_partition_service(
+            body.round_plan,
+            policy_path=state.model_partition_policy_path,
+            artifact_root=state.model_partition_artifact_root,
+            observed=body.observed,
+            previous_plan_payload=body.previous_plan,
+            failure_payload=body.failure,
+            replan_attempt=body.replan_attempt,
+        )
+    except PartitionContractError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": exc.code, "message": exc.message},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "invalid_partition_request", "message": str(exc)},
+        ) from exc
 
 
 @router.get("/api/runs/latest")
@@ -1285,6 +1363,10 @@ def create_app(
     recovery_comparison_artifact_root: str | Path | None = None,
     recovery_comparison_job_id_factory: Callable[[], str] | None = None,
     prometheus_port_forward_manager: Any | None = None,
+    model_partition_service: Callable[..., dict[str, Any]] | None = None,
+    model_partition_policy_path: str | Path | None = None,
+    model_partition_artifact_root: str | Path | None = None,
+    model_partition_example_path: str | Path | None = None,
 ) -> FastAPI:
     root = project_root()
     config_path = Path(configuration_path or root / "config" / "experiment_runtime.json")
@@ -1388,6 +1470,17 @@ def create_app(
         artifact_root=comparison_artifact_root,
         job_id_factory=recovery_comparison_job_id_factory,
     )
+    partition_policy_path = Path(
+        model_partition_policy_path or root / "config" / "model_partition_policy.json"
+    ).expanduser().resolve()
+    partition_artifact_root = Path(
+        model_partition_artifact_root
+        or root / "runs" / "control-plane" / "model-partition"
+    ).expanduser().resolve()
+    partition_example_path = Path(
+        model_partition_example_path
+        or root / "config" / "examples" / "model_partition_job.json"
+    ).expanduser().resolve()
     probes = dict(
         connection_probes
         or _default_connection_probes(
@@ -1433,6 +1526,10 @@ def create_app(
         recovery_comparison_job_store=recovery_comparison_job_store,
         recovery_comparison_job_runner=recovery_comparison_job_runner,
         recovery_comparison_artifact_root=comparison_artifact_root,
+        model_partition_service=model_partition_service or run_partition_planning,
+        model_partition_policy_path=partition_policy_path,
+        model_partition_artifact_root=partition_artifact_root,
+        model_partition_example_path=partition_example_path,
     )
     app_instance.include_router(router)
     app_instance.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

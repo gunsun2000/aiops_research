@@ -1,0 +1,48 @@
+{
+  "job_id": "job-model-partition-001",
+  "model_id": "transformer-6-layer",
+  "execution_mode": {
+    "name": "split_learning",
+    "approved": true,
+    "approved_by": "FederatedCoordinationAgent",
+    "approval_ref": "federated-round-plan-001"
+  },
+  "layers": [
+    {"name": "embedding", "compute_units": 100.0, "parameter_bytes": 12000000, "activation_bytes": 4000000, "working_memory_bytes": 8000000},
+    {"name": "encoder-1", "compute_units": 100.0, "parameter_bytes": 16000000, "activation_bytes": 3000000, "working_memory_bytes": 10000000},
+    {"name": "encoder-2", "compute_units": 100.0, "parameter_bytes": 16000000, "activation_bytes": 100000, "working_memory_bytes": 10000000},
+    {"name": "encoder-3", "compute_units": 100.0, "parameter_bytes": 16000000, "activation_bytes": 2000000, "working_memory_bytes": 10000000},
+    {"name": "encoder-4", "compute_units": 100.0, "parameter_bytes": 16000000, "activation_bytes": 4000000, "working_memory_bytes": 10000000},
+    {"name": "classifier", "compute_units": 100.0, "parameter_bytes": 8000000, "activation_bytes": 100000, "working_memory_bytes": 6000000}
+  ],
+  "participants": ["edge-cpu-01", "gpu-worker-01"],
+  "devices": [
+    {
+      "device_id": "edge-cpu-01",
+      "device_type": "cpu",
+      "compute_units_per_second": 1000.0,
+      "memory_capacity_bytes": 268435456,
+      "memory_available_bytes": 209715200
+    },
+    {
+      "device_id": "gpu-worker-01",
+      "device_type": "gpu",
+      "compute_units_per_second": 2000.0,
+      "memory_capacity_bytes": 536870912,
+      "memory_available_bytes": 471859200
+    }
+  ],
+  "network_links": [
+    {
+      "source_device": "edge-cpu-01",
+      "target_device": "gpu-worker-01",
+      "bandwidth_bytes_per_second": 10000000.0,
+      "latency_ms": 2.0
+    }
+  ],
+  "constraints": {
+    "max_end_to_end_latency_ms": 900.0,
+    "max_transfer_bytes": 5000000,
+    "minimum_memory_headroom_ratio": 0.1
+  }
+}
