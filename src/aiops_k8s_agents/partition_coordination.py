@@ -1,11 +1,20 @@
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from math import isfinite
 from typing import Any, Mapping, Sequence
 
-from aiops_k8s_agents.partition_context import PartitionSystemContext
+from aiops_k8s_agents.partition_context import (
+    ModelBlock,
+    ModelRegistryContext,
+    ModelStructureProfile,
+    PartitionSystemContext,
+)
 from aiops_k8s_agents.partition_models import (
+    ApprovedExecutionMode,
+    FederatedRoundPlan,
+    ModelLayer,
     PartitionConstraints,
     PartitionContractError,
 )
@@ -238,6 +247,9 @@ class PartitionPlanningRequest:
     envelope: CoordinationPlanEnvelope
     plan: TrainingCoordinationPlan | InferenceCoordinationPlan
     context: PartitionSystemContext
+    legacy_input: bool = False
+    approved_execution_mode: ApprovedExecutionMode | None = None
+    legacy_layers: tuple[ModelLayer, ...] | None = None
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> PartitionPlanningRequest:
@@ -265,3 +277,80 @@ class PartitionPlanningRequest:
                 "coordination plan and model registry context must match",
             )
         return cls(envelope=envelope, plan=plan, context=context)
+
+
+class LegacyFederatedRoundPlanAdapter:
+    """Maps validated V1 round plans into the immutable V2 request boundary."""
+
+    LEGACY_SCHEMA_VERSION = "legacy-1.0"
+
+    def adapt(self, payload: Mapping[str, Any] | FederatedRoundPlan) -> PartitionPlanningRequest:
+        round_plan = (
+            payload
+            if isinstance(payload, FederatedRoundPlan)
+            else FederatedRoundPlan.from_dict(_mapping(payload, "round_plan"))
+        )
+        model_version = self._model_version(round_plan.model_id)
+        profile = ModelStructureProfile(
+            profile_id=f"legacy-profile-{model_version}",
+            model_id=round_plan.model_id,
+            model_version=model_version,
+            blocks=tuple(
+                ModelBlock(
+                    block_id=layer.name,
+                    layer_names=(layer.name,),
+                    parameter_bytes=layer.parameter_bytes,
+                    activation_bytes=layer.activation_bytes,
+                    working_memory_bytes=layer.working_memory_bytes,
+                )
+                for layer in round_plan.layers
+            ),
+        )
+        context = PartitionSystemContext(
+            snapshot_id=f"legacy-snapshot-{round_plan.job_id}",
+            snapshot_version=self.LEGACY_SCHEMA_VERSION,
+            collected_at="legacy-input",
+            model_structure_profile=profile,
+            model_registry_context=ModelRegistryContext(
+                registry_id=f"legacy-registry-{round_plan.model_id}",
+                registry_version=self.LEGACY_SCHEMA_VERSION,
+                model_id=round_plan.model_id,
+                approved_model_version=model_version,
+            ),
+            devices=round_plan.devices,
+            network_links=round_plan.network_links,
+            workload_forecast=None,
+        )
+        return PartitionPlanningRequest(
+            envelope=CoordinationPlanEnvelope(
+                plan_type="inference",
+                plan_id=f"legacy-plan-{round_plan.job_id}",
+                job_id=round_plan.job_id,
+                approved_by=round_plan.execution_mode.approved_by,
+                approval_ref=round_plan.execution_mode.approval_ref,
+                approved_at="legacy-input",
+                schema_version=self.LEGACY_SCHEMA_VERSION,
+            ),
+            plan=InferenceCoordinationPlan(
+                model_id=round_plan.model_id,
+                approved_model_version=model_version,
+                service_objective="legacy federated round partitioning",
+                latency_slo_ms=round_plan.constraints.max_end_to_end_latency_ms or 1.0,
+                minimum_throughput_rps=1.0,
+                availability_target=0.0,
+                traffic_policy={},
+                concurrency_policy={},
+                participants=round_plan.participants,
+                resource_budget={},
+                constraints=round_plan.constraints,
+            ),
+            context=context,
+            legacy_input=True,
+            approved_execution_mode=round_plan.execution_mode,
+            legacy_layers=round_plan.layers,
+        )
+
+    @staticmethod
+    def _model_version(model_id: str) -> str:
+        digest = hashlib.sha256(model_id.encode("utf-8")).hexdigest()[:16]
+        return f"legacy-{digest}"
