@@ -524,6 +524,19 @@ class PartitionExecutionPlan:
     valid: bool
     human_review_required: bool
     errors: tuple[str, ...]
+    plan_version: int = 1
+    parent_plan_id: str | None = None
+    plan_type: str = "inference"
+    approved_model_version: str = "legacy"
+    strategy_id: str = "legacy-partition-v1"
+    strategy_version: str = "1.0"
+    input_snapshot_id: str = "legacy-snapshot"
+    input_snapshot_hash: str = ""
+    assumptions: tuple[str, ...] = ()
+    warnings: tuple[str, ...] = ()
+    confidence: float = 0.0
+    deterministic_signature: str = ""
+    handoff_status: str = "not_ready"
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> PartitionExecutionPlan:
@@ -559,6 +572,29 @@ class PartitionExecutionPlan:
                 str(item)
                 for item in _sequence(payload.get("errors", []), "errors")
             ),
+            plan_version=_int(payload.get("plan_version", 1), "plan_version", minimum=1),
+            parent_plan_id=(
+                None
+                if payload.get("parent_plan_id") is None
+                else str(payload.get("parent_plan_id") or "").strip() or None
+            ),
+            plan_type=str(payload.get("plan_type") or "inference"),
+            approved_model_version=str(payload.get("approved_model_version") or "legacy"),
+            strategy_id=str(payload.get("strategy_id") or "legacy-partition-v1"),
+            strategy_version=str(payload.get("strategy_version") or "1.0"),
+            input_snapshot_id=str(payload.get("input_snapshot_id") or "legacy-snapshot"),
+            input_snapshot_hash=str(payload.get("input_snapshot_hash") or ""),
+            assumptions=tuple(
+                str(item)
+                for item in _sequence(payload.get("assumptions", []), "assumptions")
+            ),
+            warnings=tuple(
+                str(item)
+                for item in _sequence(payload.get("warnings", []), "warnings")
+            ),
+            confidence=_float(payload.get("confidence", 0.0), "confidence"),
+            deterministic_signature=str(payload.get("deterministic_signature") or ""),
+            handoff_status=str(payload.get("handoff_status") or "not_ready"),
         )
 
     @classmethod
@@ -606,6 +642,19 @@ class PartitionExecutionPlan:
             "valid": self.valid,
             "human_review_required": self.human_review_required,
             "errors": list(self.errors),
+            "plan_version": self.plan_version,
+            "parent_plan_id": self.parent_plan_id,
+            "plan_type": self.plan_type,
+            "approved_model_version": self.approved_model_version,
+            "strategy_id": self.strategy_id,
+            "strategy_version": self.strategy_version,
+            "input_snapshot_id": self.input_snapshot_id,
+            "input_snapshot_hash": self.input_snapshot_hash,
+            "assumptions": list(self.assumptions),
+            "warnings": list(self.warnings),
+            "confidence": self.confidence,
+            "deterministic_signature": self.deterministic_signature,
+            "handoff_status": self.handoff_status,
         }
 
 

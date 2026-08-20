@@ -1,12 +1,19 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
+
+import pytest
 
 from aiops_k8s_agents.model_partition_agent import (
     ModelPartitionOrchestrationAgent,
     ModelPartitionPolicy,
 )
+from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
+from aiops_k8s_agents.partition_context import canonical_json
+from aiops_k8s_agents.partition_common import PartitionCommonProcessor
+from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
 from aiops_k8s_agents.partition_models import (
     FederatedRoundPlan,
     PartitionFailure,
@@ -38,6 +45,61 @@ def agent() -> ModelPartitionOrchestrationAgent:
     return ModelPartitionOrchestrationAgent(
         example_policy(), plan_id_factory=lambda: "partition-plan-test"
     )
+
+
+@pytest.fixture
+def orchestrator() -> ModelPartitionOrchestrationAgent:
+    return agent()
+
+
+@pytest.fixture
+def inference_request() -> PartitionPlanningRequest:
+    payload = json.loads(
+        (ROOT / "config" / "examples" / "model_partition_inference_v2.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    return PartitionPlanningRequest.from_dict(payload)
+
+
+def test_v2_plan_records_strategy_snapshot_and_signature(
+    orchestrator, inference_request
+):
+    plan = orchestrator.plan_request(inference_request)
+
+    assert plan.plan_version == 1
+    assert plan.parent_plan_id is None
+    assert plan.plan_type == "inference"
+    assert plan.strategy_id == "inference-partition-v1"
+    assert len(plan.input_snapshot_hash) == 64
+    assert len(plan.deterministic_signature) == 64
+    assert 0.0 <= plan.confidence <= 1.0
+
+
+def test_v2_plan_signature_binds_normalized_strategy_policy_and_selected_content(
+    orchestrator, inference_request
+):
+    plan = orchestrator.plan_request(inference_request)
+    normalized = PartitionCommonProcessor().process(inference_request)
+    strategy = PartitionStrategyRegistry.default().resolve(
+        normalized.plan_type, normalized.approved_execution_mode.name
+    )
+    intent = strategy.build_partition_intent(normalized)
+    signature_payload = {
+        "input_signature": normalized.input_signature,
+        "strategy_id": intent.strategy_id,
+        "strategy_version": intent.strategy_version,
+        "policy_version": orchestrator.policy.version,
+        "selected_candidate": (
+            None
+            if plan.selected_candidate is None
+            else plan.selected_candidate.to_dict()
+        ),
+    }
+
+    assert plan.deterministic_signature == hashlib.sha256(
+        canonical_json(signature_payload).encode("utf-8")
+    ).hexdigest()
 
 
 def test_planner_selects_lowest_scored_feasible_split():

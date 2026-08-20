@@ -206,6 +206,49 @@ def test_execution_plan_serializes_selected_candidate_and_safe_failure():
     assert failed.valid is False
 
 
+def test_execution_plan_reads_legacy_payload_with_v2_metadata_defaults():
+    legacy_payload = PartitionExecutionPlan.safe_failure(
+        plan_id="partition-plan-legacy",
+        job_id="job-001",
+        model_id="model-001",
+        approved_execution_mode="split_learning",
+        policy_version="partition-policy-v1",
+        errors=("no_feasible_partition",),
+    ).to_dict()
+    for field in (
+        "plan_version",
+        "parent_plan_id",
+        "plan_type",
+        "approved_model_version",
+        "strategy_id",
+        "strategy_version",
+        "input_snapshot_id",
+        "input_snapshot_hash",
+        "assumptions",
+        "warnings",
+        "confidence",
+        "deterministic_signature",
+        "handoff_status",
+    ):
+        legacy_payload.pop(field, None)
+
+    plan = PartitionExecutionPlan.from_dict(legacy_payload)
+
+    assert plan.plan_version == 1
+    assert plan.parent_plan_id is None
+    assert plan.plan_type == "inference"
+    assert plan.approved_model_version == "legacy"
+    assert plan.strategy_id == "legacy-partition-v1"
+    assert plan.strategy_version == "1.0"
+    assert plan.input_snapshot_id == "legacy-snapshot"
+    assert plan.input_snapshot_hash == ""
+    assert plan.assumptions == ()
+    assert plan.warnings == ()
+    assert plan.confidence == 0.0
+    assert plan.deterministic_signature == ""
+    assert plan.handoff_status == "not_ready"
+
+
 def test_partition_failure_requires_supported_signal():
     failure = PartitionFailure.from_dict(
         {

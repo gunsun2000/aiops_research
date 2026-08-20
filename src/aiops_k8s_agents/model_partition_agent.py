@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+import hashlib
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from itertools import combinations
 from pathlib import Path
 from typing import Callable, Iterable
 from uuid import uuid4
 
+from aiops_k8s_agents.partition_common import (
+    NormalizedPartitionRequest,
+    PartitionCommonProcessor,
+)
+from aiops_k8s_agents.partition_context import canonical_json
+from aiops_k8s_agents.partition_coordination import (
+    LegacyFederatedRoundPlanAdapter,
+    PartitionPlanningRequest,
+)
 from aiops_k8s_agents.partition_models import (
     ExecutionGraphEdge,
     ExecutionGraphNode,
@@ -17,6 +27,10 @@ from aiops_k8s_agents.partition_models import (
     PartitionExecutionPlan,
     PartitionFailure,
     ResourceDevice,
+)
+from aiops_k8s_agents.partition_strategies import (
+    PartitionIntent,
+    PartitionStrategyRegistry,
 )
 
 
@@ -80,14 +94,31 @@ class ModelPartitionOrchestrationAgent:
         policy: ModelPartitionPolicy,
         *,
         plan_id_factory: Callable[[], str] | None = None,
+        common_processor: PartitionCommonProcessor | None = None,
+        strategy_registry: PartitionStrategyRegistry | None = None,
+        legacy_adapter: LegacyFederatedRoundPlanAdapter | None = None,
     ) -> None:
         self.policy = policy
         self._plan_id_factory = plan_id_factory or (
             lambda: f"partition-plan-{uuid4().hex}"
         )
+        self._common_processor = common_processor or PartitionCommonProcessor()
+        self._strategy_registry = strategy_registry or PartitionStrategyRegistry.default()
+        self._legacy_adapter = legacy_adapter or LegacyFederatedRoundPlanAdapter()
 
     def plan(self, round_plan: FederatedRoundPlan) -> PartitionExecutionPlan:
-        return self._plan(round_plan)
+        return self.plan_request(self._legacy_adapter.adapt(round_plan))
+
+    def plan_request(
+        self, request: PartitionPlanningRequest
+    ) -> PartitionExecutionPlan:
+        normalized = self._common_processor.process(request)
+        strategy = self._strategy_registry.resolve(
+            normalized.plan_type, normalized.approved_execution_mode.name
+        )
+        intent = strategy.build_partition_intent(normalized)
+        plan = self._plan(self._round_plan_from_normalized(normalized))
+        return self._with_v2_metadata(plan, normalized, intent)
 
     def replan(
         self,
@@ -207,6 +238,69 @@ class ModelPartitionOrchestrationAgent:
             valid=True,
             human_review_required=False,
             errors=(),
+        )
+
+    @staticmethod
+    def _round_plan_from_normalized(
+        request: NormalizedPartitionRequest,
+    ) -> FederatedRoundPlan:
+        return FederatedRoundPlan(
+            job_id=request.job_id,
+            model_id=request.model_id,
+            execution_mode=request.approved_execution_mode,
+            layers=request.layers,
+            participants=request.participants,
+            devices=request.devices,
+            network_links=request.network_links,
+            constraints=request.constraints,
+        )
+
+    def _with_v2_metadata(
+        self,
+        plan: PartitionExecutionPlan,
+        request: NormalizedPartitionRequest,
+        intent: PartitionIntent,
+    ) -> PartitionExecutionPlan:
+        signature_payload = {
+            "input_signature": request.input_signature,
+            "strategy_id": intent.strategy_id,
+            "strategy_version": intent.strategy_version,
+            "policy_version": self.policy.version,
+            "selected_candidate": (
+                None
+                if plan.selected_candidate is None
+                else plan.selected_candidate.to_dict()
+            ),
+        }
+        return replace(
+            plan,
+            plan_version=1,
+            parent_plan_id=None,
+            plan_type=request.plan_type,
+            approved_model_version=request.approved_model_version,
+            strategy_id=intent.strategy_id,
+            strategy_version=intent.strategy_version,
+            input_snapshot_id=request.context_snapshot_id,
+            input_snapshot_hash=request.context_snapshot_hash,
+            assumptions=intent.assumptions,
+            warnings=intent.warnings,
+            confidence=self._intent_confidence(intent),
+            deterministic_signature=hashlib.sha256(
+                canonical_json(signature_payload).encode("utf-8")
+            ).hexdigest(),
+            handoff_status="not_ready",
+        )
+
+    @staticmethod
+    def _intent_confidence(intent: PartitionIntent) -> float:
+        prefix = "planning_confidence:"
+        for assumption in intent.assumptions:
+            if assumption.startswith(prefix):
+                confidence = float(assumption.removeprefix(prefix))
+                if 0.0 <= confidence <= 1.0:
+                    return confidence
+        raise PartitionContractError(
+            "invalid_partition_intent", "strategy intent must include valid confidence"
         )
 
     def _build_candidate(
