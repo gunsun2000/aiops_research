@@ -29,6 +29,7 @@ from aiops_k8s_agents.partition_repository import (
     PartitionPlanRepository,
     SchedulingHandoff,
 )
+from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
 from aiops_k8s_agents.partition_validator import PartitionPlanValidator
 
 
@@ -42,15 +43,18 @@ def run_partition_planning(
     failure_payload: Mapping[str, Any] | None = None,
     replan_attempt: int = 1,
     plan_id_factory: Callable[[], str] | None = None,
+    v2_request: bool | None = None,
 ) -> dict[str, Any]:
     policy = ModelPartitionPolicy.from_path(policy_path)
+    strategy_registry = PartitionStrategyRegistry.default(Path(policy_path))
     agent = ModelPartitionOrchestrationAgent(
-        policy, plan_id_factory=plan_id_factory
+        policy,
+        plan_id_factory=plan_id_factory,
+        strategy_registry=strategy_registry,
     )
+    is_v2_request = "coordination_plan" in payload if v2_request is None else v2_request
     planning_request = (
-        PartitionPlanningRequest.from_dict(payload)
-        if "coordination_plan" in payload
-        else None
+        PartitionPlanningRequest.from_dict(payload) if is_v2_request else None
     )
     round_plan = (
         agent._round_plan_from_normalized(
@@ -89,11 +93,15 @@ def run_partition_planning(
             if planning_request is not None
             else agent.plan(round_plan)
         )
-    validation = PartitionPlanValidator().validate(planning_request or round_plan, plan)
+    validation = PartitionPlanValidator(strategy_registry=strategy_registry).validate(
+        planning_request or round_plan, plan
+    )
     observed_metrics = (
         None if observed is None else ObservedPartitionMetrics.from_dict(observed)
     )
-    evaluation = PartitionPlanEvaluator(policy).evaluate(
+    evaluation = PartitionPlanEvaluator(
+        policy, strategy_registry=strategy_registry
+    ).evaluate(
         planning_request or round_plan,
         plan,
         validation,
@@ -120,7 +128,9 @@ def run_partition_planning(
             id_factory=lambda: f"scheduling-handoff-{plan.plan_id}",
             clock=lambda: datetime.now(timezone.utc).isoformat(),
         ).to_dict()
-    artifact_path = write_partition_report(report, artifact_root)
+    artifact_path = write_partition_report(
+        report, artifact_root, policy_path=policy_path
+    )
     return {**report, "artifact_path": str(artifact_path)}
 
 
@@ -136,6 +146,7 @@ class PartitionFeedbackService:
     ) -> None:
         self._repository = repository
         self._policy = ModelPartitionPolicy.from_path(policy_path)
+        self._strategy_registry = PartitionStrategyRegistry.default(Path(policy_path))
         self._plan_id_factory = plan_id_factory
         self._analyzer = PartitionFeedbackAnalyzer()
 
@@ -165,7 +176,9 @@ class PartitionFeedbackService:
         effective_directive = self._prior_exclusions(previous_report).merge(directive)
         round_plan = FederatedRoundPlan.from_dict(previous_report["round_plan"])
         agent = ModelPartitionOrchestrationAgent(
-            self._policy, plan_id_factory=self._plan_id_factory
+            self._policy,
+            plan_id_factory=self._plan_id_factory,
+            strategy_registry=self._strategy_registry,
         )
         request_payload = previous_report.get("planning_request")
         request = (
@@ -188,9 +201,13 @@ class PartitionFeedbackService:
                 attempt=previous_plan.plan_version,
             )
         )
-        validation = PartitionPlanValidator().validate(request or round_plan, plan)
-        evaluation = PartitionPlanEvaluator(self._policy).evaluate(
-            round_plan, plan, validation
+        validation = PartitionPlanValidator(
+            strategy_registry=self._strategy_registry
+        ).validate(request or round_plan, plan)
+        evaluation = PartitionPlanEvaluator(
+            self._policy, strategy_registry=self._strategy_registry
+        ).evaluate(
+            request or round_plan, plan, validation
         )
         report = {
             "schema_version": "1.0",

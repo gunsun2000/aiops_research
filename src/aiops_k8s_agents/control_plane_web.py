@@ -72,7 +72,7 @@ try:
         StreamingResponse,
     )
     from fastapi.staticfiles import StaticFiles
-    from pydantic import BaseModel, Field
+    from pydantic import BaseModel, ConfigDict, Field
 except ModuleNotFoundError as exc:  # pragma: no cover - exercised at runtime.
     raise RuntimeError(
         "Control Plane UI dependencies are not installed. "
@@ -169,11 +169,13 @@ class RecoveryComparisonCreateRequest(BaseModel):
 
 
 class ModelPartitionPlanRequest(BaseModel):
-    round_plan: dict[str, Any] | None = None
-    request: dict[str, Any] | None = None
-    observed: dict[str, Any] | None = None
-    previous_plan: dict[str, Any] | None = None
-    failure: dict[str, Any] | None = None
+    model_config = ConfigDict(populate_by_name=True)
+
+    round_plan: dict[str, Any] | None = Field(default=None)
+    v2_request: dict[str, Any] | None = Field(default=None, alias="request")
+    observed: dict[str, Any] | None = Field(default=None)
+    previous_plan: dict[str, Any] | None = Field(default=None)
+    failure: dict[str, Any] | None = Field(default=None)
     replan_attempt: int = Field(default=1, ge=1)
 
 
@@ -236,13 +238,14 @@ def api_model_partition_plan(
     request: Request,
 ) -> dict[str, Any] | JSONResponse:
     state: RuntimeApiState = request.app.state.runtime_api
-    if (body.round_plan is None) == (body.request is None):
+    if (body.round_plan is None) == (body.v2_request is None):
         return _partition_error_response(
             PartitionContractError(
                 "invalid_partition_request",
                 "exactly one of round_plan or request must be provided",
             )
         )
+    is_v2_request = body.v2_request is not None
     if (body.previous_plan is None) != (body.failure is None):
         return _partition_error_response(
             PartitionContractError(
@@ -252,44 +255,60 @@ def api_model_partition_plan(
         )
     try:
         return state.model_partition_service(
-            body.request or body.round_plan,
+            body.v2_request if is_v2_request else body.round_plan,
             policy_path=state.model_partition_policy_path,
             artifact_root=state.model_partition_artifact_root,
             observed=body.observed,
             previous_plan_payload=body.previous_plan,
             failure_payload=body.failure,
             replan_attempt=body.replan_attempt,
+            v2_request=is_v2_request,
         )
     except PartitionContractError as exc:
-        return _partition_error_response(exc)
+        return (
+            _partition_error_response(exc)
+            if is_v2_request
+            else _legacy_partition_error_response(exc)
+        )
     except ValueError as exc:
-        return _partition_error_response(
-            PartitionContractError("invalid_partition_request", str(exc))
+        error = PartitionContractError("invalid_partition_request", str(exc))
+        return (
+            _partition_error_response(error)
+            if is_v2_request
+            else _legacy_partition_error_response(error)
         )
     except Exception:
         LOGGER.exception("Unexpected model partition planning failure")
         return _partition_internal_error()
 
 
-@router.get("/api/model-partition/strategies")
-def api_model_partition_strategies(request: Request) -> dict[str, object]:
+@router.get("/api/model-partition/strategies", response_model=None)
+def api_model_partition_strategies(
+    request: Request,
+) -> dict[str, object] | JSONResponse:
     state: RuntimeApiState = request.app.state.runtime_api
-    registry = PartitionStrategyRegistry.default(state.model_partition_policy_path)
-    strategies: dict[tuple[str, str], dict[str, Any]] = {}
-    for plan_type, mode, strategy in registry.entries:
-        key = (plan_type, strategy.strategy_id)
-        item = strategies.setdefault(
-            key,
-            {
-                "plan_type": plan_type,
-                "strategy_id": strategy.strategy_id,
-                "strategy_version": strategy.strategy_version,
-                "policy_version": strategy.policy_version,
-                "supported_modes": [],
-            },
-        )
-        item["supported_modes"].append(mode)
-    return {"strategies": list(strategies.values())}
+    try:
+        registry = PartitionStrategyRegistry.default(state.model_partition_policy_path)
+        strategies: dict[tuple[str, str], dict[str, Any]] = {}
+        for plan_type, mode, strategy in registry.entries:
+            key = (plan_type, strategy.strategy_id)
+            item = strategies.setdefault(
+                key,
+                {
+                    "plan_type": plan_type,
+                    "strategy_id": strategy.strategy_id,
+                    "strategy_version": strategy.strategy_version,
+                    "policy_version": strategy.policy_version,
+                    "supported_modes": [],
+                },
+            )
+            item["supported_modes"].append(mode)
+        return {"strategies": list(strategies.values())}
+    except PartitionContractError as exc:
+        return _partition_error_response(exc)
+    except Exception:
+        LOGGER.exception("Unexpected model partition strategy lookup failure")
+        return _partition_internal_error()
 
 
 @router.get("/api/model-partition/plans/{plan_id}", response_model=None)
@@ -364,6 +383,13 @@ def _partition_error_response(error: PartitionContractError) -> JSONResponse:
     return JSONResponse(
         status_code=status_code,
         content={"error_code": error.code, "message": error.message},
+    )
+
+
+def _legacy_partition_error_response(error: PartitionContractError) -> JSONResponse:
+    return JSONResponse(
+        status_code=422,
+        content={"detail": {"code": error.code, "message": error.message}},
     )
 
 
@@ -1602,7 +1628,9 @@ def create_app(
         model_partition_artifact_root
         or root / "runs" / "control-plane" / "model-partition"
     ).expanduser().resolve()
-    partition_repository = PartitionPlanRepository(partition_artifact_root)
+    partition_repository = PartitionPlanRepository(
+        partition_artifact_root, policy_path=partition_policy_path
+    )
     partition_example_path = Path(
         model_partition_example_path
         or root / "config" / "examples" / "model_partition_job.json"

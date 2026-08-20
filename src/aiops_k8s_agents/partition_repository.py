@@ -18,6 +18,7 @@ from aiops_k8s_agents.partition_models import (
     PartitionContractError,
     PartitionExecutionPlan,
 )
+from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
 from aiops_k8s_agents.partition_validator import PartitionPlanValidator
 
 
@@ -76,8 +77,11 @@ class PartitionPlanRepository:
         }
     )
 
-    def __init__(self, root: str | Path) -> None:
+    def __init__(
+        self, root: str | Path, *, policy_path: str | Path | None = None
+    ) -> None:
         self.root = Path(root).expanduser().resolve()
+        self._policy_path = None if policy_path is None else Path(policy_path)
         self._fault_injector: Callable[[str], None] | None = None
         self._recover_incomplete_transactions()
 
@@ -203,8 +207,7 @@ class PartitionPlanRepository:
                 "the V2 partition validator did not independently approve this report",
             )
 
-    @staticmethod
-    def _is_independently_valid(report: Mapping[str, Any]) -> bool:
+    def _is_independently_valid(self, report: Mapping[str, Any]) -> bool:
         try:
             round_plan = FederatedRoundPlan.from_dict(report["round_plan"])
             plan = PartitionExecutionPlan.from_dict(report["plan"])
@@ -228,7 +231,9 @@ class PartitionPlanRepository:
                 request = LegacyFederatedRoundPlanAdapter().adapt(round_plan)
         except (KeyError, PartitionContractError, TypeError):
             return False
-        validation = PartitionPlanValidator().validate(request, plan)
+        validation = PartitionPlanValidator(
+            strategy_registry=PartitionStrategyRegistry.default(self._policy_path)
+        ).validate(request, plan)
         return validation.valid or (
             request.legacy_input
             and set(validation.errors) == {"predicted_throughput_unverifiable"}

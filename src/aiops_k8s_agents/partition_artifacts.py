@@ -17,7 +17,10 @@ from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
 
 
 def write_partition_report(
-    report: Mapping[str, Any], artifact_root: str | Path
+    report: Mapping[str, Any],
+    artifact_root: str | Path,
+    *,
+    policy_path: str | Path | None = None,
 ) -> Path:
     plan_id = str(report["plan"]["plan_id"])
     output_directory = Path(artifact_root).expanduser().resolve() / plan_id
@@ -25,8 +28,10 @@ def write_partition_report(
     persisted_report = dict(report)
 
     if _is_v2_report(persisted_report):
-        repository = PartitionPlanRepository(artifact_root)
-        normalized_request, partition_intent = _derive_planning_artifacts(persisted_report)
+        repository = PartitionPlanRepository(artifact_root, policy_path=policy_path)
+        normalized_request, partition_intent = _derive_planning_artifacts(
+            persisted_report, policy_path=policy_path
+        )
         repository.save(
             persisted_report,
             sidecars={
@@ -52,7 +57,9 @@ def _is_v2_report(report: Mapping[str, Any]) -> bool:
     )
 
 
-def _derive_planning_artifacts(report: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _derive_planning_artifacts(
+    report: Mapping[str, Any], *, policy_path: str | Path | None = None
+) -> tuple[dict[str, Any], dict[str, Any]]:
     request_payload = report.get("planning_request")
     if isinstance(request_payload, Mapping):
         request = PartitionPlanningRequest.from_dict(request_payload)
@@ -60,7 +67,9 @@ def _derive_planning_artifacts(report: Mapping[str, Any]) -> tuple[dict[str, Any
         round_plan = FederatedRoundPlan.from_dict(report["round_plan"])
         request = LegacyFederatedRoundPlanAdapter().adapt(round_plan)
     normalized_request = PartitionCommonProcessor().process(request)
-    strategy = PartitionStrategyRegistry.default().resolve(
+    strategy = PartitionStrategyRegistry.default(
+        None if policy_path is None else Path(policy_path)
+    ).resolve(
         normalized_request.plan_type,
         normalized_request.approved_execution_mode.name,
     )

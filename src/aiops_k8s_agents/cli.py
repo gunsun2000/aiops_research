@@ -768,7 +768,7 @@ def run_partition_feedback_cli(args: argparse.Namespace) -> dict[str, Any]:
         return run_partition_feedback(
             args.plan_id,
             _load_json_object(args.feedback),
-            PartitionPlanRepository(args.artifact_root),
+            PartitionPlanRepository(args.artifact_root, policy_path=args.policy),
             args.policy,
         )
     except PartitionContractError as exc:

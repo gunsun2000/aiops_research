@@ -20,6 +20,31 @@ def _v2_input_path(tmp_path: Path) -> Path:
     return path
 
 
+def _custom_policy_path(tmp_path: Path) -> Path:
+    policy = json.loads(Path(POLICY).read_text(encoding="utf-8"))
+    policy["version"] = "partition-policy-cli-test"
+    policy["confidence"]["base"] = 0.61
+    policy["strategy_policies"]["inference-partition-v1"]["objectives"] = {
+        "latency": 0.1,
+        "memory_pressure": 0.7,
+        "communication": 0.2,
+    }
+    path = tmp_path / "custom-policy.json"
+    path.write_text(json.dumps(policy), encoding="utf-8")
+    return path
+
+
+def _latency_feedback(report: dict) -> dict:
+    return {
+        "signal": "latency_slo_violation",
+        "source": "runtime-monitor",
+        "reason": "observed latency exceeded the approved SLO",
+        "received_at": "2026-08-20T00:00:00+00:00",
+        "plan_id": report["plan"]["plan_id"],
+        "plan_version": report["plan"]["plan_version"],
+    }
+
+
 def test_plan_model_partition_cli_writes_validated_artifact(tmp_path, capsys):
     exit_code = main(
         [
@@ -236,3 +261,46 @@ def test_plan_model_partition_v2_cli_reports_invalid_input(tmp_path, capsys):
 
     assert exit_code == 2
     assert report["error"]["code"] == "invalid_input"
+
+
+def test_v2_cli_threads_custom_policy_to_plan_artifact_and_feedback(tmp_path, capsys):
+    artifact_root = tmp_path / "artifacts"
+    input_path = _v2_input_path(tmp_path)
+    policy_path = _custom_policy_path(tmp_path)
+
+    assert main(
+        [
+            "plan-model-partition-v2",
+            "--input",
+            str(input_path),
+            "--policy",
+            str(policy_path),
+            "--artifact-root",
+            str(artifact_root),
+        ]
+    ) == 0
+    initial = json.loads(capsys.readouterr().out)
+    feedback_path = tmp_path / "feedback.json"
+    feedback_path.write_text(json.dumps(_latency_feedback(initial)), encoding="utf-8")
+
+    assert main(
+        [
+            "feedback-model-partition",
+            "--plan-id",
+            initial["plan"]["plan_id"],
+            "--feedback",
+            str(feedback_path),
+            "--policy",
+            str(policy_path),
+            "--artifact-root",
+            str(artifact_root),
+        ]
+    ) == 0
+    feedback = json.loads(capsys.readouterr().out)
+
+    assert initial["plan"]["strategy_version"] == (
+        "inference-partition-v1:partition-policy-cli-test"
+    )
+    assert initial["evaluation"]["policy_version"] == "partition-policy-cli-test"
+    assert feedback["evaluation"]["policy_version"] == "partition-policy-cli-test"
+    assert feedback["plan"]["strategy_version"] == initial["plan"]["strategy_version"]
