@@ -372,7 +372,10 @@ def test_strategy_catalog_uses_stable_errors_for_bad_and_unexpected_policy_reads
     monkeypatch.setattr(
         "aiops_k8s_agents.control_plane_web.PartitionStrategyRegistry.default",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
-            RuntimeError("strategy-secret-must-not-leak")
+            RuntimeError(
+                "strategy-secret-must-not-leak "
+                "C:\\Users\\private\\policy.json /home/private/policy.json"
+            )
         ),
     )
     unexpected_response = client.get("/api/model-partition/strategies")
@@ -386,3 +389,31 @@ def test_strategy_catalog_uses_stable_errors_for_bad_and_unexpected_policy_reads
         "error_code": "internal_error",
         "message": "model partition request could not be completed",
     }
+
+
+def test_strategy_catalog_hides_windows_and_posix_policy_paths(tmp_path):
+    policy_paths = (
+        r"C:\\Users\\private\\partition-policy.json",
+        "/home/private/partition-policy.json",
+    )
+
+    for policy_path in policy_paths:
+        client = TestClient(
+            create_app(
+                model_partition_policy_path=policy_path,
+                model_partition_artifact_root=tmp_path / "artifacts",
+            )
+        )
+
+        response = client.get("/api/model-partition/strategies")
+
+        assert response.status_code == 400
+        assert response.json() == {
+            "error_code": "invalid_partition_policy",
+            "message": "strategy policy could not be loaded",
+        }
+        response_text = response.text.lower()
+        assert "c:\\" not in response_text
+        assert "users" not in response_text
+        assert "/home/" not in response_text
+        assert "private" not in response_text

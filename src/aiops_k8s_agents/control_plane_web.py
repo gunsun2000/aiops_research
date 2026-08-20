@@ -305,7 +305,7 @@ def api_model_partition_strategies(
             item["supported_modes"].append(mode)
         return {"strategies": list(strategies.values())}
     except PartitionContractError as exc:
-        return _partition_error_response(exc)
+        return _partition_strategy_error_response(exc)
     except Exception:
         LOGGER.exception("Unexpected model partition strategy lookup failure")
         return _partition_internal_error()
@@ -390,6 +390,13 @@ def _legacy_partition_error_response(error: PartitionContractError) -> JSONRespo
     return JSONResponse(
         status_code=422,
         content={"detail": {"code": error.code, "message": error.message}},
+    )
+
+
+def _partition_strategy_error_response(error: PartitionContractError) -> JSONResponse:
+    LOGGER.warning("Model partition strategy catalog failure: %s", error.message)
+    return _partition_error_response(
+        PartitionContractError(error.code, "strategy policy could not be loaded")
     )
 
 
