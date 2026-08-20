@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from pathlib import Path
 
@@ -69,6 +70,62 @@ def test_training_strategy_excludes_forbidden_split_boundary(
         for candidate in (plan.selected_candidate, *plan.alternative_candidates)
         if candidate is not None
     )
+
+
+def test_training_resilience_weight_changes_predicted_candidate_score(
+    training_request: PartitionPlanningRequest,
+    orchestrator: ModelPartitionOrchestrationAgent,
+) -> None:
+    plan = orchestrator.plan_request(training_request)
+    selected = plan.selected_candidate
+    assert selected is not None
+    normalized = orchestrator._common_processor.process(training_request)
+    strategy = PartitionStrategyRegistry.default().resolve(
+        normalized.plan_type,
+        normalized.approved_execution_mode.name,
+    )
+    intent = strategy.build_partition_intent(normalized)
+    performance_only = replace(
+        intent,
+        objective_weights=(
+            ("step_time", 1.0),
+            ("load_balance", 0.0),
+            ("memory_pressure", 0.0),
+            ("communication", 0.0),
+            ("resilience", 0.0),
+        ),
+    )
+    resilience_only = replace(
+        intent,
+        objective_weights=(
+            ("step_time", 0.0),
+            ("load_balance", 0.0),
+            ("memory_pressure", 0.0),
+            ("communication", 0.0),
+            ("resilience", 1.0),
+        ),
+    )
+
+    performance_score = orchestrator._score_training(
+        selected.estimated_step_time_ms,
+        selected.maximum_load_imbalance,
+        selected.maximum_memory_pressure,
+        selected.total_transfer_bytes,
+        selected.predicted_resilience_risk,
+        performance_only,
+    )
+    resilience_score = orchestrator._score_training(
+        selected.estimated_step_time_ms,
+        selected.maximum_load_imbalance,
+        selected.maximum_memory_pressure,
+        selected.total_transfer_bytes,
+        selected.predicted_resilience_risk,
+        resilience_only,
+    )
+
+    assert 0.0 <= selected.predicted_resilience_risk <= 1.0
+    assert performance_score != resilience_score
+    assert resilience_score == selected.predicted_resilience_risk
 
 
 @pytest.mark.parametrize("weight", [float("nan"), float("inf"), -float("inf")])

@@ -70,6 +70,40 @@ def test_validator_accepts_phase_distinct_training_dag():
     assert "execution_graph_cycle" not in result.errors
 
 
+def test_validator_rejects_training_graph_missing_required_aggregation_edge():
+    request = PartitionPlanningRequest.from_dict(
+        json.loads(
+            (ROOT / "config/examples/model_partition_training_v2.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    )
+    policy = ModelPartitionPolicy.from_path(ROOT / "config/model_partition_policy.json")
+    agent = ModelPartitionOrchestrationAgent(
+        policy, plan_id_factory=lambda: "validator-training-plan"
+    )
+    normalized = agent._common_processor.process(request)
+    round_plan = agent._round_plan_from_normalized(normalized)
+    plan = agent.plan_request(request)
+    selected = plan.selected_candidate
+    assert selected is not None
+    broken_plan = replace(
+        plan,
+        selected_candidate=replace(
+            selected,
+            graph_edges=tuple(
+                edge for edge in selected.graph_edges if edge.edge_type != "aggregation"
+            ),
+        ),
+    )
+
+    result = PartitionPlanValidator().validate(round_plan, broken_plan)
+
+    assert result.valid is False
+    assert "training_graph_phase_contract_mismatch" in result.errors
+    assert "execution_graph_cycle" not in result.errors
+
+
 def test_validator_detects_duplicate_and_missing_layers():
     round_plan, plan = round_plan_and_execution_plan()
     selected = plan.selected_candidate

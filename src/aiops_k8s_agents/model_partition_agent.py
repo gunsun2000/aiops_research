@@ -406,6 +406,7 @@ class ModelPartitionOrchestrationAgent:
         estimated_step_time_ms = 0.0
         gradient_transfer_bytes = 0
         maximum_load_imbalance = 0.0
+        predicted_resilience_risk = 0.0
         if partition_intent is not None:
             (
                 graph_nodes,
@@ -421,6 +422,9 @@ class ModelPartitionOrchestrationAgent:
                 partition_compute_ms=tuple(partition_compute_ms),
                 forward_transfer_ms=transfer_ms,
                 forward_transfer_bytes=transfer_bytes,
+            )
+            predicted_resilience_risk = self._predicted_resilience_risk(
+                tuple(partition_compute_ms), len(participants)
             )
 
         total_latency = (
@@ -445,6 +449,7 @@ class ModelPartitionOrchestrationAgent:
                 maximum_load_imbalance,
                 maximum_pressure,
                 transfer_bytes,
+                predicted_resilience_risk,
                 partition_intent,
             )
             if partition_intent is not None
@@ -466,6 +471,7 @@ class ModelPartitionOrchestrationAgent:
             estimated_step_time_ms=round(estimated_step_time_ms, 6),
             gradient_transfer_bytes=gradient_transfer_bytes,
             maximum_load_imbalance=round(maximum_load_imbalance, 6),
+            predicted_resilience_risk=round(predicted_resilience_risk, 6),
         )
 
     @staticmethod
@@ -580,6 +586,7 @@ class ModelPartitionOrchestrationAgent:
         maximum_load_imbalance: float,
         maximum_memory_pressure: float,
         total_transfer_bytes: int,
+        predicted_resilience_risk: float,
         intent: PartitionIntent,
     ) -> float:
         weights = dict(intent.objective_weights)
@@ -594,9 +601,31 @@ class ModelPartitionOrchestrationAgent:
             + weights["load_balance"] * maximum_load_imbalance
             + weights["memory_pressure"] * min(maximum_memory_pressure, 1.0)
             + weights["communication"] * communication
-            + weights["resilience"] * 0.0,
+            + weights["resilience"] * predicted_resilience_risk,
             6,
         )
+
+    @staticmethod
+    def _predicted_resilience_risk(
+        partition_compute_ms: tuple[float, ...],
+        eligible_participant_count: int,
+    ) -> float:
+        """Return a bounded planning-only concentration risk; lower is better.
+
+        This is not an observed runtime resilience measurement. It combines the
+        largest partition's compute share with the fraction of eligible devices
+        left unused by the partition placement.
+        """
+        if not partition_compute_ms or eligible_participant_count <= 0:
+            return 0.0
+        total_compute = sum(partition_compute_ms)
+        workload_concentration = (
+            0.0 if total_compute <= 0.0 else max(partition_compute_ms) / total_compute
+        )
+        device_concentration = 1.0 - min(
+            len(partition_compute_ms), eligible_participant_count
+        ) / eligible_participant_count
+        return min(max(max(workload_concentration, device_concentration), 0.0), 1.0)
 
     def _safe_failure(
         self,

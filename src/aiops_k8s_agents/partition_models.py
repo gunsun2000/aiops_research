@@ -459,6 +459,7 @@ class PartitionCandidate:
     estimated_step_time_ms: float = 0.0
     gradient_transfer_bytes: int = 0
     maximum_load_imbalance: float = 0.0
+    predicted_resilience_risk: float = 0.0
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> PartitionCandidate:
@@ -512,6 +513,10 @@ class PartitionCandidate:
             maximum_load_imbalance=_float(
                 payload.get("maximum_load_imbalance", 0.0), "maximum_load_imbalance"
             ),
+            predicted_resilience_risk=_float(
+                payload.get("predicted_resilience_risk", 0.0),
+                "predicted_resilience_risk",
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -531,6 +536,7 @@ class PartitionCandidate:
             "estimated_step_time_ms": self.estimated_step_time_ms,
             "gradient_transfer_bytes": self.gradient_transfer_bytes,
             "maximum_load_imbalance": self.maximum_load_imbalance,
+            "predicted_resilience_risk": self.predicted_resilience_risk,
         }
 
 

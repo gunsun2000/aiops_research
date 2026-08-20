@@ -24,6 +24,11 @@ class PartitionValidationResult:
 
 
 class PartitionPlanValidator:
+    TRAINING_GRAPH_MODES = {
+        "pipeline_parallel",
+        "split_learning",
+        "hybrid_partition",
+    }
     CHECKED_RULES = (
         "plan_identity",
         "approved_mode_provenance",
@@ -141,6 +146,13 @@ class PartitionPlanValidator:
                 errors.append(
                     f"missing_network_link:{source.device_id}->{target.device_id}"
                 )
+        if is_training_plan:
+            self._validate_training_graph_contract(
+                plan.approved_execution_mode,
+                selected.partitions,
+                selected.graph_edges,
+                errors,
+            )
         if self._has_cycle(adjacency):
             errors.append("execution_graph_cycle")
 
@@ -198,6 +210,56 @@ class PartitionPlanValidator:
             and edge_type == "backward"
             and (target_device, source_device) in link_pairs
         )
+
+    def _validate_training_graph_contract(
+        self,
+        approved_mode: str,
+        partitions: tuple[Any, ...],
+        graph_edges: tuple[Any, ...],
+        errors: list[str],
+    ) -> None:
+        if approved_mode not in self.TRAINING_GRAPH_MODES:
+            errors.append("training_graph_mode_not_supported")
+            return
+        expected_edges = {
+            *(
+                (
+                    f"{source.partition_id}:forward",
+                    f"{target.partition_id}:forward",
+                    "forward",
+                )
+                for source, target in zip(partitions, partitions[1:])
+            ),
+            *(
+                (
+                    f"{target.partition_id}:backward",
+                    f"{source.partition_id}:backward",
+                    "backward",
+                )
+                for source, target in zip(partitions, partitions[1:])
+            ),
+        }
+        if partitions:
+            expected_edges.update(
+                {
+                    (
+                        f"{partitions[-1].partition_id}:forward",
+                        f"{partitions[-1].partition_id}:backward",
+                        "gradient",
+                    ),
+                    (
+                        f"{partitions[0].partition_id}:backward",
+                        "aggregation",
+                        "aggregation",
+                    ),
+                }
+            )
+        actual_edges = {
+            (edge.source_partition, edge.target_partition, edge.edge_type)
+            for edge in graph_edges
+        }
+        if actual_edges != expected_edges:
+            errors.append("training_graph_phase_contract_mismatch")
 
     @staticmethod
     def _has_cycle(adjacency: dict[str, set[str]]) -> bool:
