@@ -7,7 +7,10 @@ from pathlib import Path
 import pytest
 
 from aiops_k8s_agents.partition_common import PartitionCommonProcessor
-from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
+from aiops_k8s_agents.partition_coordination import (
+    LegacyFederatedRoundPlanAdapter,
+    PartitionPlanningRequest,
+)
 from aiops_k8s_agents.partition_models import PartitionContractError
 from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
 
@@ -98,7 +101,7 @@ def test_inference_intent_rejects_a_mode_not_approved_for_its_strategy(
     assert error.value.code == "strategy_not_supported"
 
 
-@pytest.mark.parametrize("mode", ["pipeline_parallel", "legacy_approved_mode"])
+@pytest.mark.parametrize("mode", ["pipeline_parallel", "split_learning"])
 def test_registry_supports_each_explicitly_approved_inference_mode(mode):
     strategy = PartitionStrategyRegistry.default().resolve("inference", mode)
 
@@ -122,3 +125,53 @@ def test_inference_intent_warns_when_the_normalized_request_has_no_forecast():
 
     assert "workload_forecast_missing: confidence reduced" in intent.warnings
     assert "planning_confidence:0.8" in intent.assumptions
+
+
+def test_registry_routes_the_actual_legacy_adapter_mode():
+    payload = json.loads(
+        (ROOT / "config/examples/model_partition_job.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    request = PartitionCommonProcessor().process(
+        LegacyFederatedRoundPlanAdapter().adapt(payload)
+    )
+
+    strategy = PartitionStrategyRegistry.default().resolve(
+        request.plan_type,
+        request.approved_execution_mode.name,
+    )
+
+    assert request.approved_execution_mode.name == "split_learning"
+    assert strategy.strategy_id == "inference-partition-v1"
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), -float("inf")])
+@pytest.mark.parametrize(
+    "section,key",
+    [
+        ("confidence", "base"),
+        ("confidence", "missing_forecast_penalty"),
+        ("confidence", "legacy_input_penalty"),
+        ("objectives", "latency"),
+        ("objectives", "memory_pressure"),
+        ("objectives", "communication"),
+    ],
+)
+def test_registry_rejects_non_finite_policy_fractions(tmp_path, section, key, value):
+    policy = json.loads(
+        (ROOT / "config/model_partition_policy.json").read_text(encoding="utf-8")
+    )
+    target = (
+        policy["confidence"]
+        if section == "confidence"
+        else policy["strategy_policies"]["inference-partition-v1"]["objectives"]
+    )
+    target[key] = value
+    path = tmp_path / "model_partition_policy.json"
+    path.write_text(json.dumps(policy), encoding="utf-8")
+
+    with pytest.raises(PartitionContractError) as error:
+        PartitionStrategyRegistry.default(path)
+
+    assert error.value.code == "invalid_partition_policy"

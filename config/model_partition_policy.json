@@ -12,7 +12,7 @@
   "max_replan_attempts": 2,
   "strategy_policies": {
     "inference-partition-v1": {
-      "supported_modes": ["split_inference", "pipeline_parallel", "legacy_approved_mode"],
+      "supported_modes": ["split_inference", "pipeline_parallel", "split_learning"],
       "objectives": {
         "latency": 0.5,
         "memory_pressure": 0.3,

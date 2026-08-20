@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from math import isfinite
 from pathlib import Path
 from typing import Any, Mapping, Protocol
 
@@ -208,7 +209,7 @@ def _fraction(value: Any, field: str) -> float:
         raise PartitionContractError(
             "invalid_partition_policy", f"{field} must be numeric"
         ) from exc
-    if number < 0.0 or number > 1.0:
+    if not isfinite(number) or number < 0.0 or number > 1.0:
         raise PartitionContractError(
             "invalid_partition_policy", f"{field} must be between 0.0 and 1.0"
         )
