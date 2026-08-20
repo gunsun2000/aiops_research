@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -57,14 +58,23 @@ class SchedulingHandoff:
 
 
 class PartitionPlanRepository:
-    def __init__(
-        self,
-        root: str | Path,
-        *,
-        validation_runner: Callable[[Mapping[str, Any]], bool] | None = None,
-    ) -> None:
+    _COMMIT_FILE = "commit.json"
+    _PENDING_FILE = "pending.json"
+    _RESERVED_SIDECARS = frozenset(
+        {
+            "report.json",
+            "latest.json",
+            "history.json",
+            "scheduling_handoff.json",
+            _COMMIT_FILE,
+            _PENDING_FILE,
+        }
+    )
+
+    def __init__(self, root: str | Path) -> None:
         self.root = Path(root).expanduser().resolve()
-        self._validation_runner = validation_runner
+        self._fault_injector: Callable[[str], None] | None = None
+        self._recover_incomplete_transactions()
 
     def save(
         self,
@@ -73,21 +83,23 @@ class PartitionPlanRepository:
         sidecars: Mapping[str, object] | None = None,
         include_legacy_report: bool = False,
     ) -> Path:
-        plan = self._validated_plan(report)
+        self._recover_incomplete_transactions()
+        plan = self._plan_identity(report)
         plan_id = str(plan["plan_id"])
         version = plan["plan_version"]
         plan_directory = self.root / plan_id
         latest_path = plan_directory / "latest.json"
-        if latest_path.is_file():
+        version_path = plan_directory / "versions" / str(version) / "report.json"
+        self._reject_reserved_sidecars(sidecars)
+
+        if self._is_committed(plan_directory) and latest_path.is_file():
             existing_plan = self._read_json(latest_path).get("plan", {})
             if existing_plan.get("plan_version") != version:
                 raise PartitionContractError(
                     "plan_id_reused",
                     "each persisted partition plan version requires a unique plan_id",
                 )
-        version_path = plan_directory / "versions" / str(version) / "report.json"
-
-        if version_path.exists():
+        if self._is_committed(plan_directory) and version_path.is_file():
             existing = self._read_json(version_path)
             if (
                 existing.get("plan", {}).get("deterministic_signature")
@@ -99,31 +111,31 @@ class PartitionPlanRepository:
                 )
             return version_path
 
+        self._validate_plan(report, plan)
         self._validate_lineage(plan)
-        history = self._history_entries(plan_directory, report, plan)
-        changes: dict[Path, object] = {}
-        if include_legacy_report:
-            changes[plan_directory / "report.json"] = report
-        changes[version_path] = report
-        changes[latest_path] = report
-        changes[plan_directory / "history.json"] = history
-        for name, value in (sidecars or {}).items():
-            if Path(name).name != name:
-                raise PartitionContractError(
-                    "invalid_contract", "sidecar names must not include a path"
-                )
-            changes[version_path.parent / name] = value
-        self._publish_transaction(changes)
+        persisted_report = self._with_canonical_handoff(report)
+        history = self._history_entries(plan_directory, persisted_report, plan)
+        self._publish_plan_directory(
+            plan_directory,
+            version_path,
+            persisted_report,
+            history,
+            sidecars or {},
+            include_legacy_report,
+        )
+        if isinstance(report, MutableMapping):
+            report["scheduling_handoff"] = persisted_report["scheduling_handoff"]
         return version_path
 
     def get(self, plan_id: str, version: int | None = None) -> dict[str, Any]:
+        self._recover_incomplete_transactions()
         plan_directory = self.root / plan_id
         path = (
             plan_directory / "latest.json"
             if version is None
             else plan_directory / "versions" / str(version) / "report.json"
         )
-        if not path.is_file():
+        if not self._is_committed(plan_directory) or not path.is_file():
             raise PartitionContractError(
                 "plan_not_found", f"no persisted plan found for {plan_id}"
             )
@@ -147,17 +159,10 @@ class PartitionPlanRepository:
             )
         return tuple(lineage)
 
-    def _validated_plan(self, report: Mapping[str, Any]) -> Mapping[str, Any]:
+    def _plan_identity(self, report: Mapping[str, Any]) -> Mapping[str, Any]:
         plan = report.get("plan")
-        if (
-            not isinstance(plan, Mapping)
-            or report.get("status") != "planned"
-            or plan.get("valid") is not True
-        ):
-            raise PartitionContractError(
-                "unvalidated_partition_plan",
-                "only independently validated planned reports may be persisted",
-            )
+        if not isinstance(plan, Mapping):
+            raise PartitionContractError("invalid_contract", "plan must be an object")
         plan_id = str(plan.get("plan_id") or "").strip()
         signature = str(plan.get("deterministic_signature") or "").strip()
         version = plan.get("plan_version")
@@ -172,16 +177,24 @@ class PartitionPlanRepository:
                 "invalid_contract",
                 "plan_id, plan_version, and deterministic_signature are required",
             )
+        return plan
+
+    def _validate_plan(
+        self, report: Mapping[str, Any], plan: Mapping[str, Any]
+    ) -> None:
+        if report.get("status") != "planned" or plan.get("valid") is not True:
+            raise PartitionContractError(
+                "unvalidated_partition_plan",
+                "only independently validated planned reports may be persisted",
+            )
         if not self._is_independently_valid(report):
             raise PartitionContractError(
                 "independent_validation_failed",
                 "the V2 partition validator did not independently approve this report",
             )
-        return plan
 
-    def _is_independently_valid(self, report: Mapping[str, Any]) -> bool:
-        if self._validation_runner is not None:
-            return bool(self._validation_runner(report))
+    @staticmethod
+    def _is_independently_valid(report: Mapping[str, Any]) -> bool:
         try:
             round_plan = FederatedRoundPlan.from_dict(report["round_plan"])
             plan = PartitionExecutionPlan.from_dict(report["plan"])
@@ -193,6 +206,16 @@ class PartitionPlanRepository:
             request.legacy_input
             and set(validation.errors) == {"predicted_throughput_unverifiable"}
         )
+
+    def _with_canonical_handoff(self, report: Mapping[str, Any]) -> dict[str, Any]:
+        persisted_report = dict(report)
+        plan = PartitionExecutionPlan.from_dict(report["plan"])
+        persisted_report["scheduling_handoff"] = SchedulingHandoff.create(
+            plan,
+            id_factory=lambda: f"scheduling-handoff-{uuid4().hex}",
+            clock=lambda: datetime.now(timezone.utc).isoformat(),
+        ).to_dict()
+        return persisted_report
 
     def _validate_lineage(self, plan: Mapping[str, Any]) -> None:
         version = plan["plan_version"]
@@ -234,6 +257,8 @@ class PartitionPlanRepository:
         if not self.root.is_dir():
             return False
         for plan_directory in self.root.iterdir():
+            if not self._is_committed(plan_directory):
+                continue
             latest_path = plan_directory / "latest.json"
             if not latest_path.is_file():
                 continue
@@ -241,11 +266,6 @@ class PartitionPlanRepository:
             if child.get("parent_plan_id") == parent_plan_id:
                 return True
         return False
-
-    @staticmethod
-    def _read_json(path: Path) -> dict[str, Any]:
-        with path.open(encoding="utf-8") as handle:
-            return json.load(handle)
 
     def _history_entries(
         self,
@@ -267,48 +287,123 @@ class PartitionPlanRepository:
         )
         return entries
 
-    def _publish_transaction(self, changes: Mapping[Path, object]) -> None:
-        transaction = self.root / f".partition-transaction-{uuid4().hex}"
-        published: list[tuple[Path, Path | None]] = []
+    def _publish_plan_directory(
+        self,
+        plan_directory: Path,
+        version_path: Path,
+        report: Mapping[str, Any],
+        history: list[dict[str, Any]],
+        sidecars: Mapping[str, object],
+        include_legacy_report: bool,
+    ) -> None:
+        transaction_root = self.root / f".partition-staging-{uuid4().hex}"
+        staged_plan_directory = transaction_root / plan_directory.name
+        published = False
         try:
-            transaction.mkdir(parents=True, exist_ok=False)
-            staged: list[tuple[Path, Path]] = []
-            for index, (target, value) in enumerate(changes.items()):
-                staged_path = transaction / f"staged-{index}.json"
-                staged_path.write_text(
-                    json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True)
-                    + "\n",
-                    encoding="utf-8",
+            self._write_json(staged_plan_directory / self._PENDING_FILE, {"pending": True})
+            if include_legacy_report:
+                self._write_json(staged_plan_directory / "report.json", report)
+            relative_version_path = version_path.relative_to(plan_directory)
+            self._write_json(staged_plan_directory / relative_version_path, report)
+            self._write_json(staged_plan_directory / "latest.json", report)
+            self._write_json(staged_plan_directory / "history.json", history)
+            self._write_json(
+                staged_plan_directory / "versions" / str(report["plan"]["plan_version"]) / "scheduling_handoff.json",
+                report["scheduling_handoff"],
+            )
+            for name, value in sidecars.items():
+                self._write_json(
+                    staged_plan_directory
+                    / "versions"
+                    / str(report["plan"]["plan_version"])
+                    / name,
+                    value,
                 )
-                staged.append((target, staged_path))
-            for index, (target, staged_path) in enumerate(staged):
-                backup = None
-                if target.is_file():
-                    backup = transaction / f"backup-{index}.json"
-                    shutil.copy2(target, backup)
-                target.parent.mkdir(parents=True, exist_ok=True)
-                staged_path.replace(target)
-                published.append((target, backup))
-        except Exception:
-            self._rollback(published, self.root)
-            raise
+            self._fsync_directory(staged_plan_directory)
+            plan_directory.parent.mkdir(parents=True, exist_ok=True)
+            staged_plan_directory.replace(plan_directory)
+            published = True
+            self._inject_fault("after_plan_directory_replace")
+            self._write_commit_marker(plan_directory)
+            (plan_directory / self._PENDING_FILE).unlink(missing_ok=True)
+            self._fsync_directory(plan_directory)
         finally:
-            shutil.rmtree(transaction, ignore_errors=True)
+            if not published:
+                shutil.rmtree(transaction_root, ignore_errors=True)
+            elif transaction_root.exists():
+                shutil.rmtree(transaction_root, ignore_errors=True)
+
+    def _write_commit_marker(self, plan_directory: Path) -> None:
+        marker = plan_directory / self._COMMIT_FILE
+        temporary = plan_directory / f".{self._COMMIT_FILE}.{uuid4().hex}.tmp"
+        temporary.write_text(
+            json.dumps({"committed": True}, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        self._fsync_file(temporary)
+        temporary.replace(marker)
+        self._fsync_directory(plan_directory)
+
+    def _recover_incomplete_transactions(self) -> None:
+        if not self.root.is_dir():
+            return
+        for path in self.root.iterdir():
+            if path.name.startswith(".partition-staging-"):
+                shutil.rmtree(path, ignore_errors=True)
+                continue
+            if (
+                path.is_dir()
+                and (path / self._PENDING_FILE).is_file()
+                and not (path / self._COMMIT_FILE).is_file()
+            ):
+                shutil.rmtree(path, ignore_errors=True)
+
+    def _is_committed(self, plan_directory: Path) -> bool:
+        return (plan_directory / self._COMMIT_FILE).is_file()
+
+    def _reject_reserved_sidecars(self, sidecars: Mapping[str, object] | None) -> None:
+        for name in (sidecars or {}):
+            if Path(name).name != name:
+                raise PartitionContractError(
+                    "invalid_contract", "sidecar names must not include a path"
+                )
+            if name in self._RESERVED_SIDECARS:
+                raise PartitionContractError(
+                    "reserved_sidecar_name", f"{name} is managed by the repository"
+                )
+
+    def _inject_fault(self, point: str) -> None:
+        if self._fault_injector is not None:
+            self._fault_injector(point)
 
     @staticmethod
-    def _rollback(
-        published: list[tuple[Path, Path | None]], root: Path
-    ) -> None:
-        for target, backup in reversed(published):
-            if backup is None:
-                target.unlink(missing_ok=True)
-            else:
-                os.replace(backup, target)
-        for target, _ in reversed(published):
-            directory = target.parent
-            while directory != root:
-                try:
-                    directory.rmdir()
-                except OSError:
-                    break
-                directory = directory.parent
+    def _read_json(path: Path) -> dict[str, Any]:
+        with path.open(encoding="utf-8") as handle:
+            return json.load(handle)
+
+    @staticmethod
+    def _write_json(path: Path, value: object) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(value, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        PartitionPlanRepository._fsync_file(path)
+
+    @staticmethod
+    def _fsync_file(path: Path) -> None:
+        with path.open("r+b") as handle:
+            os.fsync(handle.fileno())
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        try:
+            descriptor = os.open(path, os.O_RDONLY)
+        except OSError:
+            return
+        try:
+            os.fsync(descriptor)
+        except OSError:
+            pass
+        finally:
+            os.close(descriptor)

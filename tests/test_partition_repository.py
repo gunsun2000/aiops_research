@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import copy
+import json
+from pathlib import Path
 
 import pytest
 
@@ -10,23 +12,27 @@ from aiops_k8s_agents.partition_repository import (
     PartitionPlanRepository,
     SchedulingHandoff,
 )
+from aiops_k8s_agents.partition_service import run_partition_planning
+
+
+ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
-def report_v1() -> dict:
-    return {
-        "schema_version": "1.0",
-        "kind": "model_partition_orchestration",
-        "status": "planned",
-        "plan": {
-            "plan_id": "partition-plan-v1",
-            "plan_version": 1,
-            "parent_plan_id": None,
-            "valid": True,
-            "deterministic_signature": "a" * 64,
-        },
-        "validation": {"valid": True},
-    }
+def report_v1(tmp_path) -> dict:
+    payload = json.loads(
+        (ROOT / "config/examples/model_partition_job.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    report = run_partition_planning(
+        payload,
+        policy_path=ROOT / "config/model_partition_policy.json",
+        artifact_root=tmp_path / "source-artifacts",
+        plan_id_factory=lambda: "partition-plan-v1",
+    )
+    report.pop("artifact_path")
+    return report
 
 
 def test_repository_saves_versioned_plan_and_latest_pointer(tmp_path, report_v1):
@@ -49,6 +55,33 @@ def test_repository_rejects_duplicate_version_with_different_signature(tmp_path,
         repository.save(tampered)
 
     assert error.value.code == "plan_version_conflict"
+
+
+def test_repository_canonicalizes_a_forged_scheduling_handoff(tmp_path, report_v1):
+    report_v1["scheduling_handoff"] = {
+        "handoff_id": "forged-handoff",
+        "partition_plan_id": "partition-plan-v1",
+        "partition_plan_version": 1,
+        "created_at": "2026-08-20T00:00:00+00:00",
+        "status": "scheduled",
+        "scheduler_ref": "external-scheduler-run-7",
+    }
+    repository = _repository(tmp_path)
+
+    repository.save(report_v1)
+
+    handoff = repository.get("partition-plan-v1")["scheduling_handoff"]
+    assert handoff["status"] == "blocked"
+    assert handoff["scheduler_ref"] is None
+
+
+def test_repository_rejects_reserved_report_sidecar_name(tmp_path, report_v1):
+    repository = _repository(tmp_path)
+
+    with pytest.raises(PartitionContractError) as error:
+        repository.save(report_v1, sidecars={"report.json": {"forged": True}})
+
+    assert error.value.code == "reserved_sidecar_name"
 
 
 def test_repository_requires_a_unique_plan_id_for_each_persisted_version(
@@ -75,7 +108,6 @@ def test_repository_history_follows_immediate_parent_plan_links(tmp_path, report
             "plan_id": "partition-plan-v2",
             "plan_version": 2,
             "parent_plan_id": "partition-plan-v1",
-            "deterministic_signature": "b" * 64,
         }
     )
     repository.save(report_v2)
@@ -96,7 +128,6 @@ def test_repository_rejects_an_orphan_parent_plan(tmp_path, report_v1):
             "plan_id": "partition-plan-v2",
             "plan_version": 2,
             "parent_plan_id": "missing-plan",
-            "deterministic_signature": "b" * 64,
         }
     )
 
@@ -117,7 +148,6 @@ def test_repository_rejects_a_parent_that_skips_the_current_predecessor(
             "plan_id": "partition-plan-v2",
             "plan_version": 2,
             "parent_plan_id": "partition-plan-v1",
-            "deterministic_signature": "b" * 64,
         }
     )
     repository.save(report_v2)
@@ -127,7 +157,6 @@ def test_repository_rejects_a_parent_that_skips_the_current_predecessor(
             "plan_id": "partition-plan-v3",
             "plan_version": 3,
             "parent_plan_id": "partition-plan-v1",
-            "deterministic_signature": "c" * 64,
         }
     )
 
@@ -148,7 +177,6 @@ def test_repository_rejects_a_second_child_for_the_current_predecessor(
             "plan_id": "partition-plan-v2",
             "plan_version": 2,
             "parent_plan_id": "partition-plan-v1",
-            "deterministic_signature": "b" * 64,
         }
     )
     repository.save(report_v2)
@@ -156,7 +184,6 @@ def test_repository_rejects_a_second_child_for_the_current_predecessor(
     forked_version["plan"].update(
         {
             "plan_id": "partition-plan-v2-fork",
-            "deterministic_signature": "c" * 64,
         }
     )
 
@@ -164,6 +191,36 @@ def test_repository_rejects_a_second_child_for_the_current_predecessor(
         repository.save(forked_version)
 
     assert error.value.code == "non_immediate_parent_plan"
+
+
+def test_repository_recovers_a_post_replace_crash_without_publishing_child(
+    tmp_path, report_v1
+):
+    parent_repository = _repository(tmp_path)
+    parent_repository.save(report_v1)
+    child = copy.deepcopy(report_v1)
+    child["plan"].update(
+        {
+            "plan_id": "partition-plan-v2",
+            "plan_version": 2,
+            "parent_plan_id": "partition-plan-v1",
+        }
+    )
+    crashing_repository = _repository(tmp_path)
+
+    def crash_after_replace(point: str) -> None:
+        if point == "after_plan_directory_replace":
+            raise OSError("deterministic post-replace interruption")
+
+    crashing_repository._fault_injector = crash_after_replace
+    with pytest.raises(OSError, match="deterministic post-replace interruption"):
+        crashing_repository.save(child)
+
+    recovered = _repository(tmp_path)
+    assert recovered.get("partition-plan-v1")["plan"]["plan_version"] == 1
+    with pytest.raises(PartitionContractError) as error:
+        recovered.get("partition-plan-v2")
+    assert error.value.code == "plan_not_found"
 
 
 def test_scheduling_handoff_is_a_ready_read_only_projection():
@@ -214,4 +271,4 @@ def test_scheduling_handoff_blocks_a_plan_without_ready_handoff_status():
 
 
 def _repository(tmp_path):
-    return PartitionPlanRepository(tmp_path, validation_runner=lambda report: True)
+    return PartitionPlanRepository(tmp_path)

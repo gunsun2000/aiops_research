@@ -124,7 +124,7 @@ def test_artifact_writer_replaces_a_forged_scheduler_claim(tmp_path):
     assert report["scheduling_handoff"] == persisted["scheduling_handoff"]
 
 
-def test_artifact_write_rolls_back_all_contract_files_after_interruption(
+def test_artifact_write_recovers_all_contract_files_after_interruption(
     tmp_path, monkeypatch
 ):
     artifact_root = tmp_path / "artifacts"
@@ -139,21 +139,20 @@ def test_artifact_write_rolls_back_all_contract_files_after_interruption(
         }
     )
     before = _artifact_snapshot(artifact_root)
-    replace = Path.replace
-    replace_calls = 0
-
-    def interrupt_on_sixth_replace(path: Path, target: str | Path) -> Path:
-        nonlocal replace_calls
-        replace_calls += 1
-        if replace_calls == 6:
+    def interrupt_after_directory_replace(
+        repository: PartitionPlanRepository, point: str
+    ) -> None:
+        if point == "after_plan_directory_replace":
             raise OSError("deterministic publication interruption")
-        return replace(path, target)
 
-    monkeypatch.setattr(Path, "replace", interrupt_on_sixth_replace)
+    monkeypatch.setattr(
+        PartitionPlanRepository, "_inject_fault", interrupt_after_directory_replace
+    )
 
     with pytest.raises(OSError, match="deterministic publication interruption"):
         write_partition_report(child, artifact_root)
 
+    PartitionPlanRepository(artifact_root)
     assert _artifact_snapshot(artifact_root) == before
     assert not (artifact_root / "partition-plan-v2").exists()
 
@@ -182,6 +181,30 @@ def test_repository_revalidates_a_v2_signature_despite_a_forged_valid_flag(
         repository.save(report)
 
     assert error.value.code == "independent_validation_failed"
+
+
+def test_permissive_validation_hook_cannot_authorize_an_invalid_v2_report(tmp_path):
+    report = _planned_report(tmp_path / "source-artifacts", "partition-plan-v1")
+    report["plan"]["deterministic_signature"] = "0" * 64
+    repository = PartitionPlanRepository(tmp_path / "repository")
+    repository._validation_runner = lambda _: True
+
+    with pytest.raises(PartitionContractError) as error:
+        repository.save(report)
+
+    assert error.value.code == "independent_validation_failed"
+
+
+def test_signed_blocked_report_preserves_only_legacy_artifact(tmp_path):
+    report = _planned_report(tmp_path / "source-artifacts", "partition-plan-v1")
+    report["status"] = "blocked"
+    report["plan"]["valid"] = False
+    report["validation"]["valid"] = False
+
+    artifact_path = write_partition_report(report, tmp_path / "artifacts")
+
+    assert artifact_path.is_file()
+    assert not (artifact_path.parent / "versions").exists()
 
 
 def _planned_report(artifact_root: Path, plan_id: str) -> dict:
