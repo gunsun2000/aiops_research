@@ -9,5 +9,20 @@
     "latency_reference_ms": 1000.0,
     "transfer_reference_bytes": 5000000
   },
-  "max_replan_attempts": 2
+  "max_replan_attempts": 2,
+  "strategy_policies": {
+    "inference-partition-v1": {
+      "supported_modes": ["split_inference", "pipeline_parallel", "legacy_approved_mode"],
+      "objectives": {
+        "latency": 0.5,
+        "memory_pressure": 0.3,
+        "communication": 0.2
+      }
+    }
+  },
+  "confidence": {
+    "base": 0.95,
+    "missing_forecast_penalty": 0.15,
+    "legacy_input_penalty": 0.10
+  }
 }

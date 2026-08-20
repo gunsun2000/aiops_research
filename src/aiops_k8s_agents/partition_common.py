@@ -31,6 +31,7 @@ class NormalizedPartitionRequest:
     context_snapshot_hash: str
     input_signature: str
     legacy_input: bool
+    workload_forecast_available: bool = False
 
 
 class PartitionCommonProcessor:
@@ -93,6 +94,7 @@ class PartitionCommonProcessor:
             "context_snapshot_id": context.snapshot_id,
             "context_snapshot_hash": context_hash,
             "legacy_input": request.legacy_input,
+            "workload_forecast_available": context.workload_forecast is not None,
         }
         return NormalizedPartitionRequest(
             plan_type=request.envelope.plan_type,
@@ -111,6 +113,7 @@ class PartitionCommonProcessor:
                 canonical_json(signature_payload).encode("utf-8")
             ).hexdigest(),
             legacy_input=request.legacy_input,
+            workload_forecast_available=context.workload_forecast is not None,
         )
 
     @staticmethod
