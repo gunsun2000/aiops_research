@@ -30,7 +30,7 @@ def report_v1() -> dict:
 
 
 def test_repository_saves_versioned_plan_and_latest_pointer(tmp_path, report_v1):
-    repository = PartitionPlanRepository(tmp_path)
+    repository = _repository(tmp_path)
 
     saved = repository.save(report_v1)
 
@@ -40,7 +40,7 @@ def test_repository_saves_versioned_plan_and_latest_pointer(tmp_path, report_v1)
 
 
 def test_repository_rejects_duplicate_version_with_different_signature(tmp_path, report_v1):
-    repository = PartitionPlanRepository(tmp_path)
+    repository = _repository(tmp_path)
     repository.save(report_v1)
     tampered = copy.deepcopy(report_v1)
     tampered["plan"]["deterministic_signature"] = "0" * 64
@@ -54,7 +54,7 @@ def test_repository_rejects_duplicate_version_with_different_signature(tmp_path,
 def test_repository_requires_a_unique_plan_id_for_each_persisted_version(
     tmp_path, report_v1
 ):
-    repository = PartitionPlanRepository(tmp_path)
+    repository = _repository(tmp_path)
     repository.save(report_v1)
     reused_plan_id = copy.deepcopy(report_v1)
     reused_plan_id["plan"]["plan_version"] = 2
@@ -67,7 +67,7 @@ def test_repository_requires_a_unique_plan_id_for_each_persisted_version(
 
 
 def test_repository_history_follows_immediate_parent_plan_links(tmp_path, report_v1):
-    repository = PartitionPlanRepository(tmp_path)
+    repository = _repository(tmp_path)
     repository.save(report_v1)
     report_v2 = copy.deepcopy(report_v1)
     report_v2["plan"].update(
@@ -86,6 +86,84 @@ def test_repository_history_follows_immediate_parent_plan_links(tmp_path, report
         "partition-plan-v2",
         "partition-plan-v1",
     ]
+
+
+def test_repository_rejects_an_orphan_parent_plan(tmp_path, report_v1):
+    repository = _repository(tmp_path)
+    child = copy.deepcopy(report_v1)
+    child["plan"].update(
+        {
+            "plan_id": "partition-plan-v2",
+            "plan_version": 2,
+            "parent_plan_id": "missing-plan",
+            "deterministic_signature": "b" * 64,
+        }
+    )
+
+    with pytest.raises(PartitionContractError) as error:
+        repository.save(child)
+
+    assert error.value.code == "orphan_parent_plan"
+
+
+def test_repository_rejects_a_parent_that_skips_the_current_predecessor(
+    tmp_path, report_v1
+):
+    repository = _repository(tmp_path)
+    repository.save(report_v1)
+    report_v2 = copy.deepcopy(report_v1)
+    report_v2["plan"].update(
+        {
+            "plan_id": "partition-plan-v2",
+            "plan_version": 2,
+            "parent_plan_id": "partition-plan-v1",
+            "deterministic_signature": "b" * 64,
+        }
+    )
+    repository.save(report_v2)
+    report_v3 = copy.deepcopy(report_v2)
+    report_v3["plan"].update(
+        {
+            "plan_id": "partition-plan-v3",
+            "plan_version": 3,
+            "parent_plan_id": "partition-plan-v1",
+            "deterministic_signature": "c" * 64,
+        }
+    )
+
+    with pytest.raises(PartitionContractError) as error:
+        repository.save(report_v3)
+
+    assert error.value.code == "non_immediate_parent_plan"
+
+
+def test_repository_rejects_a_second_child_for_the_current_predecessor(
+    tmp_path, report_v1
+):
+    repository = _repository(tmp_path)
+    repository.save(report_v1)
+    report_v2 = copy.deepcopy(report_v1)
+    report_v2["plan"].update(
+        {
+            "plan_id": "partition-plan-v2",
+            "plan_version": 2,
+            "parent_plan_id": "partition-plan-v1",
+            "deterministic_signature": "b" * 64,
+        }
+    )
+    repository.save(report_v2)
+    forked_version = copy.deepcopy(report_v2)
+    forked_version["plan"].update(
+        {
+            "plan_id": "partition-plan-v2-fork",
+            "deterministic_signature": "c" * 64,
+        }
+    )
+
+    with pytest.raises(PartitionContractError) as error:
+        repository.save(forked_version)
+
+    assert error.value.code == "non_immediate_parent_plan"
 
 
 def test_scheduling_handoff_is_a_ready_read_only_projection():
@@ -133,3 +211,7 @@ def test_scheduling_handoff_blocks_a_plan_without_ready_handoff_status():
 
     assert handoff.status == "blocked"
     assert handoff.scheduler_ref is None
+
+
+def _repository(tmp_path):
+    return PartitionPlanRepository(tmp_path, validation_runner=lambda report: True)

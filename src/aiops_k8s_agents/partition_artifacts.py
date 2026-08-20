@@ -26,32 +26,31 @@ def write_partition_report(
     output_path = output_directory / "report.json"
     persisted_report = dict(report)
 
-    if _is_independently_validated(persisted_report):
+    if _is_v2_report(persisted_report):
         handoff = _scheduling_handoff(persisted_report)
         persisted_report["scheduling_handoff"] = handoff
+        repository = PartitionPlanRepository(artifact_root)
+        normalized_request, partition_intent = _derive_planning_artifacts(persisted_report)
+        repository.save(
+            persisted_report,
+            sidecars={
+                "normalized_request.json": normalized_request,
+                "partition_intent.json": partition_intent,
+                "scheduling_handoff.json": handoff,
+            },
+            include_legacy_report=True,
+        )
         if isinstance(report, MutableMapping):
             report["scheduling_handoff"] = handoff
-        _write_json(output_path, persisted_report)
-        repository = PartitionPlanRepository(artifact_root)
-        version_path = repository.save(persisted_report)
-        normalized_request, partition_intent = _derive_planning_artifacts(persisted_report)
-        _write_json(version_path.parent / "normalized_request.json", normalized_request)
-        _write_json(version_path.parent / "partition_intent.json", partition_intent)
-        _write_json(version_path.parent / "scheduling_handoff.json", handoff)
     else:
         _write_json(output_path, persisted_report)
     return output_path
 
 
-def _is_independently_validated(report: Mapping[str, Any]) -> bool:
+def _is_v2_report(report: Mapping[str, Any]) -> bool:
     plan = report.get("plan")
-    validation = report.get("validation")
     return (
         isinstance(plan, Mapping)
-        and isinstance(validation, Mapping)
-        and report.get("status") == "planned"
-        and plan.get("valid") is True
-        and validation.get("valid") is True
         and bool(str(plan.get("deterministic_signature") or "").strip())
     )
 
@@ -68,9 +67,6 @@ def _derive_planning_artifacts(report: Mapping[str, Any]) -> tuple[dict[str, Any
 
 
 def _scheduling_handoff(report: Mapping[str, Any]) -> dict[str, Any]:
-    existing = report.get("scheduling_handoff")
-    if isinstance(existing, Mapping):
-        return dict(existing)
     return SchedulingHandoff.create(
         PartitionExecutionPlan.from_dict(report["plan"]),
         id_factory=lambda: f"scheduling-handoff-{uuid4().hex}",
