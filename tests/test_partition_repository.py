@@ -297,6 +297,20 @@ def test_repository_upgrades_a_legacy_directory_without_losing_legacy_artifacts(
     ) == {"evidence": "preserved"}
 
 
+def test_repository_default_upgrade_preserves_exact_legacy_report(
+    tmp_path, report_v1
+):
+    plan_directory = tmp_path / "partition-plan-v1"
+    plan_directory.mkdir()
+    legacy_report = b'{\r\n  "legacy": true,\r\n  "format": "preserve exactly"\r\n}\r\n'
+    (plan_directory / "report.json").write_bytes(legacy_report)
+    repository = _repository(tmp_path)
+
+    repository.save(report_v1)
+
+    assert (plan_directory / "report.json").read_bytes() == legacy_report
+
+
 @pytest.mark.parametrize(
     "fault_point", ["after_plan_directory_backup", "after_plan_directory_replace"]
 )

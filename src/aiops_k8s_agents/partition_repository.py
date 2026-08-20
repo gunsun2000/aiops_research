@@ -312,7 +312,10 @@ class PartitionPlanRepository:
                 raise PartitionContractError(
                     "invalid_contract", "a partition plan path must be a directory"
                 )
-            self._remove_staged_repository_metadata(staged_plan_directory)
+            self._remove_staged_repository_metadata(
+                staged_plan_directory,
+                preserve_legacy_report=not include_legacy_report,
+            )
             self._write_json(staged_plan_directory / self._PENDING_FILE, {"pending": True})
             if include_legacy_report:
                 self._write_json(staged_plan_directory / "report.json", report)
@@ -435,7 +438,12 @@ class PartitionPlanRepository:
             normalized_sidecars.append((segments, value))
         return tuple(normalized_sidecars)
 
-    def _remove_staged_repository_metadata(self, staged_plan_directory: Path) -> None:
+    def _remove_staged_repository_metadata(
+        self,
+        staged_plan_directory: Path,
+        *,
+        preserve_legacy_report: bool,
+    ) -> None:
         if not staged_plan_directory.exists():
             return
         reserved_root_files = {
@@ -447,6 +455,8 @@ class PartitionPlanRepository:
         }
         for path in staged_plan_directory.iterdir():
             if path.is_file() and path.name.rstrip(" .").casefold() in reserved_root_files:
+                if preserve_legacy_report and path.name == "report.json":
+                    continue
                 path.unlink()
 
     def _write_transaction_marker(
