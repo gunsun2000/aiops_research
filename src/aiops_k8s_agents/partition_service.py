@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
+from uuid import uuid4
 
 from aiops_k8s_agents.model_partition_agent import (
     ModelPartitionOrchestrationAgent,
@@ -17,6 +19,7 @@ from aiops_k8s_agents.partition_models import (
     PartitionExecutionPlan,
     PartitionFailure,
 )
+from aiops_k8s_agents.partition_repository import SchedulingHandoff
 from aiops_k8s_agents.partition_validator import PartitionPlanValidator
 
 
@@ -77,5 +80,10 @@ def run_partition_planning(
         "evaluation": evaluation.to_dict(),
         "replanning": replanning,
     }
+    report["scheduling_handoff"] = SchedulingHandoff.create(
+        plan,
+        id_factory=lambda: f"scheduling-handoff-{uuid4().hex}",
+        clock=lambda: datetime.now(timezone.utc).isoformat(),
+    ).to_dict()
     artifact_path = write_partition_report(report, artifact_root)
     return {**report, "artifact_path": str(artifact_path)}
