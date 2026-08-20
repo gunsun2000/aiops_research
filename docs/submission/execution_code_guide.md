@@ -229,3 +229,156 @@ bash scripts/server_aiopslab_auto_detection.sh
 bash scripts/server_aiopslab_repeat_detection.sh
 bash scripts/server_aiopslab_summarize_runs.sh
 ```
+
+## 11. Model Partition Orchestrator V2
+
+Model Partition Orchestrator는 승인된 Coordination Plan과 읽기 전용 Snapshot에서
+후보 분할을 **계획·검증·평가**합니다. `Scheduling Handoff`는 외부 Scheduling Agent가
+소비할 versioned contract와 artifact를 준비할 뿐입니다. Queue/placement, GPU 할당,
+학습·추론 runtime은 실행하지 않습니다. observed evidence의 source와 timestamp가 없으면
+reward와 성능 값은 모두 predicted입니다.
+
+현재 checkout의 V2 CLI를 사용하려면 먼저 editable install을 수행합니다.
+
+```bash
+cd ~/geonhae/aiops_research
+conda activate aiops_research
+python -m pip install -e .
+
+PARTITION_ROOT=runs/model-partition-docs
+mkdir -p "$PARTITION_ROOT"
+```
+
+### V2 inference와 training 계획
+
+다음 committed input은 각각 승인된 Inference와 Training Coordination Plan입니다.
+
+```bash
+aiops-k8s-agents plan-model-partition-v2 \
+  --input config/examples/model_partition_inference_v2.json \
+  --policy config/model_partition_policy.json \
+  --artifact-root "$PARTITION_ROOT" \
+  > "$PARTITION_ROOT/inference-v1.json"
+
+aiops-k8s-agents plan-model-partition-v2 \
+  --input config/examples/model_partition_training_v2.json \
+  --policy config/model_partition_policy.json \
+  --artifact-root "$PARTITION_ROOT" \
+  > "$PARTITION_ROOT/training-v1.json"
+```
+
+각 report에는 candidate, independent validation, `plan_version`, Snapshot hash,
+`scheduling_handoff`가 포함됩니다. `scheduler_ref: null`은 외부 Scheduler가 아직
+연결되지 않았음을 뜻하며 Scheduling 성공을 의미하지 않습니다.
+
+### Bounded feedback 재계획
+
+feedback은 persisted plan의 ID/version을 참조해야 합니다. 아래는 committed failure
+example을 source/reason/timestamp가 있는 feedback envelope로 만들고 child plan을 생성합니다.
+
+```bash
+PLAN_ID=$(python -c 'import json; print(json.load(open("runs/model-partition-docs/inference-v1.json"))["plan"]["plan_id"])')
+
+python - "$PLAN_ID" <<'PY' > "$PARTITION_ROOT/feedback.json"
+import json
+import sys
+
+feedback = json.load(open("config/examples/model_partition_failure.json", encoding="utf-8"))
+feedback.update({
+    "source": "runtime-monitor",
+    "reason": feedback.pop("details"),
+    "received_at": "2026-08-20T00:00:00+00:00",
+    "plan_id": sys.argv[1],
+    "plan_version": 1,
+})
+print(json.dumps(feedback))
+PY
+
+aiops-k8s-agents feedback-model-partition \
+  --plan-id "$PLAN_ID" \
+  --feedback "$PARTITION_ROOT/feedback.json" \
+  --policy config/model_partition_policy.json \
+  --artifact-root "$PARTITION_ROOT"
+```
+
+이 재계획은 feedback과 충돌하는 후보/자원만 제외하고, policy의 최대 시도 횟수를
+넘기면 `human_review_required=true`로 안전하게 종료합니다. 자동으로 participant를
+늘리거나 hard constraint를 완화하지 않습니다.
+
+### Legacy compatibility
+
+기존 FederatedRoundPlan 계약은 그대로 유지됩니다. 두 command 모두 committed example을
+사용하며 planning 외 infrastructure 변경을 하지 않습니다.
+
+```bash
+aiops-k8s-agents plan-model-partition \
+  --input config/examples/model_partition_job.json \
+  --policy config/model_partition_policy.json \
+  --artifact-root "$PARTITION_ROOT" \
+  > "$PARTITION_ROOT/legacy-v1.json"
+
+python - <<'PY'
+import json
+
+report = json.load(open("runs/model-partition-docs/legacy-v1.json", encoding="utf-8"))
+with open("runs/model-partition-docs/legacy-plan.json", "w", encoding="utf-8") as handle:
+    json.dump(report["plan"], handle)
+PY
+
+aiops-k8s-agents replan-model-partition \
+  --input config/examples/model_partition_job.json \
+  --previous-plan "$PARTITION_ROOT/legacy-plan.json" \
+  --failure config/examples/model_partition_failure.json \
+  --policy config/model_partition_policy.json \
+  --artifact-root "$PARTITION_ROOT"
+```
+
+### Control Plane API: plan, history, feedback
+
+터미널 A에서 disposable local port로 Control Plane을 실행합니다. 운영 중인 기존
+Control Plane 포트는 재사용하거나 종료하지 않습니다.
+
+```bash
+export PORT=18183
+export AIOPS_BIND_ADDRESS=127.0.0.1
+export PYTHONPATH="$PWD/src"
+python -m aiops_k8s_agents.control_plane_web
+```
+
+터미널 B에서 committed V2 input을 API request envelope로 전송합니다.
+
+```bash
+BASE=http://127.0.0.1:18183
+
+curl -sS "$BASE/api/model-partition/examples" | python -m json.tool
+
+PLAN_ID=$(python -c 'import json; print(json.dumps({"request": json.load(open("config/examples/model_partition_inference_v2.json"))}))' \
+  | curl -sS -X POST "$BASE/api/model-partition/plans" \
+      -H 'Content-Type: application/json' --data-binary @- \
+  | tee "$PARTITION_ROOT/api-inference-v1.json" \
+  | python -c 'import json,sys; print(json.load(sys.stdin)["plan"]["plan_id"])')
+
+curl -sS "$BASE/api/model-partition/plans/$PLAN_ID/history" | python -m json.tool
+```
+
+Feedback uses the same committed failure example and the runtime-generated plan ID.
+
+```bash
+python - "$PLAN_ID" <<'PY' \
+  | curl -sS -X POST "$BASE/api/model-partition/plans/$PLAN_ID/feedback" \
+      -H 'Content-Type: application/json' --data-binary @- \
+  | python -m json.tool
+import json
+import sys
+
+feedback = json.load(open("config/examples/model_partition_failure.json", encoding="utf-8"))
+feedback.update({
+    "source": "runtime-monitor",
+    "reason": feedback.pop("details"),
+    "received_at": "2026-08-20T00:00:00+00:00",
+    "plan_id": sys.argv[1],
+    "plan_version": 1,
+})
+print(json.dumps(feedback))
+PY
+```

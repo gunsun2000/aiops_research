@@ -254,19 +254,38 @@ bash scripts/server_aiopslab_summarize_runs.sh
 
 ### Model Partition Orchestration
 
-웹의 `AI Workload Orchestration` 화면에서 승인된 예제 Round Plan을 불러오고 후보
-분할을 생성할 수 있습니다. 같은 엔진은 CLI에서도 실행되며 결과는 plan, 독립 검증,
-예측 Reward와 함께 JSON artifact로 저장됩니다.
+`AI Workload Orchestration`은 Recovery Profile과 분리된 결정론적 planning workspace입니다.
+
+```text
+Approved Coordination Plan
+  -> Common Processing Core
+  -> Training / Inference Partition Strategy
+  -> Deterministic Candidate Planning
+  -> Independent Validation
+  -> Versioned PartitionExecutionPlan
+  -> Scheduling Handoff
+  -> Bounded Feedback Repartition
+```
+
+Orchestrator는 상위 계층이 승인한 실행 모드를 소비할 뿐 FL, SL, 또는 추론 모드를
+선택하지 않습니다. `Scheduling Handoff`는 외부 Scheduling Agent에 전달할 계약과
+artifact를 준비하는 단계이며, Scheduling, placement, GPU 사용, 학습/추론 runtime 실행은
+이 저장소의 범위 밖입니다. 웹의 reward와 성능 값은 source와 timestamp가 있는 observed
+evidence가 명시되지 않는 한 **실행 전 예측**입니다.
+
+처음에는 editable install로 현재 checkout의 CLI를 사용합니다.
 
 ```bash
-aiops-k8s-agents plan-model-partition \
-  --input config/examples/model_partition_job.json \
+python -m pip install -e .
+aiops-k8s-agents plan-model-partition-v2 \
+  --input config/examples/model_partition_inference_v2.json \
   --policy config/model_partition_policy.json \
   --artifact-root runs/model-partition
 ```
 
-초기 구현은 planning·validation·predicted evaluation 범위입니다. 실제 runtime 실행과
-관측값 기반 평가는 후속 Scheduling / Execution Controller 연결 범위로 분리합니다.
+Inference/Training, legacy compatibility, feedback, API, and history commands are in
+[실행 코드 가이드](docs/submission/execution_code_guide.md); the reproducibility and
+feedback experiment matrix is in [시험 가이드](docs/submission/test_guide.md).
 
 ## 코드 검증
 

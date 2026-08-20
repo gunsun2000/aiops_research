@@ -218,3 +218,87 @@ bash scripts/server_aiopslab_auto_detection.sh
 bash scripts/server_aiopslab_repeat_detection.sh
 bash scripts/server_aiopslab_summarize_runs.sh
 ```
+
+## 10. Model Partition Orchestrator V2 시험
+
+Model Partition 결과는 Scheduling 또는 AI runtime 실행 결과가 아닙니다. 기본 evaluator는
+predicted evidence와 reward를 기록하며, observed 표기는 source와 timestamp가 모두 있는
+관측 evidence가 제공된 경우에만 허용됩니다. `scheduler_ref: null`은 external Scheduler가
+연결되지 않았다는 뜻입니다.
+
+### 실험 matrix
+
+| 실험 | 입력/명령 | 확인 기준 |
+| --- | --- | --- |
+| Deterministic repeatability | 같은 V2 input과 policy로 두 번 계획 | candidate 순서, 선택, deterministic signature가 동일 |
+| Strategy comparison | `model_partition_inference_v2.json`, `model_partition_training_v2.json` | type별 strategy, objective, graph/communication rule과 예측 metric이 구분됨 |
+| Infeasible rejection | memory/network/SLA 제약을 위반한 V2 input | hard-rejection reason이 남고 infeasible candidate는 선택되지 않음 |
+| Forecast comparison | forecast 포함/제거 V2 input | warnings와 confidence가 advisory forecast 상태를 반영 |
+| Scheduling feedback replan | persisted V2 plan + `model_partition_failure.json` 기반 feedback | child plan의 version 증가, parent link, bounded exclusion |
+| Exhaustion to human review | policy max replan 횟수 이후 feedback | `replan_attempts_exhausted`와 `human_review_required=true` |
+
+집중 contract suite:
+
+```bash
+python -m pytest \
+  tests/test_partition_coordination.py \
+  tests/test_partition_context.py \
+  tests/test_partition_strategies.py \
+  tests/test_partition_feedback.py \
+  tests/test_partition_repository.py \
+  tests/test_partition_service.py \
+  tests/test_partition_validator.py \
+  tests/test_partition_evaluator.py \
+  tests/test_model_partition_cli.py \
+  tests/test_model_partition_api.py \
+  tests/test_control_plane_ui.py -q
+```
+
+### CLI deterministic 재현
+
+다음은 committed inference input으로 artifact를 두 번 생성합니다. ID와 timestamp를
+제외한 deterministic signature, selected candidate, strategy/policy version을 비교합니다.
+
+```bash
+python -m pip install -e .
+
+mkdir -p runs/model-partition-repeat-one runs/model-partition-repeat-two
+
+for RUN in one two; do
+  aiops-k8s-agents plan-model-partition-v2 \
+    --input config/examples/model_partition_inference_v2.json \
+    --policy config/model_partition_policy.json \
+    --artifact-root "runs/model-partition-repeat-$RUN" \
+    > "runs/model-partition-repeat-$RUN/report.json"
+done
+
+python - <<'PY'
+import json
+
+first = json.load(open("runs/model-partition-repeat-one/report.json", encoding="utf-8"))["plan"]
+second = json.load(open("runs/model-partition-repeat-two/report.json", encoding="utf-8"))["plan"]
+for key in ("deterministic_signature", "strategy_version"):
+    assert first[key] == second[key], key
+assert first["selected_candidate"] == second["selected_candidate"]
+print("deterministic partition plan verified")
+PY
+```
+
+### Web workspace QA
+
+Control Plane을 disposable port에서 실행하고 `#orchestration`을 확인합니다.
+
+```bash
+export PORT=18183
+export AIOPS_BIND_ADDRESS=127.0.0.1
+export PYTHONPATH="$PWD/src"
+python -m aiops_k8s_agents.control_plane_web
+```
+
+Desktop와 390px mobile viewport에서 다음을 확인합니다.
+
+1. Initial Intake는 비어 있고 `Inference 샘플` 또는 `Training 샘플` 뒤에만 계획 생성이 활성화된다.
+2. Candidate Analysis는 valid/rejected, predicted metric, memory, communication, score, graph를 겹침 없이 표시한다.
+3. Handoff & Feedback은 validator, predicted reward/confidence, Snapshot hash, version history와
+   `External Scheduling Agent 없음`을 함께 표시한다.
+4. `실행 전 예측`과 `실제 Runtime 결과가 아닙니다`가 보이며 GPU/runtime/scheduler 실행을 주장하지 않는다.
