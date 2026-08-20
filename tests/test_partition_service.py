@@ -93,6 +93,33 @@ def test_partition_service_supports_bounded_replanning(tmp_path):
     assert second["replanning"]["attempt"] == 1
 
 
+def test_partition_service_persists_v2_requests_for_feedback(tmp_path):
+    payload = json.loads(
+        (ROOT / "config/examples/model_partition_inference_v2.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["coordination_plan"]["payload"]["latency_slo_ms"] = 500.0
+    payload["coordination_plan"]["payload"]["constraints"][
+        "max_end_to_end_latency_ms"
+    ] = 500.0
+
+    report = run_partition_planning(
+        payload,
+        policy_path=ROOT / "config/model_partition_policy.json",
+        artifact_root=tmp_path / "repository",
+        plan_id_factory=lambda: "partition-v2-service-plan",
+    )
+
+    assert report["status"] == "planned"
+    assert report["planning_request"] == payload
+    assert report["plan"]["plan_version"] == 1
+    assert report["scheduling_handoff"]["status"] == "ready"
+    assert PartitionPlanRepository(tmp_path / "repository").get(
+        "partition-v2-service-plan"
+    )["plan"] == report["plan"]
+
+
 @pytest.fixture
 def feedback_service(tmp_path):
     repository = PartitionPlanRepository(tmp_path / "feedback-repository")

@@ -5,7 +5,19 @@ from aiops_k8s_agents.cli import main
 
 
 EXAMPLE = "config/examples/model_partition_job.json"
+V2_EXAMPLE = "config/examples/model_partition_inference_v2.json"
 POLICY = "config/model_partition_policy.json"
+
+
+def _v2_input_path(tmp_path: Path) -> Path:
+    payload = json.loads(Path(V2_EXAMPLE).read_text(encoding="utf-8"))
+    payload["coordination_plan"]["payload"]["latency_slo_ms"] = 500.0
+    payload["coordination_plan"]["payload"]["constraints"][
+        "max_end_to_end_latency_ms"
+    ] = 500.0
+    path = tmp_path / "inference-v2.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
 
 
 def test_plan_model_partition_cli_writes_validated_artifact(tmp_path, capsys):
@@ -101,3 +113,126 @@ def test_replan_model_partition_cli_selects_a_different_split(tmp_path, capsys):
     assert exit_code == 0
     assert report["replanning"]["attempt"] == 1
     assert report["plan"]["selected_candidate"]["split_points"] != [3]
+
+
+def test_plan_model_partition_v2_cli_emits_versioned_plan(tmp_path, capsys):
+    input_path = _v2_input_path(tmp_path)
+
+    exit_code = main(
+        [
+            "plan-model-partition-v2",
+            "--input",
+            str(input_path),
+            "--policy",
+            POLICY,
+            "--artifact-root",
+            str(tmp_path / "artifacts"),
+        ]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert report["plan"]["plan_version"] == 1
+    assert report["scheduling_handoff"]["status"] == "ready"
+    assert report["scheduling_handoff"]["scheduler_ref"] is None
+
+
+def test_feedback_model_partition_cli_emits_child_plan(tmp_path, capsys):
+    artifact_root = tmp_path / "artifacts"
+    input_path = _v2_input_path(tmp_path)
+    assert main(
+        [
+            "plan-model-partition-v2",
+            "--input",
+            str(input_path),
+            "--policy",
+            POLICY,
+            "--artifact-root",
+            str(artifact_root),
+        ]
+    ) == 0
+    initial = json.loads(capsys.readouterr().out)
+    feedback_path = tmp_path / "feedback.json"
+    feedback_path.write_text(
+        json.dumps(
+            {
+                "signal": "latency_slo_violation",
+                "source": "runtime-monitor",
+                "reason": "observed latency exceeded the approved SLO",
+                "received_at": "2026-08-20T00:00:00+00:00",
+                "plan_id": initial["plan"]["plan_id"],
+                "plan_version": initial["plan"]["plan_version"],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "feedback-model-partition",
+            "--plan-id",
+            initial["plan"]["plan_id"],
+            "--feedback",
+            str(feedback_path),
+            "--policy",
+            POLICY,
+            "--artifact-root",
+            str(artifact_root),
+        ]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert report["plan"]["parent_plan_id"] == initial["plan"]["plan_id"]
+    assert report["plan"]["plan_version"] == 2
+
+
+def test_plan_model_partition_v2_cli_emits_safe_failure_without_error_exit(
+    tmp_path, capsys
+):
+    exit_code = main(
+        [
+            "plan-model-partition-v2",
+            "--input",
+            V2_EXAMPLE,
+            "--policy",
+            POLICY,
+            "--artifact-root",
+            str(tmp_path / "artifacts"),
+        ]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert report["status"] == "blocked"
+    assert report["plan"]["human_review_required"] is True
+    assert report["scheduling_handoff"] == {
+        **report["scheduling_handoff"],
+        "status": "blocked",
+        "scheduler_ref": None,
+    }
+
+
+def test_plan_model_partition_v2_cli_reports_invalid_input(tmp_path, capsys):
+    input_path = tmp_path / "invalid.json"
+    input_path.write_text("{", encoding="utf-8")
+
+    exit_code = main(
+        [
+            "plan-model-partition-v2",
+            "--input",
+            str(input_path),
+            "--policy",
+            POLICY,
+            "--artifact-root",
+            str(tmp_path / "artifacts"),
+        ]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 2
+    assert report["error"]["code"] == "invalid_input"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import importlib.util
+import logging
 import os
 import shutil
 import subprocess
@@ -55,11 +56,21 @@ from aiops_k8s_agents.prometheus_port_forward import (
     PrometheusPortForwardManager,
 )
 from aiops_k8s_agents.partition_models import PartitionContractError
-from aiops_k8s_agents.partition_service import run_partition_planning
+from aiops_k8s_agents.partition_repository import PartitionPlanRepository
+from aiops_k8s_agents.partition_service import (
+    run_partition_feedback,
+    run_partition_planning,
+)
+from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
 
 try:
     from fastapi import APIRouter, FastAPI, HTTPException, Request
-    from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
+    from fastapi.responses import (
+        FileResponse,
+        HTMLResponse,
+        JSONResponse,
+        StreamingResponse,
+    )
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel, Field
 except ModuleNotFoundError as exc:  # pragma: no cover - exercised at runtime.
@@ -70,6 +81,7 @@ except ModuleNotFoundError as exc:  # pragma: no cover - exercised at runtime.
 
 
 STATIC_DIR = project_root() / "ui" / "control_plane_static"
+LOGGER = logging.getLogger(__name__)
 
 RuntimeProbe = Callable[[], bool | Mapping[str, Any]]
 
@@ -95,6 +107,7 @@ class RuntimeApiState:
     model_partition_service: Callable[..., dict[str, Any]]
     model_partition_policy_path: Path
     model_partition_artifact_root: Path
+    model_partition_repository: PartitionPlanRepository
     model_partition_example_path: Path
 
 
@@ -156,7 +169,8 @@ class RecoveryComparisonCreateRequest(BaseModel):
 
 
 class ModelPartitionPlanRequest(BaseModel):
-    round_plan: dict[str, Any]
+    round_plan: dict[str, Any] | None = None
+    request: dict[str, Any] | None = None
     observed: dict[str, Any] | None = None
     previous_plan: dict[str, Any] | None = None
     failure: dict[str, Any] | None = None
@@ -216,23 +230,29 @@ def api_model_partition_examples(request: Request) -> dict[str, object]:
     }
 
 
-@router.post("/api/model-partition/plans")
+@router.post("/api/model-partition/plans", response_model=None)
 def api_model_partition_plan(
     body: ModelPartitionPlanRequest,
     request: Request,
-) -> dict[str, Any]:
+) -> dict[str, Any] | JSONResponse:
     state: RuntimeApiState = request.app.state.runtime_api
+    if (body.round_plan is None) == (body.request is None):
+        return _partition_error_response(
+            PartitionContractError(
+                "invalid_partition_request",
+                "exactly one of round_plan or request must be provided",
+            )
+        )
     if (body.previous_plan is None) != (body.failure is None):
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "incomplete_replan_context",
-                "message": "previous_plan and failure must be provided together",
-            },
+        return _partition_error_response(
+            PartitionContractError(
+                "incomplete_replan_context",
+                "previous_plan and failure must be provided together",
+            )
         )
     try:
         return state.model_partition_service(
-            body.round_plan,
+            body.request or body.round_plan,
             policy_path=state.model_partition_policy_path,
             artifact_root=state.model_partition_artifact_root,
             observed=body.observed,
@@ -241,15 +261,120 @@ def api_model_partition_plan(
             replan_attempt=body.replan_attempt,
         )
     except PartitionContractError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": exc.code, "message": exc.message},
-        ) from exc
+        return _partition_error_response(exc)
     except ValueError as exc:
-        raise HTTPException(
-            status_code=422,
-            detail={"code": "invalid_partition_request", "message": str(exc)},
-        ) from exc
+        return _partition_error_response(
+            PartitionContractError("invalid_partition_request", str(exc))
+        )
+    except Exception:
+        LOGGER.exception("Unexpected model partition planning failure")
+        return _partition_internal_error()
+
+
+@router.get("/api/model-partition/strategies")
+def api_model_partition_strategies(request: Request) -> dict[str, object]:
+    state: RuntimeApiState = request.app.state.runtime_api
+    registry = PartitionStrategyRegistry.default(state.model_partition_policy_path)
+    strategies: dict[tuple[str, str], dict[str, Any]] = {}
+    for plan_type, mode, strategy in registry.entries:
+        key = (plan_type, strategy.strategy_id)
+        item = strategies.setdefault(
+            key,
+            {
+                "plan_type": plan_type,
+                "strategy_id": strategy.strategy_id,
+                "strategy_version": strategy.strategy_version,
+                "policy_version": strategy.policy_version,
+                "supported_modes": [],
+            },
+        )
+        item["supported_modes"].append(mode)
+    return {"strategies": list(strategies.values())}
+
+
+@router.get("/api/model-partition/plans/{plan_id}", response_model=None)
+def api_model_partition_plan_by_id(
+    plan_id: str, request: Request
+) -> dict[str, Any] | JSONResponse:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        return state.model_partition_repository.get(plan_id)
+    except PartitionContractError as exc:
+        return _partition_error_response(exc)
+    except Exception:
+        LOGGER.exception("Unexpected model partition plan retrieval failure")
+        return _partition_internal_error(plan_id)
+
+
+@router.get("/api/model-partition/plans/{plan_id}/history", response_model=None)
+def api_model_partition_plan_history(
+    plan_id: str, request: Request
+) -> dict[str, object] | JSONResponse:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        return {"plans": list(state.model_partition_repository.history(plan_id))}
+    except PartitionContractError as exc:
+        return _partition_error_response(exc)
+    except Exception:
+        LOGGER.exception("Unexpected model partition history retrieval failure")
+        return _partition_internal_error(plan_id)
+
+
+@router.post("/api/model-partition/plans/{plan_id}/feedback", response_model=None)
+def api_model_partition_feedback(
+    plan_id: str, body: dict[str, Any], request: Request
+) -> dict[str, Any] | JSONResponse:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        return run_partition_feedback(
+            plan_id,
+            body,
+            state.model_partition_repository,
+            state.model_partition_policy_path,
+        )
+    except PartitionContractError as exc:
+        return _partition_error_response(exc)
+    except (TypeError, ValueError):
+        return _partition_error_response(
+            PartitionContractError(
+                "invalid_partition_request", "feedback must be a valid JSON object"
+            )
+        )
+    except Exception:
+        LOGGER.exception("Unexpected model partition feedback failure")
+        return _partition_internal_error(plan_id)
+
+
+def _partition_error_response(error: PartitionContractError) -> JSONResponse:
+    status_code = (
+        404
+        if error.code == "plan_not_found"
+        else 409
+        if error.code
+        in {
+            "feedback_plan_mismatch",
+            "non_current_feedback_plan",
+            "orphan_parent_plan",
+            "non_immediate_parent_plan",
+            "plan_id_reused",
+            "plan_version_conflict",
+        }
+        else 400
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content={"error_code": error.code, "message": error.message},
+    )
+
+
+def _partition_internal_error(plan_id: str | None = None) -> JSONResponse:
+    content: dict[str, str] = {
+        "error_code": "internal_error",
+        "message": "model partition request could not be completed",
+    }
+    if plan_id:
+        content["plan_id"] = plan_id
+    return JSONResponse(status_code=500, content=content)
 
 
 @router.get("/api/runs/latest")
@@ -1477,6 +1602,7 @@ def create_app(
         model_partition_artifact_root
         or root / "runs" / "control-plane" / "model-partition"
     ).expanduser().resolve()
+    partition_repository = PartitionPlanRepository(partition_artifact_root)
     partition_example_path = Path(
         model_partition_example_path
         or root / "config" / "examples" / "model_partition_job.json"
@@ -1529,6 +1655,7 @@ def create_app(
         model_partition_service=model_partition_service or run_partition_planning,
         model_partition_policy_path=partition_policy_path,
         model_partition_artifact_root=partition_artifact_root,
+        model_partition_repository=partition_repository,
         model_partition_example_path=partition_example_path,
     )
     app_instance.include_router(router)

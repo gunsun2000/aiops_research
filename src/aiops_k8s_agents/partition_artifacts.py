@@ -7,7 +7,10 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from aiops_k8s_agents.partition_common import PartitionCommonProcessor
-from aiops_k8s_agents.partition_coordination import LegacyFederatedRoundPlanAdapter
+from aiops_k8s_agents.partition_coordination import (
+    LegacyFederatedRoundPlanAdapter,
+    PartitionPlanningRequest,
+)
 from aiops_k8s_agents.partition_models import FederatedRoundPlan
 from aiops_k8s_agents.partition_repository import PartitionPlanRepository
 from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
@@ -50,8 +53,12 @@ def _is_v2_report(report: Mapping[str, Any]) -> bool:
 
 
 def _derive_planning_artifacts(report: Mapping[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
-    round_plan = FederatedRoundPlan.from_dict(report["round_plan"])
-    request = LegacyFederatedRoundPlanAdapter().adapt(round_plan)
+    request_payload = report.get("planning_request")
+    if isinstance(request_payload, Mapping):
+        request = PartitionPlanningRequest.from_dict(request_payload)
+    else:
+        round_plan = FederatedRoundPlan.from_dict(report["round_plan"])
+        request = LegacyFederatedRoundPlanAdapter().adapt(round_plan)
     normalized_request = PartitionCommonProcessor().process(request)
     strategy = PartitionStrategyRegistry.default().resolve(
         normalized_request.plan_type,

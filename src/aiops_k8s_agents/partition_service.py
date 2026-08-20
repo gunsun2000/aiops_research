@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -42,13 +43,29 @@ def run_partition_planning(
     replan_attempt: int = 1,
     plan_id_factory: Callable[[], str] | None = None,
 ) -> dict[str, Any]:
-    round_plan = FederatedRoundPlan.from_dict(payload)
     policy = ModelPartitionPolicy.from_path(policy_path)
     agent = ModelPartitionOrchestrationAgent(
         policy, plan_id_factory=plan_id_factory
     )
+    planning_request = (
+        PartitionPlanningRequest.from_dict(payload)
+        if "coordination_plan" in payload
+        else None
+    )
+    round_plan = (
+        agent._round_plan_from_normalized(
+            agent._common_processor.process(planning_request)
+        )
+        if planning_request is not None
+        else FederatedRoundPlan.from_dict(payload)
+    )
     replanning: dict[str, Any] | None = None
     if previous_plan_payload is not None or failure_payload is not None:
+        if planning_request is not None:
+            raise PartitionContractError(
+                "legacy_replan_context_not_supported",
+                "V2 partition requests must use persisted feedback replanning",
+            )
         if previous_plan_payload is None or failure_payload is None:
             raise ValueError(
                 "previous_plan_payload and failure_payload must be provided together"
@@ -67,13 +84,17 @@ def run_partition_planning(
             "previous_plan_id": previous_plan.plan_id,
         }
     else:
-        plan = agent.plan(round_plan)
-    validation = PartitionPlanValidator().validate(round_plan, plan)
+        plan = (
+            agent.plan_request(planning_request)
+            if planning_request is not None
+            else agent.plan(round_plan)
+        )
+    validation = PartitionPlanValidator().validate(planning_request or round_plan, plan)
     observed_metrics = (
         None if observed is None else ObservedPartitionMetrics.from_dict(observed)
     )
     evaluation = PartitionPlanEvaluator(policy).evaluate(
-        round_plan,
+        planning_request or round_plan,
         plan,
         validation,
         observed=observed_metrics,
@@ -82,12 +103,23 @@ def run_partition_planning(
         "schema_version": "1.0",
         "kind": "model_partition_orchestration",
         "status": "planned" if plan.valid and validation.valid else "blocked",
+        **(
+            {"planning_request": dict(payload)}
+            if planning_request is not None
+            else {}
+        ),
         "round_plan": round_plan.to_dict(),
         "plan": plan.to_dict(),
         "validation": validation.to_dict(),
         "evaluation": evaluation.to_dict(),
         "replanning": replanning,
     }
+    if report["status"] == "blocked":
+        report["scheduling_handoff"] = SchedulingHandoff.create(
+            plan,
+            id_factory=lambda: f"scheduling-handoff-{plan.plan_id}",
+            clock=lambda: datetime.now(timezone.utc).isoformat(),
+        ).to_dict()
     artifact_path = write_partition_report(report, artifact_root)
     return {**report, "artifact_path": str(artifact_path)}
 

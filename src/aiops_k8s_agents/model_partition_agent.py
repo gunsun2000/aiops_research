@@ -366,7 +366,9 @@ class ModelPartitionOrchestrationAgent:
             deterministic_signature=hashlib.sha256(
                 canonical_json(signature_payload).encode("utf-8")
             ).hexdigest(),
-            handoff_status="not_ready",
+            handoff_status=(
+                "ready" if plan.valid and not request.legacy_input else "not_ready"
+            ),
         )
 
     def _with_replan_metadata(
@@ -407,7 +409,11 @@ class ModelPartitionOrchestrationAgent:
             deterministic_signature=hashlib.sha256(
                 canonical_json(signature_payload).encode("utf-8")
             ).hexdigest(),
-            handoff_status="not_ready",
+            handoff_status=(
+                "ready"
+                if plan.valid and previous_plan.handoff_status == "ready"
+                else "not_ready"
+            ),
         )
 
     @staticmethod

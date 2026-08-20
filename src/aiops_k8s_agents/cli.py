@@ -65,7 +65,11 @@ from aiops_k8s_agents.models import (
     RecoveryActionKind,
 )
 from aiops_k8s_agents.partition_models import PartitionContractError
-from aiops_k8s_agents.partition_service import run_partition_planning
+from aiops_k8s_agents.partition_repository import PartitionPlanRepository
+from aiops_k8s_agents.partition_service import (
+    run_partition_feedback,
+    run_partition_planning,
+)
 from aiops_k8s_agents.mutual_supervision import (
     MutualSupervisionCoordinator,
     mutual_supervision_controller_name,
@@ -455,6 +459,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_partition_planning_arguments(partition_parser)
 
+    partition_v2_parser = subparsers.add_parser(
+        "plan-model-partition-v2",
+        help="Plan and persist a versioned model partition request.",
+    )
+    _add_partition_planning_arguments(partition_v2_parser)
+
     replan_parser = subparsers.add_parser(
         "replan-model-partition",
         help="Replan a model partition after a supported execution failure.",
@@ -463,6 +473,23 @@ def build_parser() -> argparse.ArgumentParser:
     replan_parser.add_argument("--previous-plan", required=True)
     replan_parser.add_argument("--failure", required=True)
     replan_parser.add_argument("--attempt", type=int, default=1)
+
+    feedback_parser = subparsers.add_parser(
+        "feedback-model-partition",
+        help="Process persisted runtime feedback with bounded repartitioning.",
+    )
+    feedback_parser.add_argument("--plan-id", required=True)
+    feedback_parser.add_argument("--feedback", required=True)
+    feedback_parser.add_argument(
+        "--policy",
+        default="config/model_partition_policy.json",
+        help="Versioned model partition policy JSON path.",
+    )
+    feedback_parser.add_argument(
+        "--artifact-root",
+        default="runs/model-partition",
+        help="Root directory for persisted partition plans.",
+    )
 
     return parser
 
@@ -688,6 +715,16 @@ def main(
         _emit_json_report(args, report)
         return 0 if report.get("status") == "planned" else 2
 
+    if args.command == "plan-model-partition-v2":
+        report = run_model_partition_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report.get("error") is None else 2
+
+    if args.command == "feedback-model-partition":
+        report = run_partition_feedback_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report.get("error") is None else 2
+
     parser.error(f"unsupported command: {args.command}")
     return 2
 
@@ -709,6 +746,30 @@ def run_model_partition_cli(args: argparse.Namespace) -> dict[str, Any]:
             artifact_root=args.artifact_root,
             observed=observed,
             **replanning,
+        )
+    except PartitionContractError as exc:
+        return {
+            "kind": "model_partition_orchestration",
+            "status": "blocked",
+            "valid": False,
+            "error": {"code": exc.code, "message": exc.message},
+        }
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return {
+            "kind": "model_partition_orchestration",
+            "status": "blocked",
+            "valid": False,
+            "error": {"code": "invalid_input", "message": str(exc)},
+        }
+
+
+def run_partition_feedback_cli(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        return run_partition_feedback(
+            args.plan_id,
+            _load_json_object(args.feedback),
+            PartitionPlanRepository(args.artifact_root),
+            args.policy,
         )
     except PartitionContractError as exc:
         return {
