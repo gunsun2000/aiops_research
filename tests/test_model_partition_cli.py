@@ -20,6 +20,17 @@ def _v2_input_path(tmp_path: Path) -> Path:
     return path
 
 
+def _infeasible_v2_input_path(tmp_path: Path) -> Path:
+    payload = json.loads(Path(V2_EXAMPLE).read_text(encoding="utf-8"))
+    payload["coordination_plan"]["payload"]["latency_slo_ms"] = 1.0
+    payload["coordination_plan"]["payload"]["constraints"][
+        "max_end_to_end_latency_ms"
+    ] = 1.0
+    path = tmp_path / "inference-v2-infeasible.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
+
+
 def _custom_policy_path(tmp_path: Path) -> Path:
     policy = json.loads(Path(POLICY).read_text(encoding="utf-8"))
     policy["version"] = "partition-policy-cli-test"
@@ -217,11 +228,12 @@ def test_feedback_model_partition_cli_emits_child_plan(tmp_path, capsys):
 def test_plan_model_partition_v2_cli_emits_safe_failure_without_error_exit(
     tmp_path, capsys
 ):
+    input_path = _infeasible_v2_input_path(tmp_path)
     exit_code = main(
         [
             "plan-model-partition-v2",
             "--input",
-            V2_EXAMPLE,
+            str(input_path),
             "--policy",
             POLICY,
             "--artifact-root",
