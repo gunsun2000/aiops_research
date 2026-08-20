@@ -3,10 +3,10 @@ from __future__ import annotations
 import json
 import os
 import shutil
-from collections.abc import MutableMapping
+from collections.abc import MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Mapping
 from uuid import uuid4
 
@@ -60,6 +60,9 @@ class SchedulingHandoff:
 class PartitionPlanRepository:
     _COMMIT_FILE = "commit.json"
     _PENDING_FILE = "pending.json"
+    _TRANSACTION_PREFIX = ".partition-transaction-"
+    _STAGING_PREFIX = ".partition-staging-"
+    _BACKUP_PREFIX = ".partition-backup-"
     _RESERVED_SIDECARS = frozenset(
         {
             "report.json",
@@ -90,7 +93,7 @@ class PartitionPlanRepository:
         plan_directory = self.root / plan_id
         latest_path = plan_directory / "latest.json"
         version_path = plan_directory / "versions" / str(version) / "report.json"
-        self._reject_reserved_sidecars(sidecars)
+        normalized_sidecars = self._normalize_sidecars(sidecars)
 
         if self._is_committed(plan_directory) and latest_path.is_file():
             existing_plan = self._read_json(latest_path).get("plan", {})
@@ -120,7 +123,7 @@ class PartitionPlanRepository:
             version_path,
             persisted_report,
             history,
-            sidecars or {},
+            normalized_sidecars,
             include_legacy_report,
         )
         if isinstance(report, MutableMapping):
@@ -293,13 +296,23 @@ class PartitionPlanRepository:
         version_path: Path,
         report: Mapping[str, Any],
         history: list[dict[str, Any]],
-        sidecars: Mapping[str, object],
+        sidecars: Sequence[tuple[tuple[str, ...], object]],
         include_legacy_report: bool,
     ) -> None:
-        transaction_root = self.root / f".partition-staging-{uuid4().hex}"
+        transaction_id = uuid4().hex
+        transaction_root = self.root / f"{self._STAGING_PREFIX}{transaction_id}"
         staged_plan_directory = transaction_root / plan_directory.name
-        published = False
+        backup_directory = self.root / f"{self._BACKUP_PREFIX}{transaction_id}"
+        transaction_marker = self.root / f"{self._TRANSACTION_PREFIX}{transaction_id}.json"
+        transaction_started = False
         try:
+            if plan_directory.is_dir():
+                shutil.copytree(plan_directory, staged_plan_directory)
+            elif plan_directory.exists():
+                raise PartitionContractError(
+                    "invalid_contract", "a partition plan path must be a directory"
+                )
+            self._remove_staged_repository_metadata(staged_plan_directory)
             self._write_json(staged_plan_directory / self._PENDING_FILE, {"pending": True})
             if include_legacy_report:
                 self._write_json(staged_plan_directory / "report.json", report)
@@ -311,26 +324,41 @@ class PartitionPlanRepository:
                 staged_plan_directory / "versions" / str(report["plan"]["plan_version"]) / "scheduling_handoff.json",
                 report["scheduling_handoff"],
             )
-            for name, value in sidecars.items():
+            for segments, value in sidecars:
                 self._write_json(
                     staged_plan_directory
                     / "versions"
                     / str(report["plan"]["plan_version"])
-                    / name,
+                    / Path(*segments),
                     value,
                 )
             self._fsync_directory(staged_plan_directory)
             plan_directory.parent.mkdir(parents=True, exist_ok=True)
+            self._write_transaction_marker(
+                transaction_marker,
+                {
+                    "backup_directory": backup_directory.name,
+                    "had_previous_directory": plan_directory.exists(),
+                    "plan_directory": plan_directory.name,
+                    "staging_directory": transaction_root.name,
+                },
+            )
+            transaction_started = True
+            if plan_directory.exists():
+                plan_directory.replace(backup_directory)
+                self._fsync_directory(self.root)
+                self._inject_fault("after_plan_directory_backup")
             staged_plan_directory.replace(plan_directory)
-            published = True
+            self._fsync_directory(self.root)
             self._inject_fault("after_plan_directory_replace")
             self._write_commit_marker(plan_directory)
             (plan_directory / self._PENDING_FILE).unlink(missing_ok=True)
             self._fsync_directory(plan_directory)
+            self._remove_transaction_artifacts(
+                transaction_marker, transaction_root, backup_directory
+            )
         finally:
-            if not published:
-                shutil.rmtree(transaction_root, ignore_errors=True)
-            elif transaction_root.exists():
+            if not transaction_started:
                 shutil.rmtree(transaction_root, ignore_errors=True)
 
     def _write_commit_marker(self, plan_directory: Path) -> None:
@@ -347,8 +375,10 @@ class PartitionPlanRepository:
     def _recover_incomplete_transactions(self) -> None:
         if not self.root.is_dir():
             return
+        for marker in self.root.glob(f"{self._TRANSACTION_PREFIX}*.json"):
+            self._recover_transaction(marker)
         for path in self.root.iterdir():
-            if path.name.startswith(".partition-staging-"):
+            if path.name.startswith(self._STAGING_PREFIX):
                 shutil.rmtree(path, ignore_errors=True)
                 continue
             if (
@@ -361,16 +391,120 @@ class PartitionPlanRepository:
     def _is_committed(self, plan_directory: Path) -> bool:
         return (plan_directory / self._COMMIT_FILE).is_file()
 
-    def _reject_reserved_sidecars(self, sidecars: Mapping[str, object] | None) -> None:
-        for name in (sidecars or {}):
-            if Path(name).name != name:
+    def _normalize_sidecars(
+        self, sidecars: Mapping[str, object] | None
+    ) -> tuple[tuple[tuple[str, ...], object], ...]:
+        normalized_sidecars: list[tuple[tuple[str, ...], object]] = []
+        seen_names: set[tuple[str, ...]] = set()
+        reserved_names = {name.casefold() for name in self._RESERVED_SIDECARS}
+        for name, value in (sidecars or {}).items():
+            if not isinstance(name, str) or PureWindowsPath(name).drive or name.startswith(
+                ("/", "\\")
+            ):
                 raise PartitionContractError(
-                    "invalid_contract", "sidecar names must not include a path"
+                    "invalid_contract", "sidecar names must be relative paths"
                 )
-            if name in self._RESERVED_SIDECARS:
+            segments = tuple(name.replace("\\", "/").split("/"))
+            normalized_segments = tuple(
+                segment.rstrip(" .").casefold() for segment in segments
+            )
+            if (
+                not segments
+                or any(
+                    not segment
+                    or segment in {".", ".."}
+                    or not normalized_segment
+                    for segment, normalized_segment in zip(
+                        segments, normalized_segments, strict=True
+                    )
+                )
+            ):
+                raise PartitionContractError(
+                    "invalid_contract", "sidecar names must contain safe path segments"
+                )
+            if any(segment in reserved_names for segment in normalized_segments):
                 raise PartitionContractError(
                     "reserved_sidecar_name", f"{name} is managed by the repository"
                 )
+            if normalized_segments in seen_names:
+                raise PartitionContractError(
+                    "sidecar_name_collision",
+                    "sidecar names must be unique under Windows path normalization",
+                )
+            seen_names.add(normalized_segments)
+            normalized_sidecars.append((segments, value))
+        return tuple(normalized_sidecars)
+
+    def _remove_staged_repository_metadata(self, staged_plan_directory: Path) -> None:
+        if not staged_plan_directory.exists():
+            return
+        reserved_root_files = {
+            "report.json",
+            "latest.json",
+            "history.json",
+            self._COMMIT_FILE,
+            self._PENDING_FILE,
+        }
+        for path in staged_plan_directory.iterdir():
+            if path.is_file() and path.name.rstrip(" .").casefold() in reserved_root_files:
+                path.unlink()
+
+    def _write_transaction_marker(
+        self, marker: Path, transaction: Mapping[str, object]
+    ) -> None:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        temporary = marker.with_name(f".{marker.name}.{uuid4().hex}.tmp")
+        temporary.write_text(
+            json.dumps(transaction, ensure_ascii=False, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+        self._fsync_file(temporary)
+        temporary.replace(marker)
+        self._fsync_directory(marker.parent)
+
+    def _recover_transaction(self, marker: Path) -> None:
+        try:
+            transaction = self._read_json(marker)
+            plan_name = self._transaction_path_name(transaction, "plan_directory")
+            staging_name = self._transaction_path_name(transaction, "staging_directory")
+            backup_name = self._transaction_path_name(transaction, "backup_directory")
+            had_previous_directory = transaction["had_previous_directory"] is True
+        except (KeyError, PartitionContractError, TypeError, json.JSONDecodeError):
+            return
+
+        plan_directory = self.root / plan_name
+        staging_directory = self.root / staging_name
+        backup_directory = self.root / backup_name
+        if self._is_committed(plan_directory):
+            self._remove_transaction_artifacts(
+                marker, staging_directory, backup_directory
+            )
+            return
+        if had_previous_directory and backup_directory.exists():
+            if plan_directory.exists():
+                shutil.rmtree(plan_directory, ignore_errors=True)
+            backup_directory.replace(plan_directory)
+            self._fsync_directory(self.root)
+        elif not had_previous_directory and plan_directory.exists():
+            shutil.rmtree(plan_directory, ignore_errors=True)
+        self._remove_transaction_artifacts(marker, staging_directory, backup_directory)
+
+    @staticmethod
+    def _transaction_path_name(transaction: Mapping[str, Any], key: str) -> str:
+        name = transaction.get(key)
+        if not isinstance(name, str) or Path(name).name != name:
+            raise PartitionContractError(
+                "invalid_contract", "transaction marker contains an invalid path"
+            )
+        return name
+
+    def _remove_transaction_artifacts(
+        self, marker: Path, staging_directory: Path, backup_directory: Path
+    ) -> None:
+        shutil.rmtree(staging_directory, ignore_errors=True)
+        shutil.rmtree(backup_directory, ignore_errors=True)
+        marker.unlink(missing_ok=True)
+        self._fsync_directory(self.root)
 
     def _inject_fault(self, point: str) -> None:
         if self._fault_injector is not None:

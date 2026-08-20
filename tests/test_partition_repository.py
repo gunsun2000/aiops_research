@@ -84,6 +84,55 @@ def test_repository_rejects_reserved_report_sidecar_name(tmp_path, report_v1):
     assert error.value.code == "reserved_sidecar_name"
 
 
+@pytest.mark.parametrize(
+    "sidecar_name",
+    [
+        "REPORT.JSON",
+        "SCHEDULING_HANDOFF.JSON",
+        "LATEST.JSON",
+        "HISTORY.JSON",
+        "COMMIT.JSON",
+        "PENDING.JSON",
+    ],
+)
+def test_repository_rejects_casefolded_reserved_sidecar_names(
+    tmp_path, report_v1, sidecar_name
+):
+    repository = _repository(tmp_path)
+    repository.save(report_v1)
+    version_directory = tmp_path / "partition-plan-v1" / "versions" / "1"
+    canonical_report = (version_directory / "report.json").read_text(encoding="utf-8")
+    canonical_handoff = (version_directory / "scheduling_handoff.json").read_text(
+        encoding="utf-8"
+    )
+
+    with pytest.raises(PartitionContractError) as error:
+        repository.save(report_v1, sidecars={sidecar_name: {"forged": True}})
+
+    assert error.value.code == "reserved_sidecar_name"
+    assert (version_directory / "report.json").read_text(encoding="utf-8") == (
+        canonical_report
+    )
+    assert (version_directory / "scheduling_handoff.json").read_text(
+        encoding="utf-8"
+    ) == canonical_handoff
+
+
+def test_repository_rejects_casefolded_sidecar_path_collisions(tmp_path, report_v1):
+    repository = _repository(tmp_path)
+
+    with pytest.raises(PartitionContractError) as error:
+        repository.save(
+            report_v1,
+            sidecars={
+                "diagnostics/Result.json": {"first": True},
+                "DIAGNOSTICS\\result.JSON": {"second": True},
+            },
+        )
+
+    assert error.value.code == "sidecar_name_collision"
+
+
 def test_repository_requires_a_unique_plan_id_for_each_persisted_version(
     tmp_path, report_v1
 ):
@@ -220,6 +269,69 @@ def test_repository_recovers_a_post_replace_crash_without_publishing_child(
     assert recovered.get("partition-plan-v1")["plan"]["plan_version"] == 1
     with pytest.raises(PartitionContractError) as error:
         recovered.get("partition-plan-v2")
+    assert error.value.code == "plan_not_found"
+
+
+def test_repository_upgrades_a_legacy_directory_without_losing_legacy_artifacts(
+    tmp_path, report_v1
+):
+    plan_directory = tmp_path / "partition-plan-v1"
+    plan_directory.mkdir()
+    (plan_directory / "report.json").write_text(
+        json.dumps({"legacy": True}), encoding="utf-8"
+    )
+    (plan_directory / "legacy-evidence.json").write_text(
+        json.dumps({"evidence": "preserved"}), encoding="utf-8"
+    )
+    repository = _repository(tmp_path)
+
+    saved = repository.save(report_v1, include_legacy_report=True)
+
+    assert saved.is_file()
+    assert repository.get("partition-plan-v1")["plan"]["plan_version"] == 1
+    assert json.loads((plan_directory / "report.json").read_text(encoding="utf-8"))["plan"][
+        "plan_id"
+    ] == "partition-plan-v1"
+    assert json.loads(
+        (plan_directory / "legacy-evidence.json").read_text(encoding="utf-8")
+    ) == {"evidence": "preserved"}
+
+
+@pytest.mark.parametrize(
+    "fault_point", ["after_plan_directory_backup", "after_plan_directory_replace"]
+)
+def test_repository_recovers_a_legacy_upgrade_interruption_to_the_prior_view(
+    tmp_path, report_v1, fault_point
+):
+    plan_directory = tmp_path / "partition-plan-v1"
+    plan_directory.mkdir()
+    legacy_report = {"legacy": True}
+    (plan_directory / "report.json").write_text(
+        json.dumps(legacy_report), encoding="utf-8"
+    )
+    (plan_directory / "legacy-evidence.json").write_text(
+        json.dumps({"evidence": "preserved"}), encoding="utf-8"
+    )
+    crashing_repository = _repository(tmp_path)
+
+    def crash_during_legacy_upgrade(point: str) -> None:
+        if point == fault_point:
+            raise OSError("deterministic legacy upgrade interruption")
+
+    crashing_repository._fault_injector = crash_during_legacy_upgrade
+    with pytest.raises(OSError, match="deterministic legacy upgrade interruption"):
+        crashing_repository.save(report_v1, include_legacy_report=True)
+
+    recovered = _repository(tmp_path)
+    assert json.loads((plan_directory / "report.json").read_text(encoding="utf-8")) == (
+        legacy_report
+    )
+    assert (plan_directory / "legacy-evidence.json").is_file()
+    assert not (plan_directory / "latest.json").exists()
+    assert not (plan_directory / "history.json").exists()
+    assert not (plan_directory / "commit.json").exists()
+    with pytest.raises(PartitionContractError) as error:
+        recovered.get("partition-plan-v1")
     assert error.value.code == "plan_not_found"
 
 
