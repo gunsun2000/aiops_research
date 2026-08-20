@@ -332,6 +332,7 @@ def api_model_partition_strategies(
                     "supported_modes": [],
                 },
             )
+            item.update(strategy.catalog_contract())
             item["supported_modes"].append(mode)
         return {"strategies": list(strategies.values())}
     except PartitionContractError as exc:

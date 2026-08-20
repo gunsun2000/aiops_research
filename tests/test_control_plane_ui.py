@@ -28,7 +28,7 @@ def test_console_has_five_primary_research_views():
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
     assert "styles.css?v=34" in html
-    assert "app.js?v=33" in html
+    assert "app.js?v=34" in html
 
 
 def test_model_partition_workspace_preserves_upstream_approval_boundary():
@@ -94,6 +94,31 @@ def test_orchestration_strategy_and_handoff_render_review_context_and_errors():
     assert "plan.warnings" in script
     assert 'id="partition-handoff-error"' in html
     assert 'text("partition-handoff-error",error.message||String(error))' in script
+
+
+def test_orchestration_strategy_renders_server_owned_contract_and_catalog_errors():
+    html = _source(INDEX_HTML)
+    script = _source(APP_JS)
+
+    assert 'id="partition-strategy-error"' in html
+    for field in (
+        "strategy.objective_weights",
+        "strategy.allowed_split_boundary_rule",
+        "strategy.forbidden_split_boundaries",
+        "strategy.graph_requirements",
+        "strategy.memory_rules",
+    ):
+        assert field in script
+    assert "plan.objective_weights" not in script
+    assert "partitionStrategyError" in script
+
+
+def test_orchestration_keeps_sample_when_catalog_fails_and_clears_stale_handoff_errors():
+    script = _source(APP_JS)
+
+    assert 'text("partition-strategy-error",state.partitionStrategyError)' in script
+    assert 'state.partitionStrategyError=error.message||String(error)' in script
+    assert script.count('text("partition-handoff-error","")') >= 3
 
 
 def test_orchestration_stage_tabs_support_roving_keyboard_navigation():

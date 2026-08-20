@@ -208,6 +208,43 @@ def test_v2_plan_api_exposes_strategy_catalog_from_the_policy(tmp_path):
     }
 
 
+def test_strategy_catalog_exposes_server_owned_strategy_constraints(tmp_path):
+    client = TestClient(
+        create_app(model_partition_artifact_root=tmp_path / "artifacts")
+    )
+
+    response = client.get("/api/model-partition/strategies")
+
+    assert response.status_code == 200
+    strategies = {
+        strategy["strategy_id"]: strategy for strategy in response.json()["strategies"]
+    }
+    inference = strategies["inference-partition-v1"]
+    training = strategies["training-partition-v1"]
+    assert inference["objective_weights"] == {
+        "latency": 0.5,
+        "memory_pressure": 0.3,
+        "communication": 0.2,
+    }
+    assert inference["allowed_split_boundary_rule"] == "interior_layer_boundaries"
+    assert inference["forbidden_split_boundaries"] == ["first_boundary", "last_boundary"]
+    assert inference["graph_requirements"] == [
+        "forward_only_dag",
+        "adjacent_partition_edges_only",
+    ]
+    assert inference["memory_rules"] == [
+        "per_partition_parameter_bytes",
+        "per_partition_working_memory_bytes",
+        "per_partition_peak_activation_bytes",
+    ]
+    assert training["forbidden_split_boundaries"] == [
+        "first_boundary",
+        2,
+        "last_boundary",
+    ]
+    assert "checkpoint_boundary_memory" in training["memory_rules"]
+
+
 def test_feedback_api_returns_replanned_version_and_history(tmp_path):
     client = TestClient(
         create_app(model_partition_artifact_root=tmp_path / "artifacts")

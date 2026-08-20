@@ -6,7 +6,7 @@
   <meta name="description" content="안전 제어형 4-Agent AIOps 연구 운영 플랫폼" />
   <title>4-Agent AIOps Research Platform</title>
   <link rel="stylesheet" href="/static/styles.css?v=34" />
-  <script defer src="/static/app.js?v=33"></script>
+  <script defer src="/static/app.js?v=34"></script>
   <script defer src="/static/reference-ui.js?v=4"></script>
   <script defer src="/static/bulk-delete-ui.js?v=3"></script>
 </head>
@@ -105,6 +105,7 @@
           <div class="partition-stage-heading"><div><span>02</span><h3>Partition Strategy</h3></div><p>API strategy catalog와 계획 결과의 strategy identity를 함께 표시합니다.</p></div>
           <dl id="partition-strategy-details" class="partition-detail-grid"><div><dt>상태</dt><dd>유효한 plan intake가 필요합니다.</dd></div></dl>
           <div id="partition-strategy-catalog" class="partition-catalog"><p class="empty-state">Strategy catalog 대기</p></div>
+          <p id="partition-strategy-error" class="partition-error" aria-live="polite"></p>
         </section>
         <section id="partition-stage-candidates" class="partition-stage-panel" data-partition-stage-panel="candidates" role="tabpanel" hidden>
           <div class="partition-stage-heading"><div><span>03</span><h3>Candidate Analysis</h3></div><p>후보의 예측 성능, 메모리, 통신량, 점수와 선택된 실행 그래프를 확인합니다.</p></div>

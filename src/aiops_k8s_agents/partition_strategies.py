@@ -34,6 +34,8 @@ class PartitionStrategy(Protocol):
         self, request: NormalizedPartitionRequest
     ) -> PartitionIntent: ...
 
+    def catalog_contract(self) -> dict[str, Any]: ...
+
 
 @dataclass(frozen=True)
 class InferencePartitionStrategy:
@@ -45,6 +47,29 @@ class InferencePartitionStrategy:
     base_confidence: float
     missing_forecast_penalty: float
     legacy_input_penalty: float
+
+    def catalog_contract(self) -> dict[str, Any]:
+        return {
+            "objective_weights": dict(self.objective_weights),
+            "optimization_objectives": [
+                f"predicted_{name}:{weight:g}" for name, weight in self.objective_weights
+            ],
+            "allowed_split_boundary_rule": "interior_layer_boundaries",
+            "forbidden_split_boundaries": ["first_boundary", "last_boundary"],
+            "graph_requirements": [
+                "forward_only_dag",
+                "adjacent_partition_edges_only",
+            ],
+            "memory_rules": [
+                "per_partition_parameter_bytes",
+                "per_partition_working_memory_bytes",
+                "per_partition_peak_activation_bytes",
+            ],
+            "communication_rules": [
+                "forward_activation_transfer_only",
+                "adjacent_partition_transfer_only",
+            ],
+        }
 
     def build_partition_intent(
         self, request: NormalizedPartitionRequest
@@ -113,6 +138,36 @@ class TrainingPartitionStrategy:
     base_confidence: float
     missing_forecast_penalty: float
     legacy_input_penalty: float
+
+    def catalog_contract(self) -> dict[str, Any]:
+        return {
+            "objective_weights": dict(self.objective_weights),
+            "optimization_objectives": [
+                f"predicted_{name}:{weight:g}" for name, weight in self.objective_weights
+            ],
+            "allowed_split_boundary_rule": "interior_layer_boundaries",
+            "forbidden_split_boundaries": [
+                "first_boundary",
+                *self.forbidden_split_boundaries,
+                "last_boundary",
+            ],
+            "graph_requirements": [
+                "phase_distinct_training_dag",
+                "forward_backward_gradient_aggregation_edges",
+                "adjacent_partition_edges_only",
+            ],
+            "memory_rules": [
+                "per_partition_parameter_bytes",
+                "per_partition_working_memory_bytes",
+                "per_partition_peak_activation_bytes",
+                "checkpoint_boundary_memory",
+            ],
+            "communication_rules": [
+                "forward_activation_transfer",
+                "backward_gradient_transfer",
+                "aggregation_transfer",
+            ],
+        }
 
     def build_partition_intent(
         self, request: NormalizedPartitionRequest
