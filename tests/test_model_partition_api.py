@@ -70,6 +70,32 @@ def test_model_partition_examples_expose_approved_upstream_contract(tmp_path):
     assert example["scope"]["selects_execution_mode"] is False
 
 
+def test_model_partition_examples_expose_v2_inference_and_training_contracts(tmp_path):
+    client = TestClient(
+        create_app(model_partition_artifact_root=tmp_path / "artifacts")
+    )
+
+    response = client.get("/api/model-partition/examples")
+
+    assert response.status_code == 200
+    v2_examples = {
+        item["request"]["coordination_plan"]["plan_type"]: item["request"]
+        for item in response.json()["examples"]
+        if "request" in item
+    }
+    assert set(v2_examples) == {"inference", "training"}
+    assert v2_examples["inference"]["coordination_plan"]["approved_at"]
+    assert v2_examples["inference"]["coordination_plan"]["payload"][
+        "traffic_policy"
+    ] == {"routing": "weighted"}
+    assert v2_examples["inference"]["coordination_plan"]["payload"][
+        "concurrency_policy"
+    ] == {"max_requests": 16}
+    assert v2_examples["training"]["approved_execution_mode"]["name"] == (
+        "pipeline_parallel"
+    )
+
+
 def test_model_partition_plan_api_runs_shared_validated_service(tmp_path):
     client = TestClient(
         create_app(model_partition_artifact_root=tmp_path / "artifacts")

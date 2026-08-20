@@ -120,6 +120,7 @@
             <div id="partition-handoff" class="partition-handoff"><strong>Handoff 대기</strong><p>External Scheduling Agent는 연결되지 않았습니다.</p></div>
           </div>
           <form id="partition-feedback-form" class="partition-feedback-form"><label>Bounded feedback simulation<select id="partition-feedback-signal" disabled><option value="latency_slo_violation">Latency SLO violation</option><option value="placement_rejected">Placement rejected</option></select></label><label>Simulation note<input id="partition-feedback-reason" type="text" value="Planning-only bounded feedback simulation" disabled /></label><button type="submit" id="partition-feedback-run" class="secondary-action" disabled>피드백 반영</button></form>
+          <p id="partition-handoff-error" class="partition-error" aria-live="polite"></p>
           <ol id="partition-history" class="partition-history"><li>계획 version 이력이 없습니다.</li></ol>
         </section>
       </section>

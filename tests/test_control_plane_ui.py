@@ -78,17 +78,31 @@ def test_orchestration_workspace_marks_predicted_results():
     assert "실제 Runtime 결과가 아닙니다" in index_html
 
 
-def test_orchestration_samples_include_v2_approval_timestamps():
+def test_orchestration_samples_are_loaded_from_the_examples_api():
     script = _source(APP_JS)
 
-    assert script.count("approved_at:") == 2
+    assert "PARTITION_V2_SAMPLES" not in script
+    assert 'api("/api/model-partition/examples")' in script
+    assert "item.request.coordination_plan.plan_type===kind" in script
 
 
-def test_inference_sample_includes_required_traffic_planning_policy():
+def test_orchestration_strategy_and_handoff_render_review_context_and_errors():
+    html = _source(INDEX_HTML)
     script = _source(APP_JS)
 
-    assert 'traffic_policy:{routing:"weighted"}' in script
-    assert "concurrency_policy:{max_requests:16}" in script
+    assert "plan.assumptions" in script
+    assert "plan.warnings" in script
+    assert 'id="partition-handoff-error"' in html
+    assert 'text("partition-handoff-error",error.message||String(error))' in script
+
+
+def test_orchestration_stage_tabs_support_roving_keyboard_navigation():
+    script = _source(APP_JS)
+
+    for key in ("ArrowLeft", "ArrowRight", "Home", "End"):
+        assert key in script
+    assert 'button.tabIndex=active?0:-1' in script
+    assert "activeButton.focus()" in script
 
 
 def test_dynamic_console_scripts_use_fresh_cache_versions():

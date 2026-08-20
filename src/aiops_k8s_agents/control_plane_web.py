@@ -211,6 +211,16 @@ def api_model_partition_examples(request: Request) -> dict[str, object]:
         round_plan = json.loads(
             state.model_partition_example_path.read_text(encoding="utf-8")
         )
+        inference_request = json.loads(
+            (
+                project_root() / "config" / "examples" / "model_partition_inference_v2.json"
+            ).read_text(encoding="utf-8")
+        )
+        training_request = json.loads(
+            (
+                project_root() / "config" / "examples" / "model_partition_training_v2.json"
+            ).read_text(encoding="utf-8")
+        )
     except (OSError, json.JSONDecodeError) as exc:
         raise HTTPException(
             status_code=500,
@@ -227,7 +237,27 @@ def api_model_partition_examples(request: Request) -> dict[str, object]:
                     "requires_approved_upstream_mode": True,
                     "produces": "PartitionExecutionPlan",
                 },
-            }
+            },
+            {
+                "id": "inference-transformer-v2",
+                "name": "Inference transformer partition",
+                "request": inference_request,
+                "scope": {
+                    "selects_execution_mode": False,
+                    "requires_approved_upstream_mode": True,
+                    "produces": "PartitionExecutionPlan",
+                },
+            },
+            {
+                "id": "training-transformer-v2",
+                "name": "Training transformer partition",
+                "request": training_request,
+                "scope": {
+                    "selects_execution_mode": False,
+                    "requires_approved_upstream_mode": True,
+                    "produces": "PartitionExecutionPlan",
+                },
+            },
         ]
     }
 

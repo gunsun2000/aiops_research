@@ -12,7 +12,7 @@
       "model_id": "transformer-service",
       "approved_model_version": "transformer-v3",
       "service_objective": "low-latency text generation",
-      "latency_slo_ms": 150.0,
+      "latency_slo_ms": 500.0,
       "minimum_throughput_rps": 25.0,
       "availability_target": 0.99,
       "traffic_policy": {"routing": "weighted"},
@@ -20,7 +20,7 @@
       "participants": ["edge-cpu-01", "gpu-worker-01"],
       "resource_budget": {"max_devices": 2},
       "constraints": {
-        "max_end_to_end_latency_ms": 150.0,
+        "max_end_to_end_latency_ms": 500.0,
         "max_transfer_bytes": 5000000,
         "minimum_memory_headroom_ratio": 0.1
       }
