@@ -200,6 +200,107 @@ def test_validator_rejects_non_forward_inference_graph_edges():
     assert "inference_graph_forward_contract_mismatch" in result.errors
 
 
+def test_validator_rejects_disconnected_inference_graph_with_recomputed_signature():
+    request, plan = v2_request_and_execution_plan()
+    selected = plan.selected_candidate
+    assert selected is not None
+    broken = replace(plan, selected_candidate=replace(selected, graph_edges=()))
+    signed_broken = replace(
+        broken,
+        deterministic_signature=PartitionPlanValidator._deterministic_signature(
+            ModelPartitionOrchestrationAgent(
+                ModelPartitionPolicy.from_path(ROOT / "config/model_partition_policy.json")
+            )._common_processor.process(request).input_signature,
+            broken,
+        ),
+    )
+
+    result = PartitionPlanValidator().validate(request, signed_broken)
+
+    assert result.valid is False
+    assert "inference_graph_forward_path_missing" in result.errors
+    assert "deterministic_signature_mismatch" not in result.errors
+
+
+def test_validator_rejects_inference_throughput_target_above_predicted_capacity():
+    request, _ = v2_request_and_execution_plan()
+    request = replace(
+        request,
+        plan=replace(request.plan, minimum_throughput_rps=1_000_000.0),
+    )
+    policy = ModelPartitionPolicy.from_path(ROOT / "config/model_partition_policy.json")
+    plan = ModelPartitionOrchestrationAgent(policy).plan_request(request)
+
+    result = PartitionPlanValidator().validate(request, plan)
+
+    assert result.valid is False
+    assert "predicted_throughput_capacity_exceeded" in result.errors
+
+
+def test_validator_rejects_inference_without_positive_concurrency_capacity_input():
+    request, _ = v2_request_and_execution_plan()
+    request = replace(
+        request,
+        plan=replace(request.plan, concurrency_policy={"max_requests": 0}),
+    )
+    policy = ModelPartitionPolicy.from_path(ROOT / "config/model_partition_policy.json")
+    plan = ModelPartitionOrchestrationAgent(policy).plan_request(request)
+
+    result = PartitionPlanValidator().validate(request, plan)
+
+    assert result.valid is False
+    assert "predicted_throughput_unverifiable" in result.errors
+
+
+def test_validator_rejects_snapshot_availability_target_after_topology_failure():
+    request, plan = v2_request_and_execution_plan()
+    selected = plan.selected_candidate
+    assert selected is not None
+    broken = replace(
+        plan,
+        selected_candidate=replace(
+            selected,
+            partitions=(
+                replace(selected.partitions[0], device_id="offline-device"),
+                *selected.partitions[1:],
+            ),
+        ),
+    )
+    signed_broken = replace(
+        broken,
+        deterministic_signature=PartitionPlanValidator._deterministic_signature(
+            ModelPartitionOrchestrationAgent(
+                ModelPartitionPolicy.from_path(ROOT / "config/model_partition_policy.json")
+            )._common_processor.process(request).input_signature,
+            broken,
+        ),
+    )
+
+    result = PartitionPlanValidator().validate(request, signed_broken)
+
+    assert result.valid is False
+    assert "snapshot_availability_target_not_met" in result.errors
+
+
+def test_validator_marks_snapshot_availability_unverifiable_without_candidate():
+    request, plan = v2_request_and_execution_plan()
+    unsigned = replace(plan, selected_candidate=None)
+    signed = replace(
+        unsigned,
+        deterministic_signature=PartitionPlanValidator._deterministic_signature(
+            ModelPartitionOrchestrationAgent(
+                ModelPartitionPolicy.from_path(ROOT / "config/model_partition_policy.json")
+            )._common_processor.process(request).input_signature,
+            unsigned,
+        ),
+    )
+
+    result = PartitionPlanValidator().validate(request, signed)
+
+    assert result.valid is False
+    assert "snapshot_availability_unverifiable" in result.errors
+
+
 def test_validator_rejects_training_graph_missing_required_aggregation_edge():
     request = PartitionPlanningRequest.from_dict(
         json.loads(

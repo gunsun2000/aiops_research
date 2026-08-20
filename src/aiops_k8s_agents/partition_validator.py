@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+from math import isfinite
 from typing import Any
 
 from aiops_k8s_agents.partition_common import PartitionCommonProcessor
@@ -13,6 +14,81 @@ from aiops_k8s_agents.partition_models import (
     PartitionExecutionPlan,
 )
 from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
+
+
+INFERENCE_FORWARD_EDGE_TYPES = {"forward", "pipeline", "cache_transfer"}
+
+
+def predicted_inference_throughput_capacity(
+    request: PartitionPlanningRequest,
+    plan: PartitionExecutionPlan,
+) -> float | None:
+    """Return a planning-time capacity estimate, never runtime throughput."""
+    selected = plan.selected_candidate
+    concurrency_policy = getattr(request.plan, "concurrency_policy", None)
+    if selected is None or not isinstance(concurrency_policy, dict):
+        return None
+    max_requests = concurrency_policy.get("max_requests")
+    if isinstance(max_requests, bool) or not isinstance(max_requests, int):
+        return None
+    latency_ms = selected.estimated_total_latency_ms
+    if (
+        max_requests <= 0
+        or not isinstance(latency_ms, (int, float))
+        or isinstance(latency_ms, bool)
+        or not isfinite(latency_ms)
+        or latency_ms <= 0.0
+    ):
+        return None
+    return max_requests * 1_000.0 / latency_ms
+
+
+def predicted_snapshot_availability_feasibility(
+    round_plan: FederatedRoundPlan,
+    plan: PartitionExecutionPlan,
+) -> float | None:
+    """Return snapshot topology feasibility, not an observed reliability claim."""
+    selected = plan.selected_candidate
+    if selected is None:
+        return None
+    devices = {device.device_id for device in round_plan.devices}
+    participants = set(round_plan.participants)
+    if any(
+        partition.device_id not in devices or partition.device_id not in participants
+        for partition in selected.partitions
+    ):
+        return 0.0
+    expected_nodes = {
+        (partition.partition_id, partition.device_id)
+        for partition in selected.partitions
+    }
+    actual_nodes = {
+        (node.partition_id, node.device_id) for node in selected.graph_nodes
+    }
+    if actual_nodes != expected_nodes or not _has_inference_forward_chain(selected):
+        return 0.0
+    link_pairs = {
+        (link.source_device, link.target_device) for link in round_plan.network_links
+    }
+    for source, target in zip(selected.partitions, selected.partitions[1:]):
+        if source.device_id != target.device_id and (
+            source.device_id,
+            target.device_id,
+        ) not in link_pairs:
+            return 0.0
+    return 1.0
+
+
+def _has_inference_forward_chain(selected: Any) -> bool:
+    return all(
+        any(
+            edge.source_partition == source.partition_id
+            and edge.target_partition == target.partition_id
+            and edge.edge_type in INFERENCE_FORWARD_EDGE_TYPES
+            for edge in selected.graph_edges
+        )
+        for source, target in zip(selected.partitions, selected.partitions[1:])
+    )
 
 
 @dataclass(frozen=True)
@@ -261,15 +337,9 @@ class PartitionPlanValidator:
             if plan.strategy_version != strategy.strategy_version:
                 errors.append("strategy_version_mismatch")
 
-        if plan.plan_type == "inference":
+        if normalized.plan_type == "inference":
             self._validate_inference_graph_contract(plan, errors)
-            latency_slo = getattr(request.plan, "latency_slo_ms", None)
-            if (
-                latency_slo is not None
-                and plan.selected_candidate is not None
-                and plan.selected_candidate.estimated_total_latency_ms > latency_slo
-            ):
-                errors.append("latency_slo_exceeded")
+            self._validate_inference_slas(request, round_plan, plan, errors)
 
         expected_signature = self._deterministic_signature(normalized.input_signature, plan)
         if (
@@ -301,9 +371,43 @@ class PartitionPlanValidator:
         selected = plan.selected_candidate
         if selected is None:
             return
-        allowed_edge_types = {"forward", "pipeline", "cache_transfer"}
-        if any(edge.edge_type not in allowed_edge_types for edge in selected.graph_edges):
+        if any(
+            edge.edge_type not in INFERENCE_FORWARD_EDGE_TYPES
+            for edge in selected.graph_edges
+        ):
             errors.append("inference_graph_forward_contract_mismatch")
+        if not _has_inference_forward_chain(selected):
+            errors.append("inference_graph_forward_path_missing")
+
+    @staticmethod
+    def _validate_inference_slas(
+        request: PartitionPlanningRequest,
+        round_plan: FederatedRoundPlan,
+        plan: PartitionExecutionPlan,
+        errors: list[str],
+    ) -> None:
+        selected = plan.selected_candidate
+        latency_slo = getattr(request.plan, "latency_slo_ms", None)
+        if (
+            latency_slo is not None
+            and selected is not None
+            and selected.estimated_total_latency_ms > latency_slo
+        ):
+            errors.append("latency_slo_exceeded")
+
+        throughput_capacity = predicted_inference_throughput_capacity(request, plan)
+        if throughput_capacity is None:
+            errors.append("predicted_throughput_unverifiable")
+        elif throughput_capacity < request.plan.minimum_throughput_rps:
+            errors.append("predicted_throughput_capacity_exceeded")
+
+        availability_feasibility = predicted_snapshot_availability_feasibility(
+            round_plan, plan
+        )
+        if availability_feasibility is None:
+            errors.append("snapshot_availability_unverifiable")
+        elif availability_feasibility < request.plan.availability_target:
+            errors.append("snapshot_availability_target_not_met")
 
     def _result(
         self,

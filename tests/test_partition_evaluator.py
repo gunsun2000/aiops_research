@@ -4,6 +4,8 @@ import json
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
+
 from aiops_k8s_agents.model_partition_agent import (
     ModelPartitionOrchestrationAgent,
     ModelPartitionPolicy,
@@ -166,3 +168,104 @@ def test_observed_metrics_require_source_and_timestamp():
 
     assert result.evidence_level == "predicted"
     assert result.estimated is True
+
+
+@pytest.mark.parametrize(
+    "payload",
+    (
+        {
+            "latency_ms": float("nan"),
+            "maximum_memory_pressure": 0.2,
+            "total_transfer_bytes": 2_000,
+            "source": "runtime-monitor",
+            "observed_at": "2026-08-20T09:30:00Z",
+        },
+        {
+            "latency_ms": float("inf"),
+            "maximum_memory_pressure": 0.2,
+            "total_transfer_bytes": 2_000,
+            "source": "runtime-monitor",
+            "observed_at": "2026-08-20T09:30:00Z",
+        },
+        {
+            "latency_ms": -1.0,
+            "maximum_memory_pressure": 0.2,
+            "total_transfer_bytes": 2_000,
+            "source": "runtime-monitor",
+            "observed_at": "2026-08-20T09:30:00Z",
+        },
+        {
+            "latency_ms": 12.0,
+            "maximum_memory_pressure": -0.2,
+            "total_transfer_bytes": 2_000,
+            "source": "runtime-monitor",
+            "observed_at": "2026-08-20T09:30:00Z",
+        },
+        {
+            "latency_ms": 12.0,
+            "maximum_memory_pressure": 0.2,
+            "total_transfer_bytes": -2_000,
+            "source": "runtime-monitor",
+            "observed_at": "2026-08-20T09:30:00Z",
+        },
+    ),
+)
+def test_runtime_evidence_from_dict_rejects_nonfinite_and_negative_metrics(payload):
+    with pytest.raises(ValueError, match="runtime evidence"):
+        ObservedPartitionMetrics.from_dict(payload)
+
+
+@pytest.mark.parametrize(
+    ("source", "observed_at"),
+    (
+        ("", "2026-08-20T09:30:00Z"),
+        ("runtime-monitor", ""),
+        ("runtime-monitor", "not-a-timestamp"),
+    ),
+)
+def test_runtime_evidence_from_dict_requires_complete_valid_provenance(
+    source, observed_at
+):
+    with pytest.raises(ValueError, match="runtime evidence"):
+        ObservedPartitionMetrics.from_dict(
+            {
+                "latency_ms": 12.0,
+                "maximum_memory_pressure": 0.2,
+                "total_transfer_bytes": 2_000,
+                "source": source,
+                "observed_at": observed_at,
+            }
+        )
+
+
+def test_evaluate_rejects_invalid_direct_runtime_evidence():
+    request, policy, plan, validation = v2_evaluated_inputs(
+        "model_partition_inference_v2.json"
+    )
+
+    with pytest.raises(ValueError, match="runtime evidence"):
+        PartitionPlanEvaluator(policy).evaluate(
+            request,
+            plan,
+            validation,
+            observed=ObservedPartitionMetrics(
+                latency_ms=float("nan"),
+                maximum_memory_pressure=0.2,
+                total_transfer_bytes=2_000,
+                source="runtime-monitor",
+                observed_at="2026-08-20T09:30:00Z",
+            ),
+        )
+
+
+def test_inference_evaluation_labels_throughput_and_snapshot_feasibility_as_predicted():
+    request, policy, plan, validation = v2_evaluated_inputs(
+        "model_partition_inference_v2.json"
+    )
+
+    result = PartitionPlanEvaluator(policy).evaluate(request, plan, validation)
+
+    assert result.metrics["predicted_throughput_capacity_rps"] > 0
+    assert result.metrics["predicted_snapshot_availability_feasibility"] == 1.0
+    assert result.metrics["throughput_capacity_evidence"] == "predicted"
+    assert result.metrics["availability_evidence"] == "predicted_snapshot_feasibility"

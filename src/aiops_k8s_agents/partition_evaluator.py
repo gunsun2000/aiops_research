@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
+from math import isfinite
 from typing import Any, Mapping
 
 from aiops_k8s_agents.model_partition_agent import ModelPartitionPolicy
@@ -11,7 +13,11 @@ from aiops_k8s_agents.partition_models import (
     PartitionExecutionPlan,
 )
 from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
-from aiops_k8s_agents.partition_validator import PartitionValidationResult
+from aiops_k8s_agents.partition_validator import (
+    PartitionValidationResult,
+    predicted_inference_throughput_capacity,
+    predicted_snapshot_availability_feasibility,
+)
 
 
 @dataclass(frozen=True)
@@ -24,13 +30,28 @@ class ObservedPartitionMetrics:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> ObservedPartitionMetrics:
-        return cls(
-            latency_ms=float(payload["latency_ms"]),
-            maximum_memory_pressure=float(payload["maximum_memory_pressure"]),
-            total_transfer_bytes=int(payload["total_transfer_bytes"]),
-            source=str(payload.get("source") or "").strip(),
-            observed_at=str(payload.get("observed_at") or "").strip(),
+        metrics = cls(
+            latency_ms=_runtime_float(payload.get("latency_ms"), "latency_ms"),
+            maximum_memory_pressure=_runtime_float(
+                payload.get("maximum_memory_pressure"), "maximum_memory_pressure"
+            ),
+            total_transfer_bytes=_runtime_transfer_bytes(
+                payload.get("total_transfer_bytes")
+            ),
+            source=_runtime_text(payload.get("source"), "source"),
+            observed_at=_runtime_text(payload.get("observed_at"), "observed_at"),
         )
+        if not metrics.is_complete_runtime_evidence():
+            raise ValueError("runtime evidence requires nonblank source and observed_at")
+        return metrics
+
+    def is_complete_runtime_evidence(self) -> bool:
+        _validate_runtime_metrics(self)
+        source = _runtime_text(self.source, "source")
+        observed_at = _runtime_text(self.observed_at, "observed_at")
+        if observed_at:
+            _parse_runtime_timestamp(observed_at)
+        return bool(source and observed_at)
 
 
 @dataclass(frozen=True)
@@ -41,7 +62,7 @@ class PartitionEvaluation:
     label: str
     policy_version: str
     components: dict[str, float]
-    metrics: dict[str, float | int]
+    metrics: dict[str, float | int | str]
     confidence: float = 0.0
     strategy_id: str = "legacy-partition-v1"
 
@@ -81,8 +102,8 @@ class PartitionPlanEvaluator:
     ) -> PartitionEvaluation:
         round_plan = self._round_plan(request)
         selected = plan.selected_candidate
-        observed_is_runtime = bool(
-            observed is not None and observed.source and observed.observed_at
+        observed_is_runtime = (
+            observed.is_complete_runtime_evidence() if observed is not None else False
         )
         if observed_is_runtime and observed is not None:
             latency_ms = max(0.0, observed.latency_ms)
@@ -123,6 +144,13 @@ class PartitionPlanEvaluator:
             )
         if not validation.valid or not plan.valid:
             reward = min(0.0, reward)
+        metrics: dict[str, float | int | str] = {
+            "latency_ms": round(latency_ms, 6),
+            "maximum_memory_pressure": round(memory_pressure, 6),
+            "total_transfer_bytes": transfer_bytes,
+        }
+        if isinstance(request, PartitionPlanningRequest) and plan.plan_type == "inference":
+            self._add_inference_planning_metrics(metrics, request, round_plan, plan)
         return PartitionEvaluation(
             reward=round(max(-1.0, min(1.0, reward)), 6),
             evidence_level=evidence_level,
@@ -130,11 +158,7 @@ class PartitionPlanEvaluator:
             label=label,
             policy_version=self.policy.version,
             components=components,
-            metrics={
-                "latency_ms": round(latency_ms, 6),
-                "maximum_memory_pressure": round(memory_pressure, 6),
-                "total_transfer_bytes": transfer_bytes,
-            },
+            metrics=metrics,
             confidence=plan.confidence,
             strategy_id=plan.strategy_id,
         )
@@ -244,6 +268,32 @@ class PartitionPlanEvaluator:
             "resilience": 0.10,
         }
 
+    @staticmethod
+    def _add_inference_planning_metrics(
+        metrics: dict[str, float | int | str],
+        request: PartitionPlanningRequest,
+        round_plan: FederatedRoundPlan,
+        plan: PartitionExecutionPlan,
+    ) -> None:
+        throughput_capacity = predicted_inference_throughput_capacity(request, plan)
+        if throughput_capacity is None:
+            metrics["throughput_capacity_evidence"] = "unverifiable"
+        else:
+            metrics["predicted_throughput_capacity_rps"] = round(
+                throughput_capacity, 6
+            )
+            metrics["throughput_capacity_evidence"] = "predicted"
+        availability_feasibility = predicted_snapshot_availability_feasibility(
+            round_plan, plan
+        )
+        if availability_feasibility is None:
+            metrics["availability_evidence"] = "unverifiable"
+        else:
+            metrics["predicted_snapshot_availability_feasibility"] = (
+                availability_feasibility
+            )
+            metrics["availability_evidence"] = "predicted_snapshot_feasibility"
+
     def _round_plan(
         self, request: FederatedRoundPlan | PartitionPlanningRequest
     ) -> FederatedRoundPlan:
@@ -264,3 +314,43 @@ class PartitionPlanEvaluator:
 
 def _clamp(value: float) -> float:
     return max(0.0, min(1.0, value))
+
+
+def _runtime_float(value: Any, field: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"runtime evidence {field} must be numeric")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"runtime evidence {field} must be numeric") from exc
+    if not isfinite(number) or number < 0.0:
+        raise ValueError(f"runtime evidence {field} must be finite and nonnegative")
+    return number
+
+
+def _runtime_transfer_bytes(value: Any) -> int:
+    number = _runtime_float(value, "total_transfer_bytes")
+    if not number.is_integer():
+        raise ValueError("runtime evidence total_transfer_bytes must be an integer")
+    return int(number)
+
+
+def _runtime_text(value: Any, field: str) -> str:
+    if value is None:
+        return ""
+    if not isinstance(value, str):
+        raise ValueError(f"runtime evidence {field} must be text")
+    return value.strip()
+
+
+def _validate_runtime_metrics(metrics: ObservedPartitionMetrics) -> None:
+    _runtime_float(metrics.latency_ms, "latency_ms")
+    _runtime_float(metrics.maximum_memory_pressure, "maximum_memory_pressure")
+    _runtime_transfer_bytes(metrics.total_transfer_bytes)
+
+
+def _parse_runtime_timestamp(value: str) -> None:
+    try:
+        datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("runtime evidence observed_at must be ISO-8601") from exc
