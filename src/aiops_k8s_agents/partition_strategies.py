@@ -225,27 +225,51 @@ class PartitionStrategyRegistry:
                 "confidence.legacy_input_penalty",
             ),
         )
-        training_payload = _mapping(
-            _mapping(payload.get("strategy_policies"), "strategy_policies").get(
-                "training-partition-v1"
-            ),
-            "strategy_policies.training-partition-v1",
+        strategy_policies = _mapping(payload.get("strategy_policies"), "strategy_policies")
+        training_payload = strategy_policies.get("training-partition-v1")
+        training_strategy = (
+            cls._training_strategy(
+                _mapping(
+                    training_payload,
+                    "strategy_policies.training-partition-v1",
+                ),
+                policy_version,
+                confidence_payload,
+            )
+            if training_payload is not None
+            else None
         )
-        training_strategy = TrainingPartitionStrategy(
+        return cls(
+            entries=(
+                *( ("inference", mode, strategy) for mode in strategy.supported_modes ),
+                *(
+                    ("training", mode, training_strategy)
+                    for mode in (training_strategy.supported_modes if training_strategy else ())
+                ),
+            )
+        )
+
+    @staticmethod
+    def _training_strategy(
+        payload: Mapping[str, Any],
+        policy_version: str,
+        confidence_payload: Mapping[str, Any],
+    ) -> TrainingPartitionStrategy:
+        return TrainingPartitionStrategy(
             strategy_id="training-partition-v1",
             strategy_version=f"training-partition-v1:{policy_version}",
             policy_version=policy_version,
             supported_modes=_text_tuple(
-                training_payload.get("supported_modes"),
+                payload.get("supported_modes"),
                 "strategy_policies.training-partition-v1.supported_modes",
             ),
             objective_weights=_objective_weights(
-                training_payload.get("objectives"),
+                payload.get("objectives"),
                 ("step_time", "load_balance", "memory_pressure", "communication", "resilience"),
                 "strategy_policies.training-partition-v1.objectives",
             ),
             forbidden_split_boundaries=_boundary_tuple(
-                training_payload.get("forbidden_split_boundaries", []),
+                payload.get("forbidden_split_boundaries", []),
                 "strategy_policies.training-partition-v1.forbidden_split_boundaries",
             ),
             base_confidence=_fraction(confidence_payload.get("base"), "confidence.base"),
@@ -257,12 +281,6 @@ class PartitionStrategyRegistry:
                 confidence_payload.get("legacy_input_penalty"),
                 "confidence.legacy_input_penalty",
             ),
-        )
-        return cls(
-            entries=(
-                *( ("inference", mode, strategy) for mode in strategy.supported_modes ),
-                *( ("training", mode, training_strategy) for mode in training_strategy.supported_modes ),
-            )
         )
 
     def resolve(self, plan_type: str, mode: str) -> PartitionStrategy:

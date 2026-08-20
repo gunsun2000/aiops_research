@@ -8,6 +8,7 @@ from aiops_k8s_agents.model_partition_agent import (
     ModelPartitionOrchestrationAgent,
     ModelPartitionPolicy,
 )
+from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
 from aiops_k8s_agents.partition_models import (
     ExecutionGraphEdge,
     ExecutionGraphNode,
@@ -43,6 +44,30 @@ def test_validator_accepts_complete_selected_plan():
     assert result.errors == ()
     assert "layer_coverage" in result.checked_rules
     assert "execution_graph_dag" in result.checked_rules
+
+
+def test_validator_accepts_phase_distinct_training_dag():
+    request = PartitionPlanningRequest.from_dict(
+        json.loads(
+            (ROOT / "config/examples/model_partition_training_v2.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    )
+    policy = ModelPartitionPolicy.from_path(ROOT / "config/model_partition_policy.json")
+    agent = ModelPartitionOrchestrationAgent(
+        policy, plan_id_factory=lambda: "validator-training-plan"
+    )
+    normalized = agent._common_processor.process(request)
+    round_plan = agent._round_plan_from_normalized(normalized)
+    plan = agent.plan_request(request)
+
+    result = PartitionPlanValidator().validate(round_plan, plan)
+
+    assert result.valid is True
+    assert "graph_node_partition_mismatch" not in result.errors
+    assert "graph_edge_unknown_partition" not in result.errors
+    assert "execution_graph_cycle" not in result.errors
 
 
 def test_validator_detects_duplicate_and_missing_layers():

@@ -102,9 +102,13 @@ class PartitionPlanValidator:
             if expected_memory > allowed_memory:
                 errors.append(f"memory_capacity_exceeded:{partition.device_id}")
 
+        is_training_plan = plan.plan_type == "training"
+        node_partitions = self._graph_node_partitions(
+            selected.partitions, is_training_plan
+        )
         expected_nodes = {
-            (partition.partition_id, partition.device_id)
-            for partition in selected.partitions
+            (node_id, partition.device_id)
+            for node_id, partition in node_partitions.items()
         }
         actual_nodes = {
             (node.partition_id, node.device_id) for node in selected.graph_nodes
@@ -123,11 +127,17 @@ class PartitionPlanValidator:
                 errors.append("graph_edge_unknown_node")
                 continue
             adjacency[edge.source_partition].add(edge.target_partition)
-            source = partitions_by_id.get(edge.source_partition)
-            target = partitions_by_id.get(edge.target_partition)
+            source = node_partitions.get(edge.source_partition)
+            target = node_partitions.get(edge.target_partition)
             if source is None or target is None:
                 errors.append("graph_edge_unknown_partition")
-            elif (source.device_id, target.device_id) not in link_pairs:
+            elif not self._has_required_network_link(
+                source.device_id,
+                target.device_id,
+                edge.edge_type,
+                link_pairs,
+                is_training_plan,
+            ):
                 errors.append(
                     f"missing_network_link:{source.device_id}->{target.device_id}"
                 )
@@ -154,6 +164,39 @@ class PartitionPlanValidator:
             valid=not unique_errors,
             errors=unique_errors,
             checked_rules=self.CHECKED_RULES,
+        )
+
+    @staticmethod
+    def _graph_node_partitions(
+        partitions: tuple[Any, ...], is_training_plan: bool
+    ) -> dict[str, Any]:
+        if not is_training_plan:
+            return {partition.partition_id: partition for partition in partitions}
+        if not partitions:
+            return {}
+        phase_nodes = {
+            f"{partition.partition_id}:{phase}": partition
+            for partition in partitions
+            for phase in ("forward", "backward")
+        }
+        return {**phase_nodes, "aggregation": partitions[0]}
+
+    @staticmethod
+    def _has_required_network_link(
+        source_device: str,
+        target_device: str,
+        edge_type: str,
+        link_pairs: set[tuple[str, str]],
+        is_training_plan: bool,
+    ) -> bool:
+        if source_device == target_device:
+            return True
+        if (source_device, target_device) in link_pairs:
+            return True
+        return (
+            is_training_plan
+            and edge_type == "backward"
+            and (target_device, source_device) in link_pairs
         )
 
     @staticmethod

@@ -37,6 +37,25 @@ def test_registry_routes_inference_request(normalized_inference_request):
     assert strategy.strategy_id == "inference-partition-v1"
 
 
+def test_registry_keeps_inference_compatible_with_old_policy_without_training_strategy(
+    tmp_path: Path,
+    normalized_inference_request,
+):
+    policy = json.loads(
+        (ROOT / "config/model_partition_policy.json").read_text(encoding="utf-8")
+    )
+    policy["strategy_policies"].pop("training-partition-v1")
+    path = tmp_path / "inference-only-policy.json"
+    path.write_text(json.dumps(policy), encoding="utf-8")
+
+    strategy = PartitionStrategyRegistry.default(path).resolve(
+        normalized_inference_request.plan_type,
+        normalized_inference_request.approved_execution_mode.name,
+    )
+
+    assert strategy.strategy_id == "inference-partition-v1"
+
+
 def test_registry_fails_closed_for_unknown_mode(normalized_inference_request):
     with pytest.raises(PartitionContractError) as error:
         PartitionStrategyRegistry.default().resolve("inference", "unknown-mode")
