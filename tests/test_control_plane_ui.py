@@ -27,8 +27,8 @@ def test_console_has_five_primary_research_views():
     assert "AI Workload Orchestration" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=33" in html
-    assert "app.js?v=32" in html
+    assert "styles.css?v=34" in html
+    assert "app.js?v=33" in html
 
 
 def test_model_partition_workspace_preserves_upstream_approval_boundary():
@@ -36,22 +36,59 @@ def test_model_partition_workspace_preserves_upstream_approval_boundary():
     script = _source(APP_JS)
 
     for element_id in (
-        "partition-load-example",
+        "partition-load-inference",
+        "partition-load-training",
         "partition-plan-run",
-        "partition-mode-name",
-        "partition-approval-ref",
+        "partition-intake-details",
+        "partition-strategy-details",
         "partition-candidates",
         "partition-selected-plan",
         "partition-execution-graph",
         "partition-validation",
         "partition-evaluation",
+        "partition-handoff",
+        "partition-feedback-form",
+        "partition-history",
     ):
         assert f'id="{element_id}"' in html
-    assert "승인된 실행 모드" in html
+    assert "Planning boundary" in html
     assert 'id="partition-mode-select"' not in html
-    assert "/api/model-partition/examples" in script
     assert "/api/model-partition/plans" in script
+    assert "/api/model-partition/strategies" in script
+    assert "/feedback" in script
     assert "Estimated reward" in script
+
+
+def test_orchestration_workspace_has_four_research_stages():
+    index_html = _source(INDEX_HTML)
+
+    for label in (
+        "Plan Intake",
+        "Partition Strategy",
+        "Candidate Analysis",
+        "Handoff & Feedback",
+    ):
+        assert label in index_html
+
+
+def test_orchestration_workspace_marks_predicted_results():
+    index_html = _source(INDEX_HTML)
+
+    assert "실행 전 예측" in index_html
+    assert "실제 Runtime 결과가 아닙니다" in index_html
+
+
+def test_orchestration_samples_include_v2_approval_timestamps():
+    script = _source(APP_JS)
+
+    assert script.count("approved_at:") == 2
+
+
+def test_inference_sample_includes_required_traffic_planning_policy():
+    script = _source(APP_JS)
+
+    assert 'traffic_policy:{routing:"weighted"}' in script
+    assert "concurrency_policy:{max_requests:16}" in script
 
 
 def test_dynamic_console_scripts_use_fresh_cache_versions():

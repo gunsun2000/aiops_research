@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="안전 제어형 4-Agent AIOps 연구 운영 플랫폼" />
   <title>4-Agent AIOps Research Platform</title>
-  <link rel="stylesheet" href="/static/styles.css?v=33" />
-  <script defer src="/static/app.js?v=32"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=34" />
+  <script defer src="/static/app.js?v=33"></script>
   <script defer src="/static/reference-ui.js?v=4"></script>
   <script defer src="/static/bulk-delete-ui.js?v=3"></script>
 </head>
@@ -87,39 +87,41 @@
       <section class="view-panel" data-view-panel="observability" hidden><div class="page-heading"><div><h2 id="observability-title">관측 데이터</h2><p>Incident Source와 Evidence Provider를 분리하여 확인합니다.</p></div></div><div class="evidence-layout"><section class="surface evidence-source-card"><dl><div><dt>Incident Source</dt><dd id="observed-incident-source">Chaos Mesh Simulation</dd></div><div><dt>Evidence Provider</dt><dd id="observed-provider">SyntheticEvidenceProvider</dd></div><div><dt>Scenario</dt><dd id="observed-scenario">CPU Saturation</dd></div><div><dt>Target</dt><dd id="observed-target">online-boutique/paymentservice</dd></div><div><dt>Metric</dt><dd id="observed-metric">cpu · threshold 80</dd></div><div><dt>Collection Time</dt><dd id="observed-collected-at">수집되지 않음</dd></div></dl></section><section class="surface evidence-values"><div id="observed-metrics"></div></section></div><section class="surface before-after"><h3>복구 전 / 후 Evidence</h3><table><tbody id="evidence-comparison-body"><tr><td>복구 전후 Evidence가 수집되지 않았습니다.</td></tr></tbody></table></section></section>
 
       <section class="view-panel partition-workspace" data-view-panel="orchestration" aria-labelledby="partition-title" hidden>
-        <header class="page-heading partition-heading"><div><h2 id="partition-title">Model Partition Orchestration</h2><p>승인된 상위 Round Plan을 입력으로 받아 논리 분할, 실행 그래프, 자원 요구량을 계획합니다.</p></div><div class="partition-heading-actions"><span id="partition-status" class="status-badge neutral">입력 대기</span><button type="button" id="partition-load-example" class="secondary-action">예제 불러오기</button><button type="button" id="partition-plan-run" class="primary-action" disabled>분할 계획 생성</button></div></header>
-        <div class="partition-scope-note"><strong>책임 경계</strong><span>실행 모드는 이 화면에서 선택하지 않습니다. Federated Coordination 계층이 승인한 모드와 출처만 검증해 사용합니다.</span></div>
-        <div class="partition-layout">
-          <aside class="surface partition-input-panel">
-            <div class="partition-section-title"><span>01</span><div><h3>상위 계획 출처</h3><p>FederatedRoundPlan provenance</p></div></div>
-            <dl class="partition-provenance">
-              <div><dt>Job</dt><dd id="partition-job-id">—</dd></div>
-              <div><dt>Model</dt><dd id="partition-model-id">—</dd></div>
-              <div><dt>승인된 실행 모드</dt><dd id="partition-mode-name">—</dd></div>
-              <div><dt>승인 주체</dt><dd id="partition-approved-by">—</dd></div>
-              <div><dt>Approval Ref</dt><dd id="partition-approval-ref">—</dd></div>
-              <div><dt>참여 노드</dt><dd id="partition-participants">—</dd></div>
-            </dl>
-            <div class="partition-input-summary"><span>정책</span><strong>partition-policy-v1</strong><small>Deterministic candidate generation · fail closed</small></div>
-            <p id="partition-error" class="partition-error" aria-live="polite"></p>
-          </aside>
-          <section class="partition-center">
-            <article class="surface partition-candidate-panel">
-              <div class="partition-section-title"><span>02</span><div><h3>후보 분할 비교</h3><p>Latency · Memory · Communication</p></div></div>
-              <div id="partition-candidates" class="partition-candidates"><p class="empty-state">계획 생성 후 후보별 추정치를 표시합니다.</p></div>
-            </article>
-            <article class="surface partition-plan-panel">
-              <div class="partition-section-title"><span>03</span><div><h3>선택된 논리 분할</h3><p>PartitionExecutionPlan</p></div></div>
-              <div id="partition-selected-plan" class="partition-selected-plan"><p class="empty-state">선택된 계획이 없습니다.</p></div>
-              <div id="partition-execution-graph" class="partition-execution-graph" aria-label="모델 분할 실행 그래프"><p class="empty-state">실행 그래프 대기</p></div>
-            </article>
-          </section>
-          <aside class="partition-review-column">
-            <section class="surface partition-review-panel"><div class="partition-section-title"><span>04</span><div><h3>독립 검증</h3><p>PartitionPlanValidator</p></div></div><div id="partition-validation" class="partition-validation"><span class="status-badge neutral">대기</span><p>Layer coverage, DAG, memory headroom, SLO를 다시 계산합니다.</p></div></section>
-            <section class="surface partition-review-panel"><div class="partition-section-title"><span>05</span><div><h3>계획 평가</h3><p>PartitionPlanEvaluator</p></div></div><div id="partition-evaluation" class="partition-evaluation"><strong>—</strong><span>Reward 대기</span><p>실행 전에는 예측 Evidence, 실행 후에는 관측 Evidence로 구분합니다.</p></div></section>
-            <section class="surface partition-boundary-panel"><h3>다음 계층으로 전달</h3><p>검증된 PartitionExecutionPlan만 Scheduling Agent의 입력 계약으로 전달됩니다.</p><dl><div><dt>Mode selection</dt><dd>상위 계층 책임</dd></div><div><dt>Runtime execution</dt><dd>후속 Controller 책임</dd></div><div><dt>현재 범위</dt><dd>Planning · Validation · Evaluation</dd></div></dl></section>
-          </aside>
-        </div>
+        <header class="page-heading partition-heading"><div><h2 id="partition-title">Model Partition Orchestration</h2><p>승인된 Coordination Plan과 Snapshot을 사용해 분할 후보와 전달 계약을 계획합니다.</p></div><div class="partition-heading-actions"><span id="partition-status" class="status-badge neutral">입력 대기</span><button type="button" id="partition-load-inference" class="secondary-action">Inference 샘플</button><button type="button" id="partition-load-training" class="secondary-action">Training 샘플</button><button type="button" id="partition-plan-run" class="primary-action" disabled>계획 생성</button></div></header>
+        <div class="partition-scope-note"><strong>Planning boundary</strong><span>실행 모드 선택, External Scheduling Agent, GPU 실행은 이 화면의 범위가 아닙니다. 모든 값은 실행 전 예측이며 실제 Runtime 결과가 아닙니다.</span></div>
+        <nav class="partition-stage-flow" aria-label="Model partition planning stages" role="tablist">
+          <button type="button" class="is-active" data-partition-stage="intake" role="tab" aria-selected="true" aria-controls="partition-stage-intake"><span>01</span><strong>Plan Intake</strong><small id="partition-stage-summary-intake">입력 대기</small></button>
+          <button type="button" data-partition-stage="strategy" role="tab" aria-selected="false" aria-controls="partition-stage-strategy"><span>02</span><strong>Partition Strategy</strong><small id="partition-stage-summary-strategy">전략 대기</small></button>
+          <button type="button" data-partition-stage="candidates" role="tab" aria-selected="false" aria-controls="partition-stage-candidates"><span>03</span><strong>Candidate Analysis</strong><small id="partition-stage-summary-candidates">후보 대기</small></button>
+          <button type="button" data-partition-stage="handoff" role="tab" aria-selected="false" aria-controls="partition-stage-handoff"><span>04</span><strong>Handoff & Feedback</strong><small id="partition-stage-summary-handoff">전달 대기</small></button>
+        </nav>
+        <p class="partition-prediction-label">실행 전 예측 · 실제 Runtime 결과가 아닙니다 · External Scheduling Agent 없음</p>
+        <section id="partition-stage-intake" class="partition-stage-panel" data-partition-stage-panel="intake" role="tabpanel">
+          <div class="partition-stage-heading"><div><span>01</span><h3>Plan Intake</h3></div><p>승인 provenance, 모델 버전, Snapshot, Forecast를 확인합니다.</p></div>
+          <dl id="partition-intake-details" class="partition-detail-grid"><div><dt>상태</dt><dd>샘플을 선택하면 V2 planning request가 표시됩니다.</dd></div></dl>
+          <p id="partition-error" class="partition-error" aria-live="polite"></p>
+        </section>
+        <section id="partition-stage-strategy" class="partition-stage-panel" data-partition-stage-panel="strategy" role="tabpanel" hidden>
+          <div class="partition-stage-heading"><div><span>02</span><h3>Partition Strategy</h3></div><p>API strategy catalog와 계획 결과의 strategy identity를 함께 표시합니다.</p></div>
+          <dl id="partition-strategy-details" class="partition-detail-grid"><div><dt>상태</dt><dd>유효한 plan intake가 필요합니다.</dd></div></dl>
+          <div id="partition-strategy-catalog" class="partition-catalog"><p class="empty-state">Strategy catalog 대기</p></div>
+        </section>
+        <section id="partition-stage-candidates" class="partition-stage-panel" data-partition-stage-panel="candidates" role="tabpanel" hidden>
+          <div class="partition-stage-heading"><div><span>03</span><h3>Candidate Analysis</h3></div><p>후보의 예측 성능, 메모리, 통신량, 점수와 선택된 실행 그래프를 확인합니다.</p></div>
+          <div id="partition-candidates" class="partition-candidates"><p class="empty-state">계획 생성 후 후보별 예측치를 표시합니다.</p></div>
+          <div id="partition-selected-plan" class="partition-selected-plan"><p class="empty-state">선택된 계획이 없습니다.</p></div>
+          <div id="partition-execution-graph" class="partition-execution-graph" aria-label="예측 모델 분할 그래프"><p class="empty-state">실행 그래프 대기</p></div>
+        </section>
+        <section id="partition-stage-handoff" class="partition-stage-panel" data-partition-stage-panel="handoff" role="tabpanel" hidden>
+          <div class="partition-stage-heading"><div><span>04</span><h3>Handoff & Feedback</h3></div><p>Validator, 예측 reward, handoff, version lineage와 bounded feedback simulation을 확인합니다.</p></div>
+          <div class="partition-handoff-grid">
+            <div id="partition-validation" class="partition-validation"><span class="status-badge neutral">대기</span><p>계획 생성 후 독립 검증 결과를 표시합니다.</p></div>
+            <div id="partition-evaluation" class="partition-evaluation"><strong>—</strong><span>Estimated reward</span><p>실행 전 예측 Evidence만 표시합니다.</p></div>
+            <div id="partition-handoff" class="partition-handoff"><strong>Handoff 대기</strong><p>External Scheduling Agent는 연결되지 않았습니다.</p></div>
+          </div>
+          <form id="partition-feedback-form" class="partition-feedback-form"><label>Bounded feedback simulation<select id="partition-feedback-signal" disabled><option value="latency_slo_violation">Latency SLO violation</option><option value="placement_rejected">Placement rejected</option></select></label><label>Simulation note<input id="partition-feedback-reason" type="text" value="Planning-only bounded feedback simulation" disabled /></label><button type="submit" id="partition-feedback-run" class="secondary-action" disabled>피드백 반영</button></form>
+          <ol id="partition-history" class="partition-history"><li>계획 version 이력이 없습니다.</li></ol>
+        </section>
       </section>
 
       <section class="view-panel" data-view-panel="aiopslab" hidden>
