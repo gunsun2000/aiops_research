@@ -18,6 +18,17 @@
         "memory_pressure": 0.3,
         "communication": 0.2
       }
+    },
+    "training-partition-v1": {
+      "supported_modes": ["pipeline_parallel", "split_learning", "hybrid_partition"],
+      "forbidden_split_boundaries": [2],
+      "objectives": {
+        "step_time": 0.35,
+        "load_balance": 0.20,
+        "memory_pressure": 0.20,
+        "communication": 0.15,
+        "resilience": 0.10
+      }
     }
   },
   "confidence": {

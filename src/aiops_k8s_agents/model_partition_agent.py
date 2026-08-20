@@ -117,7 +117,10 @@ class ModelPartitionOrchestrationAgent:
             normalized.plan_type, normalized.approved_execution_mode.name
         )
         intent = strategy.build_partition_intent(normalized)
-        plan = self._plan(self._round_plan_from_normalized(normalized))
+        plan = self._plan(
+            self._round_plan_from_normalized(normalized),
+            partition_intent=(intent if normalized.plan_type == "training" else None),
+        )
         return self._with_v2_metadata(plan, normalized, intent)
 
     def replan(
@@ -184,6 +187,7 @@ class ModelPartitionOrchestrationAgent:
         excluded_links: set[tuple[str, str]] | None = None,
         excluded_splits: set[tuple[int, ...]] | None = None,
         memory_limits: dict[str, int] | None = None,
+        partition_intent: PartitionIntent | None = None,
     ) -> PartitionExecutionPlan:
         excluded_devices = excluded_devices or set()
         excluded_links = excluded_links or set()
@@ -201,6 +205,18 @@ class ModelPartitionOrchestrationAgent:
 
         split_count = len(participants) - 1
         split_options = combinations(range(1, len(round_plan.layers)), split_count)
+        candidate_splits = tuple(
+            split_points
+            for split_points in split_options
+            if split_points not in excluded_splits
+            and (
+                partition_intent is None
+                or not any(
+                    boundary in partition_intent.forbidden_split_boundaries
+                    for boundary in split_points
+                )
+            )
+        )
         candidates = tuple(
             self._build_candidate(
                 round_plan,
@@ -208,9 +224,9 @@ class ModelPartitionOrchestrationAgent:
                 split_points,
                 excluded_links=excluded_links,
                 memory_limits=memory_limits,
+                partition_intent=partition_intent,
             )
-            for split_points in split_options
-            if split_points not in excluded_splits
+            for split_points in candidate_splits
         )
         ordered = tuple(
             sorted(candidates, key=lambda item: (not item.valid, item.score, item.split_points))
@@ -311,6 +327,7 @@ class ModelPartitionOrchestrationAgent:
         *,
         excluded_links: set[tuple[str, str]],
         memory_limits: dict[str, int],
+        partition_intent: PartitionIntent | None = None,
     ) -> PartitionCandidate:
         devices = {device.device_id: device for device in round_plan.devices}
         links = {
@@ -319,6 +336,7 @@ class ModelPartitionOrchestrationAgent:
         }
         boundaries = (0, *split_points, len(round_plan.layers))
         partitions: list[LogicalPartition] = []
+        partition_compute_ms: list[float] = []
         compute_ms = 0.0
         memory_pressures: list[float] = []
         rejection_reasons: list[str] = []
@@ -339,9 +357,11 @@ class ModelPartitionOrchestrationAgent:
                 memory_demand_bytes=memory_demand,
             )
             partitions.append(partition)
-            compute_ms += (
+            partition_compute = (
                 partition.compute_units / device.compute_units_per_second * 1000.0
             )
+            compute_ms += partition_compute
+            partition_compute_ms.append(partition_compute)
             pressure = memory_demand / max(1, device.memory_available_bytes)
             memory_pressures.append(pressure)
             allowed_memory = int(
@@ -383,7 +403,31 @@ class ModelPartitionOrchestrationAgent:
                 )
             )
 
-        total_latency = compute_ms + transfer_ms
+        estimated_step_time_ms = 0.0
+        gradient_transfer_bytes = 0
+        maximum_load_imbalance = 0.0
+        if partition_intent is not None:
+            (
+                graph_nodes,
+                graph_edges,
+                transfer_ms,
+                transfer_bytes,
+                estimated_step_time_ms,
+                gradient_transfer_bytes,
+                maximum_load_imbalance,
+            ) = self._build_training_graph(
+                partitions=tuple(partitions),
+                forward_edges=tuple(graph_edges),
+                partition_compute_ms=tuple(partition_compute_ms),
+                forward_transfer_ms=transfer_ms,
+                forward_transfer_bytes=transfer_bytes,
+            )
+
+        total_latency = (
+            estimated_step_time_ms
+            if partition_intent is not None
+            else compute_ms + transfer_ms
+        )
         if (
             round_plan.constraints.max_transfer_bytes is not None
             and transfer_bytes > round_plan.constraints.max_transfer_bytes
@@ -395,7 +439,17 @@ class ModelPartitionOrchestrationAgent:
         ):
             rejection_reasons.append("latency_slo_exceeded")
         maximum_pressure = max(memory_pressures, default=0.0)
-        score = self._score(total_latency, maximum_pressure, transfer_bytes)
+        score = (
+            self._score_training(
+                estimated_step_time_ms,
+                maximum_load_imbalance,
+                maximum_pressure,
+                transfer_bytes,
+                partition_intent,
+            )
+            if partition_intent is not None
+            else self._score(total_latency, maximum_pressure, transfer_bytes)
+        )
         return PartitionCandidate(
             split_points=split_points,
             partitions=tuple(partitions),
@@ -409,6 +463,97 @@ class ModelPartitionOrchestrationAgent:
             valid=not rejection_reasons,
             rejection_reasons=tuple(rejection_reasons),
             score=score,
+            estimated_step_time_ms=round(estimated_step_time_ms, 6),
+            gradient_transfer_bytes=gradient_transfer_bytes,
+            maximum_load_imbalance=round(maximum_load_imbalance, 6),
+        )
+
+    @staticmethod
+    def _build_training_graph(
+        *,
+        partitions: tuple[LogicalPartition, ...],
+        forward_edges: tuple[ExecutionGraphEdge, ...],
+        partition_compute_ms: tuple[float, ...],
+        forward_transfer_ms: float,
+        forward_transfer_bytes: int,
+    ) -> tuple[
+        tuple[ExecutionGraphNode, ...],
+        tuple[ExecutionGraphEdge, ...],
+        float,
+        int,
+        float,
+        int,
+        float,
+    ]:
+        forward_nodes = tuple(
+            ExecutionGraphNode(f"{partition.partition_id}:forward", partition.device_id)
+            for partition in partitions
+        )
+        backward_nodes = tuple(
+            ExecutionGraphNode(f"{partition.partition_id}:backward", partition.device_id)
+            for partition in reversed(partitions)
+        )
+        aggregation_node = ExecutionGraphNode("aggregation", partitions[0].device_id)
+        edges: list[ExecutionGraphEdge] = [
+            ExecutionGraphEdge(
+                source_partition=f"{edge.source_partition}:forward",
+                target_partition=f"{edge.target_partition}:forward",
+                transfer_bytes=edge.transfer_bytes,
+                estimated_transfer_ms=edge.estimated_transfer_ms,
+                edge_type="forward",
+            )
+            for edge in forward_edges
+        ]
+        last_partition = partitions[-1]
+        gradient_bytes = forward_transfer_bytes
+        edges.append(
+            ExecutionGraphEdge(
+                source_partition=f"{last_partition.partition_id}:forward",
+                target_partition=f"{last_partition.partition_id}:backward",
+                transfer_bytes=gradient_bytes,
+                estimated_transfer_ms=0.0,
+                edge_type="gradient",
+            )
+        )
+        for edge in reversed(forward_edges):
+            edges.append(
+                ExecutionGraphEdge(
+                    source_partition=f"{edge.target_partition}:backward",
+                    target_partition=f"{edge.source_partition}:backward",
+                    transfer_bytes=edge.transfer_bytes,
+                    estimated_transfer_ms=edge.estimated_transfer_ms,
+                    edge_type="backward",
+                )
+            )
+        aggregation_bytes = gradient_bytes
+        first_partition = partitions[0]
+        edges.append(
+            ExecutionGraphEdge(
+                source_partition=f"{first_partition.partition_id}:backward",
+                target_partition="aggregation",
+                transfer_bytes=aggregation_bytes,
+                estimated_transfer_ms=0.0,
+                edge_type="aggregation",
+            )
+        )
+        maximum_compute_ms = max(partition_compute_ms, default=0.0)
+        minimum_compute_ms = min(partition_compute_ms, default=0.0)
+        maximum_load_imbalance = (
+            0.0
+            if maximum_compute_ms == 0.0
+            else (maximum_compute_ms - minimum_compute_ms) / maximum_compute_ms
+        )
+        transfer_ms = forward_transfer_ms * 2.0
+        total_transfer_bytes = forward_transfer_bytes * 2 + aggregation_bytes
+        estimated_step_time_ms = sum(partition_compute_ms) * 2.0 + transfer_ms
+        return (
+            (*forward_nodes, *backward_nodes, aggregation_node),
+            tuple(edges),
+            transfer_ms,
+            total_transfer_bytes,
+            estimated_step_time_ms,
+            gradient_bytes,
+            maximum_load_imbalance,
         )
 
     def _score(
@@ -426,6 +571,30 @@ class ModelPartitionOrchestrationAgent:
             self.policy.latency_weight * latency
             + self.policy.memory_pressure_weight * memory
             + self.policy.communication_weight * communication,
+            6,
+        )
+
+    def _score_training(
+        self,
+        estimated_step_time_ms: float,
+        maximum_load_imbalance: float,
+        maximum_memory_pressure: float,
+        total_transfer_bytes: int,
+        intent: PartitionIntent,
+    ) -> float:
+        weights = dict(intent.objective_weights)
+        step_time = min(
+            estimated_step_time_ms / self.policy.latency_reference_ms, 1.0
+        )
+        communication = min(
+            total_transfer_bytes / self.policy.transfer_reference_bytes, 1.0
+        )
+        return round(
+            weights["step_time"] * step_time
+            + weights["load_balance"] * maximum_load_imbalance
+            + weights["memory_pressure"] * min(maximum_memory_pressure, 1.0)
+            + weights["communication"] * communication
+            + weights["resilience"] * 0.0,
             6,
         )
 

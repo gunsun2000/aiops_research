@@ -409,9 +409,15 @@ class ExecutionGraphEdge:
     target_partition: str
     transfer_bytes: int
     estimated_transfer_ms: float
+    edge_type: str = "forward"
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> ExecutionGraphEdge:
+        edge_type = _text(payload.get("edge_type", "forward"), "edge_type")
+        if edge_type not in {"forward", "backward", "gradient", "aggregation"}:
+            raise PartitionContractError(
+                "invalid_contract", "edge_type must be forward, backward, gradient, or aggregation"
+            )
         return cls(
             source_partition=_text(
                 payload.get("source_partition"), "source_partition"
@@ -423,6 +429,7 @@ class ExecutionGraphEdge:
             estimated_transfer_ms=_float(
                 payload.get("estimated_transfer_ms"), "estimated_transfer_ms"
             ),
+            edge_type=edge_type,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -431,6 +438,7 @@ class ExecutionGraphEdge:
             "target_partition": self.target_partition,
             "transfer_bytes": self.transfer_bytes,
             "estimated_transfer_ms": self.estimated_transfer_ms,
+            "edge_type": self.edge_type,
         }
 
 
@@ -448,6 +456,9 @@ class PartitionCandidate:
     valid: bool
     rejection_reasons: tuple[str, ...]
     score: float
+    estimated_step_time_ms: float = 0.0
+    gradient_transfer_bytes: int = 0
+    maximum_load_imbalance: float = 0.0
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> PartitionCandidate:
@@ -492,6 +503,15 @@ class PartitionCandidate:
                 )
             ),
             score=_float(payload.get("score"), "score"),
+            estimated_step_time_ms=_float(
+                payload.get("estimated_step_time_ms", 0.0), "estimated_step_time_ms"
+            ),
+            gradient_transfer_bytes=_int(
+                payload.get("gradient_transfer_bytes", 0), "gradient_transfer_bytes"
+            ),
+            maximum_load_imbalance=_float(
+                payload.get("maximum_load_imbalance", 0.0), "maximum_load_imbalance"
+            ),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -508,6 +528,9 @@ class PartitionCandidate:
             "valid": self.valid,
             "rejection_reasons": list(self.rejection_reasons),
             "score": self.score,
+            "estimated_step_time_ms": self.estimated_step_time_ms,
+            "gradient_transfer_bytes": self.gradient_transfer_bytes,
+            "maximum_load_imbalance": self.maximum_load_imbalance,
         }
 
 

@@ -108,6 +108,20 @@ def test_registry_supports_each_explicitly_approved_inference_mode(mode):
     assert strategy.strategy_id == "inference-partition-v1"
 
 
+@pytest.mark.parametrize(
+    "mode", ["pipeline_parallel", "split_learning", "hybrid_partition"]
+)
+def test_registry_routes_each_explicitly_approved_training_mode(mode):
+    strategy = PartitionStrategyRegistry.default().resolve("training", mode)
+
+    assert strategy.strategy_id == "training-partition-v1"
+    assert strategy.supported_modes == (
+        "pipeline_parallel",
+        "split_learning",
+        "hybrid_partition",
+    )
+
+
 def test_inference_intent_warns_when_the_normalized_request_has_no_forecast():
     payload = json.loads(
         (ROOT / "config/examples/model_partition_inference_v2.json").read_text(
