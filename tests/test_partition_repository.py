@@ -169,6 +169,23 @@ def test_repository_history_follows_immediate_parent_plan_links(tmp_path, report
     ]
 
 
+def test_repository_marks_only_the_lineage_leaf_as_current(tmp_path, report_v1):
+    repository = _repository(tmp_path)
+    repository.save(report_v1)
+    report_v2 = copy.deepcopy(report_v1)
+    report_v2["plan"].update(
+        {
+            "plan_id": "partition-plan-v2",
+            "plan_version": 2,
+            "parent_plan_id": "partition-plan-v1",
+        }
+    )
+    repository.save(report_v2)
+
+    assert repository.is_current_leaf("partition-plan-v1") is False
+    assert repository.is_current_leaf("partition-plan-v2") is True
+
+
 def test_repository_rejects_an_orphan_parent_plan(tmp_path, report_v1):
     repository = _repository(tmp_path)
     child = copy.deepcopy(report_v1)

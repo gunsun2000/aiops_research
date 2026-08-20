@@ -12,6 +12,7 @@ from aiops_k8s_agents.partition_evaluator import (
     ObservedPartitionMetrics,
     PartitionPlanEvaluator,
 )
+from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
 from aiops_k8s_agents.partition_feedback import (
     PartitionFeedbackAnalyzer,
     PartitionRuntimeFeedback,
@@ -19,6 +20,7 @@ from aiops_k8s_agents.partition_feedback import (
 )
 from aiops_k8s_agents.partition_models import (
     FederatedRoundPlan,
+    PartitionContractError,
     PartitionExecutionPlan,
     PartitionFailure,
 )
@@ -110,26 +112,51 @@ class PartitionFeedbackService:
         plan_id: str,
         feedback: Mapping[str, Any] | PartitionRuntimeFeedback,
     ) -> dict[str, Any]:
-        previous_report = self._repository.get(plan_id)
-        previous_plan = PartitionExecutionPlan.from_dict(previous_report["plan"])
         runtime_feedback = (
-            feedback
+            feedback.validate()
             if isinstance(feedback, PartitionRuntimeFeedback)
             else PartitionRuntimeFeedback.from_dict(feedback)
         )
+        if runtime_feedback.plan_id != plan_id:
+            raise PartitionContractError(
+                "feedback_plan_mismatch",
+                "feedback plan_id must match the requested persisted plan",
+            )
+        previous_report = self._repository.get(plan_id)
+        if not self._repository.is_current_leaf(plan_id):
+            raise PartitionContractError(
+                "non_current_feedback_plan",
+                "feedback must reference the current leaf plan in its lineage",
+            )
+        previous_plan = PartitionExecutionPlan.from_dict(previous_report["plan"])
         directive = self._analyzer.analyze(runtime_feedback, previous_plan)
         effective_directive = self._prior_exclusions(previous_report).merge(directive)
         round_plan = FederatedRoundPlan.from_dict(previous_report["round_plan"])
         agent = ModelPartitionOrchestrationAgent(
             self._policy, plan_id_factory=self._plan_id_factory
         )
-        plan = agent.replan_with_directive(
-            round_plan,
-            previous_plan,
-            effective_directive,
-            attempt=previous_plan.plan_version,
+        request_payload = previous_report.get("planning_request")
+        request = (
+            PartitionPlanningRequest.from_dict(request_payload)
+            if isinstance(request_payload, Mapping)
+            else None
         )
-        validation = PartitionPlanValidator().validate(round_plan, plan)
+        plan = (
+            agent.replan_request(
+                request,
+                previous_plan,
+                effective_directive,
+                attempt=previous_plan.plan_version,
+            )
+            if request is not None
+            else agent.replan_with_directive(
+                round_plan,
+                previous_plan,
+                effective_directive,
+                attempt=previous_plan.plan_version,
+            )
+        )
+        validation = PartitionPlanValidator().validate(request or round_plan, plan)
         evaluation = PartitionPlanEvaluator(self._policy).evaluate(
             round_plan, plan, validation
         )
@@ -137,6 +164,11 @@ class PartitionFeedbackService:
             "schema_version": "1.0",
             "kind": "model_partition_orchestration",
             "status": "planned" if plan.valid and validation.valid else "blocked",
+            **(
+                {"planning_request": dict(request_payload)}
+                if isinstance(request_payload, Mapping)
+                else {}
+            ),
             "round_plan": round_plan.to_dict(),
             "plan": plan.to_dict(),
             "validation": validation.to_dict(),

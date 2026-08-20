@@ -27,7 +27,6 @@ from aiops_k8s_agents.partition_models import (
     PartitionContractError,
     PartitionExecutionPlan,
     PartitionFailure,
-    ResourceDevice,
 )
 from aiops_k8s_agents.partition_strategies import (
     PartitionIntent,
@@ -164,23 +163,67 @@ class ModelPartitionOrchestrationAgent:
         *,
         attempt: int,
     ) -> PartitionExecutionPlan:
+        normalized = self._common_processor.process(self._legacy_adapter.adapt(round_plan))
+        return self._replan(
+            round_plan,
+            previous_plan,
+            directive,
+            attempt=attempt,
+            normalized=normalized,
+        )
+
+    def replan_request(
+        self,
+        request: PartitionPlanningRequest,
+        previous_plan: PartitionExecutionPlan,
+        directive: RepartitionDirective,
+        *,
+        attempt: int,
+    ) -> PartitionExecutionPlan:
+        normalized = self._common_processor.process(request)
+        strategy = self._strategy_registry.resolve(
+            normalized.plan_type, normalized.approved_execution_mode.name
+        )
+        intent = strategy.build_partition_intent(normalized)
+        return self._replan(
+            self._round_plan_from_normalized(normalized),
+            previous_plan,
+            directive,
+            attempt=attempt,
+            normalized=normalized,
+            partition_intent=(intent if normalized.plan_type == "training" else None),
+        )
+
+    def _replan(
+        self,
+        round_plan: FederatedRoundPlan,
+        previous_plan: PartitionExecutionPlan,
+        directive: RepartitionDirective,
+        *,
+        attempt: int,
+        normalized: NormalizedPartitionRequest,
+        partition_intent: PartitionIntent | None = None,
+    ) -> PartitionExecutionPlan:
         if attempt > self.policy.max_replan_attempts:
             return self._with_replan_metadata(
                 self._safe_failure(round_plan, ("replan_attempts_exhausted",)),
                 round_plan,
                 previous_plan,
+                normalized=normalized,
             )
         if directive.errors:
             return self._with_replan_metadata(
                 self._safe_failure(round_plan, directive.errors),
                 round_plan,
                 previous_plan,
+                normalized=normalized,
             )
         if previous_plan.selected_candidate is None:
             return self._with_replan_metadata(
                 self._safe_failure(round_plan, ("previous_plan_has_no_candidate",)),
                 round_plan,
                 previous_plan,
+                normalized=normalized,
             )
 
         plan = self._plan(
@@ -192,8 +235,11 @@ class ModelPartitionOrchestrationAgent:
                 | set(directive.excluded_candidate_splits)
             ),
             memory_limits=dict(directive.memory_limits),
+            partition_intent=partition_intent,
         )
-        return self._with_replan_metadata(plan, round_plan, previous_plan)
+        return self._with_replan_metadata(
+            plan, round_plan, previous_plan, normalized=normalized
+        )
 
     def _plan(
         self,
@@ -328,8 +374,12 @@ class ModelPartitionOrchestrationAgent:
         plan: PartitionExecutionPlan,
         round_plan: FederatedRoundPlan,
         previous_plan: PartitionExecutionPlan,
+        *,
+        normalized: NormalizedPartitionRequest | None = None,
     ) -> PartitionExecutionPlan:
-        normalized = self._common_processor.process(self._legacy_adapter.adapt(round_plan))
+        normalized = normalized or self._common_processor.process(
+            self._legacy_adapter.adapt(round_plan)
+        )
         signature_payload = {
             "input_signature": normalized.input_signature,
             "strategy_id": previous_plan.strategy_id,

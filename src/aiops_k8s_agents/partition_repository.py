@@ -11,6 +11,8 @@ from typing import Any, Callable, Mapping
 from uuid import uuid4
 
 from aiops_k8s_agents.partition_coordination import LegacyFederatedRoundPlanAdapter
+from aiops_k8s_agents.partition_common import PartitionCommonProcessor
+from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
 from aiops_k8s_agents.partition_models import (
     FederatedRoundPlan,
     PartitionContractError,
@@ -162,6 +164,11 @@ class PartitionPlanRepository:
             )
         return tuple(lineage)
 
+    def is_current_leaf(self, plan_id: str) -> bool:
+        """Return whether a persisted plan has no immediate successor."""
+        self.get(plan_id)
+        return not self._has_persisted_child(plan_id)
+
     def _plan_identity(self, report: Mapping[str, Any]) -> Mapping[str, Any]:
         plan = report.get("plan")
         if not isinstance(plan, Mapping):
@@ -201,7 +208,24 @@ class PartitionPlanRepository:
         try:
             round_plan = FederatedRoundPlan.from_dict(report["round_plan"])
             plan = PartitionExecutionPlan.from_dict(report["plan"])
-            request = LegacyFederatedRoundPlanAdapter().adapt(round_plan)
+            request_payload = report.get("planning_request")
+            if isinstance(request_payload, Mapping):
+                request = PartitionPlanningRequest.from_dict(request_payload)
+                normalized = PartitionCommonProcessor().process(request)
+                expected_round_plan = FederatedRoundPlan(
+                    job_id=normalized.job_id,
+                    model_id=normalized.model_id,
+                    execution_mode=normalized.approved_execution_mode,
+                    layers=normalized.layers,
+                    participants=normalized.participants,
+                    devices=normalized.devices,
+                    network_links=normalized.network_links,
+                    constraints=normalized.constraints,
+                )
+                if round_plan != expected_round_plan:
+                    return False
+            else:
+                request = LegacyFederatedRoundPlanAdapter().adapt(round_plan)
         except (KeyError, PartitionContractError, TypeError):
             return False
         validation = PartitionPlanValidator().validate(request, plan)

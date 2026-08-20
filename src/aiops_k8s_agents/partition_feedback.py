@@ -105,6 +105,10 @@ class PartitionRuntimeFeedback:
             "candidate_id": self.candidate_id,
         }
 
+    def validate(self) -> PartitionRuntimeFeedback:
+        """Reapply the wire contract to objects created outside ``from_dict``."""
+        return self.from_dict(self.to_dict())
+
 
 @dataclass(frozen=True)
 class RepartitionDirective:
@@ -208,6 +212,7 @@ class PartitionFeedbackAnalyzer:
         feedback: PartitionRuntimeFeedback,
         previous_plan: PartitionExecutionPlan,
     ) -> RepartitionDirective:
+        feedback = feedback.validate()
         if (
             feedback.plan_id != previous_plan.plan_id
             or feedback.plan_version != previous_plan.plan_version
@@ -231,6 +236,11 @@ class PartitionFeedbackAnalyzer:
             )
         if feedback.signal == "latency_slo_violation":
             return RepartitionDirective("split", excluded_splits=(selected.split_points,))
-        return RepartitionDirective(
-            "candidate", excluded_candidate_splits=(selected.split_points,)
+        if feedback.signal == "placement_rejected":
+            return RepartitionDirective(
+                "candidate", excluded_candidate_splits=(selected.split_points,)
+            )
+        raise PartitionContractError(
+            "unsupported_feedback_signal",
+            f"unsupported feedback signal: {feedback.signal}",
         )
