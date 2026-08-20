@@ -179,6 +179,22 @@ def test_latency_replan_excludes_previous_split_and_selects_next_candidate():
     assert replanned.valid is True
 
 
+def test_legacy_replan_adapter_retains_the_legacy_identity_shape():
+    planner = agent()
+    round_plan = example_round_plan()
+
+    replanned = planner.replan(
+        round_plan,
+        planner.plan(round_plan),
+        PartitionFailure(signal="latency_slo_violation"),
+        attempt=1,
+    )
+
+    assert replanned.plan_version == 1
+    assert replanned.parent_plan_id is None
+    assert replanned.deterministic_signature == ""
+
+
 def test_device_failure_with_two_participants_returns_safe_failure():
     planner = agent()
     round_plan = example_round_plan()
@@ -193,6 +209,21 @@ def test_device_failure_with_two_participants_returns_safe_failure():
     assert replanned.valid is False
     assert replanned.human_review_required is True
     assert "insufficient_participants_after_failure" in replanned.errors
+
+
+def test_legacy_memory_failure_for_an_unselected_device_remains_fail_closed():
+    planner = agent()
+    round_plan = example_round_plan()
+
+    replanned = planner.replan(
+        round_plan,
+        planner.plan(round_plan),
+        PartitionFailure(signal="memory_exceeded", device_id="missing-device"),
+        attempt=1,
+    )
+
+    assert replanned.valid is False
+    assert replanned.errors == ("failed_device_not_in_previous_plan",)
 
 
 def test_replanning_attempt_limit_is_fail_closed():

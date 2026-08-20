@@ -17,6 +17,7 @@ from aiops_k8s_agents.partition_coordination import (
     LegacyFederatedRoundPlanAdapter,
     PartitionPlanningRequest,
 )
+from aiops_k8s_agents.partition_feedback import RepartitionDirective
 from aiops_k8s_agents.partition_models import (
     ExecutionGraphEdge,
     ExecutionGraphNode,
@@ -131,53 +132,68 @@ class ModelPartitionOrchestrationAgent:
         *,
         attempt: int,
     ) -> PartitionExecutionPlan:
-        if attempt > self.policy.max_replan_attempts:
-            return self._safe_failure(round_plan, ("replan_attempts_exhausted",))
-        if previous_plan.selected_candidate is None:
-            return self._safe_failure(round_plan, ("previous_plan_has_no_candidate",))
-
-        excluded_devices: set[str] = set()
-        excluded_links: set[tuple[str, str]] = set()
-        excluded_splits: set[tuple[int, ...]] = set()
-        memory_limits: dict[str, int] = {}
-
-        if failure.signal == "device_unavailable":
-            excluded_devices.add(failure.device_id)
-            remaining = [
-                participant
-                for participant in round_plan.participants
-                if participant not in excluded_devices
-            ]
-            if len(remaining) < 2:
-                return self._safe_failure(
-                    round_plan, ("insufficient_participants_after_failure",)
-                )
-        elif failure.signal == "memory_exceeded":
-            previous_partition = next(
-                (
-                    partition
-                    for partition in previous_plan.selected_candidate.partitions
-                    if partition.device_id == failure.device_id
-                ),
-                None,
-            )
-            if previous_partition is None:
-                return self._safe_failure(
-                    round_plan, ("failed_device_not_in_previous_plan",)
-                )
-            memory_limits[failure.device_id] = previous_partition.memory_demand_bytes - 1
-        elif failure.signal == "latency_slo_violation":
-            excluded_splits.add(previous_plan.selected_candidate.split_points)
-        elif failure.signal == "transfer_failure":
-            excluded_links.add((failure.source_device, failure.target_device))
-
-        return self._plan(
+        """Preserve the legacy failure API by adapting it to bounded directives."""
+        replanned = self.replan_with_directive(
             round_plan,
-            excluded_devices=excluded_devices,
-            excluded_links=excluded_links,
-            excluded_splits=excluded_splits,
-            memory_limits=memory_limits,
+            previous_plan,
+            RepartitionDirective.from_partition_failure(failure, previous_plan),
+            attempt=attempt,
         )
+        return replace(
+            replanned,
+            plan_version=1,
+            parent_plan_id=None,
+            plan_type="inference",
+            approved_model_version="legacy",
+            strategy_id="legacy-partition-v1",
+            strategy_version="1.0",
+            input_snapshot_id="legacy-snapshot",
+            input_snapshot_hash="",
+            assumptions=(),
+            warnings=(),
+            confidence=0.0,
+            deterministic_signature="",
+            handoff_status="not_ready",
+        )
+
+    def replan_with_directive(
+        self,
+        round_plan: FederatedRoundPlan,
+        previous_plan: PartitionExecutionPlan,
+        directive: RepartitionDirective,
+        *,
+        attempt: int,
+    ) -> PartitionExecutionPlan:
+        if attempt > self.policy.max_replan_attempts:
+            return self._with_replan_metadata(
+                self._safe_failure(round_plan, ("replan_attempts_exhausted",)),
+                round_plan,
+                previous_plan,
+            )
+        if directive.errors:
+            return self._with_replan_metadata(
+                self._safe_failure(round_plan, directive.errors),
+                round_plan,
+                previous_plan,
+            )
+        if previous_plan.selected_candidate is None:
+            return self._with_replan_metadata(
+                self._safe_failure(round_plan, ("previous_plan_has_no_candidate",)),
+                round_plan,
+                previous_plan,
+            )
+
+        plan = self._plan(
+            round_plan,
+            excluded_devices=set(directive.excluded_devices),
+            excluded_links=set(directive.excluded_links),
+            excluded_splits=(
+                set(directive.excluded_splits)
+                | set(directive.excluded_candidate_splits)
+            ),
+            memory_limits=dict(directive.memory_limits),
+        )
+        return self._with_replan_metadata(plan, round_plan, previous_plan)
 
     def _plan(
         self,
@@ -301,6 +317,43 @@ class ModelPartitionOrchestrationAgent:
             assumptions=intent.assumptions,
             warnings=intent.warnings,
             confidence=self._intent_confidence(intent),
+            deterministic_signature=hashlib.sha256(
+                canonical_json(signature_payload).encode("utf-8")
+            ).hexdigest(),
+            handoff_status="not_ready",
+        )
+
+    def _with_replan_metadata(
+        self,
+        plan: PartitionExecutionPlan,
+        round_plan: FederatedRoundPlan,
+        previous_plan: PartitionExecutionPlan,
+    ) -> PartitionExecutionPlan:
+        normalized = self._common_processor.process(self._legacy_adapter.adapt(round_plan))
+        signature_payload = {
+            "input_signature": normalized.input_signature,
+            "strategy_id": previous_plan.strategy_id,
+            "strategy_version": previous_plan.strategy_version,
+            "policy_version": self.policy.version,
+            "selected_candidate": (
+                None
+                if plan.selected_candidate is None
+                else plan.selected_candidate.to_dict()
+            ),
+        }
+        return replace(
+            plan,
+            plan_version=previous_plan.plan_version + 1,
+            parent_plan_id=previous_plan.plan_id,
+            plan_type=previous_plan.plan_type,
+            approved_model_version=previous_plan.approved_model_version,
+            strategy_id=previous_plan.strategy_id,
+            strategy_version=previous_plan.strategy_version,
+            input_snapshot_id=previous_plan.input_snapshot_id,
+            input_snapshot_hash=previous_plan.input_snapshot_hash,
+            assumptions=previous_plan.assumptions,
+            warnings=previous_plan.warnings,
+            confidence=previous_plan.confidence,
             deterministic_signature=hashlib.sha256(
                 canonical_json(signature_payload).encode("utf-8")
             ).hexdigest(),

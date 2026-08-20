@@ -9,7 +9,10 @@ import pytest
 from aiops_k8s_agents.partition_artifacts import write_partition_report
 from aiops_k8s_agents.partition_models import PartitionContractError
 from aiops_k8s_agents.partition_repository import PartitionPlanRepository
-from aiops_k8s_agents.partition_service import run_partition_planning
+from aiops_k8s_agents.partition_service import (
+    PartitionFeedbackService,
+    run_partition_planning,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +78,86 @@ def test_partition_service_supports_bounded_replanning(tmp_path):
 
     assert second["plan"]["selected_candidate"]["split_points"] != [3]
     assert second["replanning"]["attempt"] == 1
+
+
+@pytest.fixture
+def feedback_service(tmp_path):
+    repository = PartitionPlanRepository(tmp_path / "feedback-repository")
+    payload = json.loads(
+        (ROOT / "config/examples/model_partition_job.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    report = run_partition_planning(
+        payload,
+        policy_path=ROOT / "config/model_partition_policy.json",
+        artifact_root=repository.root,
+        plan_id_factory=lambda: "partition-feedback-v1",
+    )
+    identifiers = iter(("partition-feedback-v2", "partition-feedback-v3", "partition-feedback-v4"))
+    return PartitionFeedbackService(
+        repository,
+        ROOT / "config/model_partition_policy.json",
+        plan_id_factory=lambda: next(identifiers),
+    ), report
+
+
+def _latency_feedback(report: dict) -> dict:
+    return {
+        "signal": "latency_slo_violation",
+        "source": "runtime-monitor",
+        "reason": "observed latency exceeded the approved SLO",
+        "received_at": "2026-08-20T00:00:00+00:00",
+        "plan_id": report["plan"]["plan_id"],
+        "plan_version": report["plan"]["plan_version"],
+    }
+
+
+def test_feedback_replan_increments_version_and_links_parent(feedback_service):
+    service, report_v1 = feedback_service
+
+    report_v2 = service.process_feedback(
+        report_v1["plan"]["plan_id"], _latency_feedback(report_v1)
+    )
+
+    assert report_v2["status"] == "planned"
+    assert report_v2["plan"]["plan_version"] == 2
+    assert report_v2["plan"]["parent_plan_id"] == report_v1["plan"]["plan_id"]
+    assert report_v2["replanning"]["reason"] == "latency_slo_violation"
+    assert report_v2["scheduling_handoff"]["status"] in {"ready", "blocked"}
+    assert report_v2["scheduling_handoff"]["scheduler_ref"] is None
+
+
+def test_feedback_replan_cumulatively_narrows_previous_candidates(feedback_service):
+    service, report_v1 = feedback_service
+    report_v2 = service.process_feedback(
+        report_v1["plan"]["plan_id"], _latency_feedback(report_v1)
+    )
+    report_v3 = service.process_feedback(
+        report_v2["plan"]["plan_id"], _latency_feedback(report_v2)
+    )
+
+    assert report_v3["status"] == "planned"
+    assert report_v1["plan"]["selected_candidate"]["split_points"] != report_v3["plan"]["selected_candidate"]["split_points"]
+    assert report_v2["plan"]["selected_candidate"]["split_points"] != report_v3["plan"]["selected_candidate"]["split_points"]
+
+
+def test_feedback_replan_exhaustion_requires_human_review(feedback_service):
+    service, report_v1 = feedback_service
+    report_v2 = service.process_feedback(
+        report_v1["plan"]["plan_id"], _latency_feedback(report_v1)
+    )
+    report_v3 = service.process_feedback(
+        report_v2["plan"]["plan_id"], _latency_feedback(report_v2)
+    )
+
+    result = service.process_feedback(
+        report_v3["plan"]["plan_id"], _latency_feedback(report_v3)
+    )
+
+    assert result["status"] == "blocked"
+    assert result["plan"]["human_review_required"] is True
+    assert "replan_attempts_exhausted" in result["plan"]["errors"]
 
 
 def test_artifact_writer_adds_a_blocked_handoff_for_existing_valid_reports(tmp_path):
