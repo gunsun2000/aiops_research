@@ -42,6 +42,12 @@ def inference_payload() -> dict:
                 },
             },
         },
+        "approved_execution_mode": {
+            "name": "split_inference",
+            "approved": True,
+            "approved_by": "FederatedCoordinationAgent",
+            "approval_ref": "execution-mode-inference-001",
+        },
         "system_context": {
             "snapshot_id": "snapshot-inference-001",
             "snapshot_version": "2026-08-20.1",
@@ -123,6 +129,7 @@ def test_v2_request_routes_inference_payload(inference_payload):
 def test_v2_request_routes_training_pipeline_parallel_payload(inference_payload):
     payload = deepcopy(inference_payload)
     payload["coordination_plan"]["plan_type"] = "training"
+    payload["approved_execution_mode"]["name"] = "pipeline_parallel"
     payload["coordination_plan"]["payload"] = {
         "model_id": "transformer-training",
         "approved_model_version": "transformer-v3",

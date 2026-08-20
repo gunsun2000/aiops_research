@@ -114,6 +114,12 @@ def inference_payload(context_payload) -> dict:
                 },
             },
         },
+        "approved_execution_mode": {
+            "name": "split_inference",
+            "approved": True,
+            "approved_by": "FederatedCoordinationAgent",
+            "approval_ref": "execution-mode-inference-001",
+        },
         "system_context": context_payload,
     }
 

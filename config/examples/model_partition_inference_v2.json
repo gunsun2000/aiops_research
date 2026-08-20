@@ -26,6 +26,12 @@
       }
     }
   },
+  "approved_execution_mode": {
+    "name": "split_inference",
+    "approved": true,
+    "approved_by": "FederatedCoordinationAgent",
+    "approval_ref": "execution-mode-inference-001"
+  },
   "system_context": {
     "snapshot_id": "snapshot-inference-001",
     "snapshot_version": "2026-08-20.1",

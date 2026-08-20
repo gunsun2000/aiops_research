@@ -267,6 +267,15 @@ class PartitionPlanningRequest:
         context = PartitionSystemContext.from_dict(
             _mapping(payload.get("system_context"), "system_context")
         )
+        mode_payload = payload.get("approved_execution_mode")
+        if mode_payload is None:
+            raise PartitionContractError(
+                "approved_mode_required",
+                "approved_execution_mode is required from the upstream coordinator",
+            )
+        approved_execution_mode = ApprovedExecutionMode.from_dict(
+            _mapping(mode_payload, "approved_execution_mode")
+        )
         if (
             plan.model_id != context.model_registry_context.model_id
             or plan.approved_model_version
@@ -276,7 +285,12 @@ class PartitionPlanningRequest:
                 "model_version_mismatch",
                 "coordination plan and model registry context must match",
             )
-        return cls(envelope=envelope, plan=plan, context=context)
+        return cls(
+            envelope=envelope,
+            plan=plan,
+            context=context,
+            approved_execution_mode=approved_execution_mode,
+        )
 
 
 class LegacyFederatedRoundPlanAdapter:

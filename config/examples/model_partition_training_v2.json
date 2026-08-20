@@ -25,6 +25,12 @@
       }
     }
   },
+  "approved_execution_mode": {
+    "name": "pipeline_parallel",
+    "approved": true,
+    "approved_by": "FederatedCoordinationAgent",
+    "approval_ref": "execution-mode-training-001"
+  },
   "system_context": {
     "snapshot_id": "snapshot-training-001",
     "snapshot_version": "2026-08-20.1",

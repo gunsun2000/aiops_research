@@ -1,14 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 
 from aiops_k8s_agents.partition_context import canonical_json
-from aiops_k8s_agents.partition_coordination import (
-    InferenceCoordinationPlan,
-    PartitionPlanningRequest,
-    TrainingCoordinationPlan,
-)
+from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
 from aiops_k8s_agents.partition_models import (
     ApprovedExecutionMode,
     ModelLayer,
@@ -59,6 +55,19 @@ class PartitionCommonProcessor:
             )
         plan = request.plan
         approved_mode = self._approved_mode(request)
+        versions = (
+            plan.approved_model_version,
+            context.model_registry_context.approved_model_version,
+            profile.model_version,
+        )
+        if any(
+            not isinstance(version, str) or not version.strip()
+            for version in versions
+        ):
+            raise PartitionContractError(
+                "model_version_mismatch",
+                "approved model version must be non-empty text",
+            )
         if (
             plan.model_id != context.model_registry_context.model_id
             or plan.approved_model_version
@@ -75,16 +84,12 @@ class PartitionCommonProcessor:
         self._validate_feasibility(request, layers)
         context_hash = context.deterministic_hash()
         signature_payload = {
-            "plan_type": request.envelope.plan_type,
-            "job_id": request.envelope.job_id,
-            "model_id": plan.model_id,
-            "approved_model_version": plan.approved_model_version,
+            "envelope": asdict(request.envelope),
+            "plan": asdict(plan),
             "approved_execution_mode": approved_mode.to_dict(),
-            "participants": list(plan.participants),
             "layers": [layer.to_dict() for layer in layers],
             "devices": [device.to_dict() for device in context.devices],
             "network_links": [link.to_dict() for link in context.network_links],
-            "constraints": plan.constraints.to_dict(),
             "context_snapshot_id": context.snapshot_id,
             "context_snapshot_hash": context_hash,
             "legacy_input": request.legacy_input,
@@ -110,25 +115,19 @@ class PartitionCommonProcessor:
 
     @staticmethod
     def _approved_mode(request: PartitionPlanningRequest) -> ApprovedExecutionMode:
-        if request.approved_execution_mode is not None:
-            mode = request.approved_execution_mode
-            if mode.approved and mode.approved_by and mode.approval_ref:
-                return mode
+        mode = request.approved_execution_mode
+        if (
+            mode is None
+            or not isinstance(mode.name, str)
+            or not mode.name.strip()
+            or not mode.approved
+            or not mode.approved_by
+            or not mode.approval_ref
+        ):
             raise PartitionContractError(
                 "approved_mode_required", "execution mode must be approved upstream"
             )
-        if isinstance(request.plan, TrainingCoordinationPlan):
-            mode_name = request.plan.coordination_mode
-        elif isinstance(request.plan, InferenceCoordinationPlan):
-            mode_name = "split_inference"
-        else:
-            raise PartitionContractError("unsupported_plan_type", "unsupported plan type")
-        return ApprovedExecutionMode(
-            name=mode_name,
-            approved=True,
-            approved_by=request.envelope.approved_by,
-            approval_ref=request.envelope.approval_ref,
-        )
+        return mode
 
     @staticmethod
     def _layers_from_profile(request: PartitionPlanningRequest) -> tuple[ModelLayer, ...]:
