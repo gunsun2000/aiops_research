@@ -35,6 +35,28 @@ def round_plan_and_execution_plan():
     return round_plan, plan
 
 
+def v2_request_and_execution_plan(example_name: str = "model_partition_inference_v2.json"):
+    request = PartitionPlanningRequest.from_dict(
+        json.loads((ROOT / "config/examples" / example_name).read_text(encoding="utf-8"))
+    )
+    if request.envelope.plan_type == "inference":
+        request = replace(
+            request,
+            plan=replace(
+                request.plan,
+                latency_slo_ms=500.0,
+                constraints=replace(
+                    request.plan.constraints, max_end_to_end_latency_ms=500.0
+                ),
+            ),
+        )
+    policy = ModelPartitionPolicy.from_path(ROOT / "config/model_partition_policy.json")
+    plan = ModelPartitionOrchestrationAgent(
+        policy, plan_id_factory=lambda: "validator-v2-plan"
+    ).plan_request(request)
+    return request, plan
+
+
 def test_validator_accepts_complete_selected_plan():
     round_plan, plan = round_plan_and_execution_plan()
 
@@ -58,16 +80,124 @@ def test_validator_accepts_phase_distinct_training_dag():
     agent = ModelPartitionOrchestrationAgent(
         policy, plan_id_factory=lambda: "validator-training-plan"
     )
-    normalized = agent._common_processor.process(request)
-    round_plan = agent._round_plan_from_normalized(normalized)
     plan = agent.plan_request(request)
 
-    result = PartitionPlanValidator().validate(round_plan, plan)
+    result = PartitionPlanValidator().validate(request, plan)
 
     assert result.valid is True
     assert "graph_node_partition_mismatch" not in result.errors
     assert "graph_edge_unknown_partition" not in result.errors
     assert "execution_graph_cycle" not in result.errors
+
+
+def test_validator_accepts_complete_v2_inference_plan():
+    request, plan = v2_request_and_execution_plan()
+
+    result = PartitionPlanValidator().validate(request, plan)
+
+    assert result.valid is True
+    assert "deterministic_signature" in result.checked_rules
+    assert "input_snapshot" in result.checked_rules
+
+
+def test_validator_rejects_snapshot_hash_mismatch():
+    request, plan = v2_request_and_execution_plan()
+
+    result = PartitionPlanValidator().validate(
+        request, replace(plan, input_snapshot_hash="0" * 64)
+    )
+
+    assert result.valid is False
+    assert "input_snapshot_hash_mismatch" in result.errors
+
+
+def test_validator_rejects_snapshot_id_and_direct_signature_mismatches():
+    request, plan = v2_request_and_execution_plan()
+
+    result = PartitionPlanValidator().validate(
+        request,
+        replace(
+            plan,
+            input_snapshot_id="snapshot-tampered",
+            deterministic_signature="0" * 64,
+        ),
+    )
+
+    assert result.valid is False
+    assert "input_snapshot_id_mismatch" in result.errors
+    assert "deterministic_signature_mismatch" in result.errors
+
+
+def test_validator_rejects_tampered_selected_candidate_signature():
+    request, plan = v2_request_and_execution_plan()
+    selected = plan.selected_candidate
+    assert selected is not None
+
+    result = PartitionPlanValidator().validate(
+        request,
+        replace(
+            plan,
+            selected_candidate=replace(
+                selected,
+                estimated_total_latency_ms=selected.estimated_total_latency_ms + 1.0,
+            ),
+        ),
+    )
+
+    assert result.valid is False
+    assert "deterministic_signature_mismatch" in result.errors
+
+
+def test_validator_rejects_strategy_plan_type_mismatch():
+    request, plan = v2_request_and_execution_plan("model_partition_training_v2.json")
+    _, inference_plan = v2_request_and_execution_plan()
+
+    result = PartitionPlanValidator().validate(request, inference_plan)
+
+    assert result.valid is False
+    assert "strategy_plan_type_mismatch" in result.errors
+
+
+def test_validator_rejects_approved_mode_model_and_strategy_mismatches():
+    request, plan = v2_request_and_execution_plan()
+
+    result = PartitionPlanValidator().validate(
+        request,
+        replace(
+            plan,
+            approved_execution_mode="pipeline_parallel",
+            approved_model_version="model-version-tampered",
+            strategy_id="strategy-tampered",
+            strategy_version="strategy-version-tampered",
+        ),
+    )
+
+    assert result.valid is False
+    assert "approved_execution_mode_mismatch" in result.errors
+    assert "approved_model_version_mismatch" in result.errors
+    assert "strategy_id_mismatch" in result.errors
+    assert "strategy_version_mismatch" in result.errors
+
+
+def test_validator_rejects_non_forward_inference_graph_edges():
+    request, plan = v2_request_and_execution_plan()
+    selected = plan.selected_candidate
+    assert selected is not None
+    edge = selected.graph_edges[0]
+
+    result = PartitionPlanValidator().validate(
+        request,
+        replace(
+            plan,
+            selected_candidate=replace(
+                selected,
+                graph_edges=(replace(edge, edge_type="backward"), *selected.graph_edges[1:]),
+            ),
+        ),
+    )
+
+    assert result.valid is False
+    assert "inference_graph_forward_contract_mismatch" in result.errors
 
 
 def test_validator_rejects_training_graph_missing_required_aggregation_edge():

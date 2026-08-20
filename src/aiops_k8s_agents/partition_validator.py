@@ -1,12 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 from typing import Any
 
+from aiops_k8s_agents.partition_common import PartitionCommonProcessor
+from aiops_k8s_agents.partition_context import canonical_json
+from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
 from aiops_k8s_agents.partition_models import (
     FederatedRoundPlan,
+    PartitionContractError,
     PartitionExecutionPlan,
 )
+from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
 
 
 @dataclass(frozen=True)
@@ -40,8 +46,35 @@ class PartitionPlanValidator:
         "network_links",
         "job_constraints",
     )
+    V2_CHECKED_RULES = (
+        *CHECKED_RULES,
+        "coordination_approval_provenance",
+        "v2_plan_identity",
+        "strategy_identity",
+        "input_snapshot",
+        "deterministic_signature",
+        "strategy_graph_contract",
+    )
+
+    def __init__(
+        self,
+        *,
+        common_processor: PartitionCommonProcessor | None = None,
+        strategy_registry: PartitionStrategyRegistry | None = None,
+    ) -> None:
+        self._common_processor = common_processor or PartitionCommonProcessor()
+        self._strategy_registry = strategy_registry or PartitionStrategyRegistry.default()
 
     def validate(
+        self,
+        request: FederatedRoundPlan | PartitionPlanningRequest,
+        plan: PartitionExecutionPlan,
+    ) -> PartitionValidationResult:
+        if isinstance(request, PartitionPlanningRequest):
+            return self._validate_v2(request, plan)
+        return self._validate_legacy(request, plan)
+
+    def _validate_legacy(
         self,
         round_plan: FederatedRoundPlan,
         plan: PartitionExecutionPlan,
@@ -170,12 +203,119 @@ class PartitionPlanValidator:
             errors.append("max_transfer_bytes_exceeded")
         return self._result(errors)
 
-    def _result(self, errors: list[str]) -> PartitionValidationResult:
+    def _validate_v2(
+        self,
+        request: PartitionPlanningRequest,
+        plan: PartitionExecutionPlan,
+    ) -> PartitionValidationResult:
+        errors: list[str] = []
+        try:
+            normalized = self._common_processor.process(request)
+        except PartitionContractError as exc:
+            return self._result([exc.code], checked_rules=self.V2_CHECKED_RULES)
+
+        round_plan = FederatedRoundPlan(
+            job_id=normalized.job_id,
+            model_id=normalized.model_id,
+            execution_mode=normalized.approved_execution_mode,
+            layers=normalized.layers,
+            participants=normalized.participants,
+            devices=normalized.devices,
+            network_links=normalized.network_links,
+            constraints=normalized.constraints,
+        )
+        errors.extend(self._validate_legacy(round_plan, plan).errors)
+
+        envelope = request.envelope
+        approved_mode = request.approved_execution_mode
+        if not envelope.approved_by or not envelope.approval_ref:
+            errors.append("approval_provenance_missing")
+        if (
+            approved_mode is None
+            or not approved_mode.approved
+            or not approved_mode.approved_by
+            or not approved_mode.approval_ref
+        ):
+            errors.append("approved_mode_provenance_missing")
+        elif plan.approved_execution_mode != approved_mode.name:
+            errors.append("approved_execution_mode_mismatch")
+
+        if plan.plan_type != normalized.plan_type:
+            errors.append("strategy_plan_type_mismatch")
+        if plan.approved_model_version != normalized.approved_model_version:
+            errors.append("approved_model_version_mismatch")
+        if plan.input_snapshot_id != normalized.context_snapshot_id:
+            errors.append("input_snapshot_id_mismatch")
+        if plan.input_snapshot_hash != normalized.context_snapshot_hash:
+            errors.append("input_snapshot_hash_mismatch")
+
+        try:
+            strategy = self._strategy_registry.resolve(
+                normalized.plan_type, normalized.approved_execution_mode.name
+            )
+        except PartitionContractError as exc:
+            errors.append(exc.code)
+        else:
+            if plan.strategy_id != strategy.strategy_id:
+                errors.append("strategy_id_mismatch")
+            if plan.strategy_version != strategy.strategy_version:
+                errors.append("strategy_version_mismatch")
+
+        if plan.plan_type == "inference":
+            self._validate_inference_graph_contract(plan, errors)
+            latency_slo = getattr(request.plan, "latency_slo_ms", None)
+            if (
+                latency_slo is not None
+                and plan.selected_candidate is not None
+                and plan.selected_candidate.estimated_total_latency_ms > latency_slo
+            ):
+                errors.append("latency_slo_exceeded")
+
+        expected_signature = self._deterministic_signature(normalized.input_signature, plan)
+        if (
+            not plan.deterministic_signature
+            or plan.deterministic_signature != expected_signature
+        ):
+            errors.append("deterministic_signature_mismatch")
+        return self._result(errors, checked_rules=self.V2_CHECKED_RULES)
+
+    @staticmethod
+    def _deterministic_signature(input_signature: str, plan: PartitionExecutionPlan) -> str:
+        payload = {
+            "input_signature": input_signature,
+            "strategy_id": plan.strategy_id,
+            "strategy_version": plan.strategy_version,
+            "policy_version": plan.policy_version,
+            "selected_candidate": (
+                None
+                if plan.selected_candidate is None
+                else plan.selected_candidate.to_dict()
+            ),
+        }
+        return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+
+    @staticmethod
+    def _validate_inference_graph_contract(
+        plan: PartitionExecutionPlan, errors: list[str]
+    ) -> None:
+        selected = plan.selected_candidate
+        if selected is None:
+            return
+        allowed_edge_types = {"forward", "pipeline", "cache_transfer"}
+        if any(edge.edge_type not in allowed_edge_types for edge in selected.graph_edges):
+            errors.append("inference_graph_forward_contract_mismatch")
+
+    def _result(
+        self,
+        errors: list[str],
+        *,
+        checked_rules: tuple[str, ...] | None = None,
+    ) -> PartitionValidationResult:
         unique_errors = tuple(dict.fromkeys(errors))
         return PartitionValidationResult(
             valid=not unique_errors,
             errors=unique_errors,
-            checked_rules=self.CHECKED_RULES,
+            checked_rules=checked_rules or self.CHECKED_RULES,
         )
 
     @staticmethod

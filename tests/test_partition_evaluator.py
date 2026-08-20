@@ -12,6 +12,7 @@ from aiops_k8s_agents.partition_evaluator import (
     ObservedPartitionMetrics,
     PartitionPlanEvaluator,
 )
+from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
 from aiops_k8s_agents.partition_models import FederatedRoundPlan
 from aiops_k8s_agents.partition_validator import (
     PartitionPlanValidator,
@@ -36,6 +37,29 @@ def evaluated_inputs():
     ).plan(round_plan)
     validation = PartitionPlanValidator().validate(round_plan, plan)
     return round_plan, policy, plan, validation
+
+
+def v2_evaluated_inputs(example_name: str):
+    request = PartitionPlanningRequest.from_dict(
+        json.loads((ROOT / "config/examples" / example_name).read_text(encoding="utf-8"))
+    )
+    if request.envelope.plan_type == "inference":
+        request = replace(
+            request,
+            plan=replace(
+                request.plan,
+                latency_slo_ms=500.0,
+                constraints=replace(
+                    request.plan.constraints, max_end_to_end_latency_ms=500.0
+                ),
+            ),
+        )
+    policy = ModelPartitionPolicy.from_path(ROOT / "config/model_partition_policy.json")
+    plan = ModelPartitionOrchestrationAgent(
+        policy, plan_id_factory=lambda: "evaluation-v2-plan"
+    ).plan_request(request)
+    validation = PartitionPlanValidator().validate(request, plan)
+    return request, policy, plan, validation
 
 
 def test_predicted_reward_is_bounded_and_labeled():
@@ -86,9 +110,59 @@ def test_observed_metrics_are_labeled_and_reduce_reward_when_performance_worsens
             latency_ms=850.0,
             maximum_memory_pressure=0.85,
             total_transfer_bytes=4_500_000,
+            source="runtime-monitor",
+            observed_at="2026-08-20T09:30:00Z",
         ),
     )
 
     assert observed.evidence_level == "observed"
     assert observed.estimated is False
     assert observed.reward < predicted.reward
+
+
+def test_inference_evaluation_is_explicitly_predicted():
+    request, policy, plan, validation = v2_evaluated_inputs(
+        "model_partition_inference_v2.json"
+    )
+
+    result = PartitionPlanEvaluator(policy).evaluate(request, plan, validation)
+
+    assert result.evidence_level == "predicted"
+    assert result.estimated is True
+    assert result.label == "Estimated reward (predicted evidence)"
+    assert "latency_efficiency" in result.components
+    assert result.confidence == plan.confidence
+    assert result.strategy_id == plan.strategy_id
+
+
+def test_training_evaluation_uses_step_time_and_balance():
+    request, policy, plan, validation = v2_evaluated_inputs(
+        "model_partition_training_v2.json"
+    )
+
+    result = PartitionPlanEvaluator(policy).evaluate(request, plan, validation)
+
+    assert result.evidence_level == "predicted"
+    assert "step_time_efficiency" in result.components
+    assert "load_balance" in result.components
+    assert "resilience" in result.components
+
+
+def test_observed_metrics_require_source_and_timestamp():
+    request, policy, plan, validation = v2_evaluated_inputs(
+        "model_partition_inference_v2.json"
+    )
+
+    result = PartitionPlanEvaluator(policy).evaluate(
+        request,
+        plan,
+        validation,
+        observed=ObservedPartitionMetrics(
+            latency_ms=12.0,
+            maximum_memory_pressure=0.2,
+            total_transfer_bytes=2_000,
+        ),
+    )
+
+    assert result.evidence_level == "predicted"
+    assert result.estimated is True
