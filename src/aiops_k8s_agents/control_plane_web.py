@@ -566,30 +566,16 @@ def _ranker_collection_status(
     guard_policy: LearnedRankerGuardPolicy,
 ) -> tuple[list[dict[str, object]], list[dict[str, str]]]:
     repository = PartitionRankerRepository(state.ranker_registry_root)
-    if not state.ranker_registry_root.exists():
-        return [], []
-    try:
-        entries = tuple(
-            sorted(
-                state.ranker_registry_root.iterdir(), key=lambda item: item.name
-            )
-        )
-    except OSError as exc:
-        raise PartitionContractError(
-            "invalid_model_artifact", "ranker registry could not be read"
-        ) from exc
     models: list[dict[str, object]] = []
     integrity_errors: list[dict[str, str]] = []
-    for entry in entries:
-        if not entry.is_dir():
-            continue
+    for version in repository.collection_model_versions():
         try:
-            version = _validate_ranker_model_version_token(entry.name)
+            version = _validate_ranker_model_version_token(version)
             artifact = repository.get(version)
         except PartitionContractError as exc:
             if exc.code == "invalid_model_version":
                 continue
-            integrity_errors.append(_ranker_integrity_error(entry.name, exc))
+            integrity_errors.append(_ranker_integrity_error(version, exc))
             continue
         models.append(_ranker_status(artifact, guard_policy))
     return models, integrity_errors

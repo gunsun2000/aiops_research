@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from aiops_k8s_agents import control_plane_web
+from aiops_k8s_agents import partition_ranker_repository
 from aiops_k8s_agents.control_plane_web import create_app
 from aiops_k8s_agents.partition_features import FEATURE_ORDER
 from aiops_k8s_agents.partition_ranker_repository import (
@@ -218,6 +219,37 @@ def test_ranker_status_surfaces_corrupt_registered_artifact_without_path(tmp_pat
             "model_version": "partition-ridge-observed-v1",
         }
     ]
+
+
+def test_ranker_collection_rejects_reparse_registry_root_before_listing(
+    tmp_path, monkeypatch
+):
+    registry = tmp_path / "ranker-registry"
+    registry.mkdir()
+    external_model_name = "external-only-model-v1"
+    (registry / external_model_name).mkdir()
+
+    monkeypatch.setattr(
+        partition_ranker_repository,
+        "_is_link",
+        lambda path: Path(path).absolute() == registry.absolute(),
+    )
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            ranker_registry_root=registry,
+        )
+    )
+
+    response = client.get("/api/model-partition/rankers")
+
+    assert response.status_code == 422
+    assert response.json() == {
+        "error_code": "invalid_model_artifact",
+        "integrity_reason": "artifact_validation_failed",
+        "message": "registered ranker artifact failed integrity validation",
+    }
+    assert external_model_name not in response.text
 
 
 @pytest.mark.parametrize("path_like_version", ("../../model.json", r"C:\\model.json"))

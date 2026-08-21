@@ -222,20 +222,34 @@ class PartitionRankerRepository:
         return artifact
 
     def list(self) -> tuple[PartitionRankerModelArtifact, ...]:
-        if self._registry_root(create=False) is None:
-            return ()
         versions = []
-        for path in self.root.iterdir():
+        for version in self.collection_model_versions():
+            model_path = self._model_path(version, create_root=False)
+            if model_path.exists():
+                versions.append(version)
+        return tuple(self.get(version) for version in sorted(versions))
+
+    def collection_model_versions(self) -> tuple[str, ...]:
+        """Return candidate model directory names after validating the registry root."""
+        resolved_root = self._registry_root(create=False)
+        if resolved_root is None:
+            return ()
+        try:
+            entries = tuple(sorted(resolved_root.iterdir(), key=lambda path: path.name))
+        except OSError as exc:
+            raise PartitionContractError(
+                "invalid_model_artifact", "ranker registry could not be read"
+            ) from exc
+
+        versions = []
+        for path in entries:
             if _is_link(path):
                 raise PartitionContractError(
                     "invalid_model_artifact", "registry path must not contain a symlink"
                 )
-            if not path.is_dir():
-                continue
-            model_path = self._model_path(path.name, create_root=False)
-            if model_path.exists():
+            if path.is_dir():
                 versions.append(path.name)
-        return tuple(self.get(version) for version in sorted(versions))
+        return tuple(versions)
 
     def _model_path(self, model_version: str, *, create_root: bool) -> Path:
         version = _validate_model_version(model_version)
