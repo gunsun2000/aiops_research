@@ -133,6 +133,43 @@ def test_dataset_excludes_a_corrupt_committed_sidecar_without_aborting(
     assert summary.rejections["corrupt_or_partial_artifact"] == 1
 
 
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("observed_at", "not-an-iso-8601-timestamp"),
+        ("total_transfer_bytes", float("nan")),
+        ("total_transfer_bytes", -1),
+        ("total_transfer_bytes", 1.5),
+    ),
+)
+def test_dataset_rejects_observed_runtime_metrics_outside_evaluator_contract(
+    tmp_path, observed_report, field, value
+):
+    observed_report["evaluation"]["metrics"][field] = value
+    write_report_fixture(tmp_path / "artifacts", observed_report)
+
+    summary = build_partition_ranking_dataset(
+        (tmp_path / "artifacts",), tmp_path / "dataset.jsonl"
+    )
+
+    assert summary.row_count == 0
+    assert summary.rejections["corrupt_or_partial_artifact"] == 1
+
+
+def test_dataset_rejects_artifact_with_committed_and_pending_markers(
+    tmp_path, observed_report
+):
+    root = tmp_path / "artifacts"
+    write_report_fixture(root, observed_report)
+    plan_directory = root / observed_report["plan"]["plan_id"]
+    (plan_directory / "pending.json").write_text('{"pending": true}\n', encoding="utf-8")
+
+    summary = build_partition_ranking_dataset((root,), tmp_path / "dataset.jsonl")
+
+    assert summary.row_count == 0
+    assert summary.rejections["corrupt_or_partial_artifact"] == 1
+
+
 def test_dataset_has_stable_order_hash_and_provenance_manifest(tmp_path, observed_report):
     first = _as_observed(_planned_report(tmp_path / "source-z", "z-plan"))
     second = _as_observed(_planned_report(tmp_path / "source-a", "a-plan"))

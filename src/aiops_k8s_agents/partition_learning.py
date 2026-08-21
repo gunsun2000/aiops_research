@@ -11,6 +11,7 @@ from typing import Any
 
 from aiops_k8s_agents.partition_common import NormalizedPartitionRequest
 from aiops_k8s_agents.partition_context import WorkloadForecast, canonical_json
+from aiops_k8s_agents.partition_evaluator import ObservedPartitionMetrics
 from aiops_k8s_agents.partition_features import (
     FEATURE_SCHEMA_VERSION,
     candidate_key,
@@ -216,7 +217,10 @@ def write_partition_ranking_dataset(
 
 
 def _read_committed_partition_report(plan_directory: Path) -> _PersistedPartitionReport:
-    commit = _read_json(plan_directory / "commit.json")
+    commit_path = plan_directory / "commit.json"
+    if commit_path.is_file() and (plan_directory / "pending.json").exists():
+        raise ValueError("artifact has both committed and pending markers")
+    commit = _read_json(commit_path)
     if commit.get("committed") is not True:
         raise ValueError("artifact is not committed")
     latest = _read_json(plan_directory / "latest.json")
@@ -279,6 +283,8 @@ def _training_row(
         return None, _with_rejection(rejections, "missing_observed_provenance")
     if scope == "observed" and _non_runtime_source(source):
         return None, _with_rejection(rejections, "non_runtime_evidence_source")
+    if evidence_level == "observed":
+        ObservedPartitionMetrics.from_dict(metrics)
 
     context = RankingContext(
         request=_normalized_request(artifact.normalized_request),
