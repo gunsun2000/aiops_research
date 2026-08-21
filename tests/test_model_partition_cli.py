@@ -1,6 +1,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from aiops_k8s_agents.cli import main
 from aiops_k8s_agents.partition_features import FEATURE_ORDER
 from aiops_k8s_agents.partition_ranker_repository import (
@@ -14,6 +16,12 @@ from aiops_k8s_agents.partition_service import run_partition_planning
 EXAMPLE = "config/examples/model_partition_job.json"
 V2_EXAMPLE = "config/examples/model_partition_inference_v2.json"
 POLICY = "config/model_partition_policy.json"
+SIGNING_KEY = "task-6-observed-artifact-signing-key"
+
+
+@pytest.fixture(autouse=True)
+def observed_artifact_signing_key(monkeypatch):
+    monkeypatch.setenv("AIOPS_PARTITION_ARTIFACT_HMAC_KEY", SIGNING_KEY)
 
 
 def _v2_input_path(tmp_path: Path) -> Path:
@@ -176,6 +184,27 @@ def test_build_partition_ranking_dataset_cli_reports_observed_source(tmp_path, c
     assert report["scope"] == "observed"
     assert report["row_count"] == 1
     assert report["dataset_path"] == str(output.resolve())
+
+
+@pytest.mark.parametrize("scope", ("predicted", "synthetic"))
+def test_build_partition_ranking_dataset_cli_rejects_unsupported_scope(
+    tmp_path, capsys, scope
+):
+    with pytest.raises(SystemExit) as error:
+        main(
+            [
+                "build-partition-ranking-dataset",
+                "--artifact-root",
+                str(tmp_path / "artifacts"),
+                "--output",
+                str(tmp_path / "dataset.jsonl"),
+                "--scope",
+                scope,
+            ]
+        )
+
+    assert error.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
 
 
 def test_plan_model_partition_cli_writes_validated_artifact(tmp_path, capsys):

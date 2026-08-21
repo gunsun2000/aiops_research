@@ -57,6 +57,8 @@ def run_partition_planning(
     selection_mode: str = "deterministic",
     ranker_registry_root: str | Path | None = None,
     ranker_model_version: str | None = None,
+    artifact_signing_key: str | bytes | None = None,
+    artifact_signing_key_file: str | Path | None = None,
 ) -> dict[str, Any]:
     policy = ModelPartitionPolicy.from_path(policy_path)
     strategy_registry = PartitionStrategyRegistry.default(Path(policy_path))
@@ -162,6 +164,8 @@ def run_partition_planning(
         sidecars=(
             {} if runtime_outcome is None else {"runtime_outcome.json": runtime_outcome}
         ),
+        artifact_signing_key=artifact_signing_key,
+        artifact_signing_key_file=artifact_signing_key_file,
     )
     return {**report, "artifact_path": str(artifact_path)}
 

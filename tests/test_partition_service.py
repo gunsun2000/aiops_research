@@ -36,6 +36,12 @@ from aiops_k8s_agents.partition_validator import PartitionPlanValidator
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SIGNING_KEY = "task-6-observed-artifact-signing-key"
+
+
+@pytest.fixture(autouse=True)
+def observed_artifact_signing_key(monkeypatch):
+    monkeypatch.setenv("AIOPS_PARTITION_ARTIFACT_HMAC_KEY", SIGNING_KEY)
 
 
 @pytest.fixture
@@ -166,6 +172,7 @@ def test_service_observed_runtime_outcome_is_transactional_and_dataset_eligible(
     assert report["evaluation"]["estimated"] is False
     assert metrics["runtime_outcome_ref"] == "outcomes/observed-service-plan/versions/1/result"
     assert runtime_outcome.is_file()
+    assert runtime_outcome.with_name("authenticated_manifest.json").is_file()
     assert build_partition_ranking_dataset((artifact_root,), tmp_path / "dataset.jsonl").row_count == 1
 
 
@@ -260,7 +267,7 @@ def test_observed_dataset_rejects_tampered_runtime_outcome_sidecar(
     summary = build_partition_ranking_dataset((artifact_root,), tmp_path / "dataset.jsonl")
 
     assert summary.row_count == 0
-    assert summary.rejections["runtime_outcome_mismatch"] == 1
+    assert summary.rejections["authenticated_manifest_mismatch"] == 1
 
 
 def test_partition_service_persists_same_validated_and_evaluated_plan(tmp_path):

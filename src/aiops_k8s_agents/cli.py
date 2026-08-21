@@ -478,9 +478,8 @@ def build_parser() -> argparse.ArgumentParser:
     )
     dataset_parser.add_argument("--artifact-root", action="append", required=True)
     dataset_parser.add_argument("--output", required=True)
-    dataset_parser.add_argument(
-        "--scope", choices=("observed", "predicted", "synthetic"), default="observed"
-    )
+    dataset_parser.add_argument("--scope", choices=("observed",), default="observed")
+    _add_artifact_signing_key_file_argument(dataset_parser)
 
     train_ranker_parser = subparsers.add_parser(
         "train-partition-ranker",
@@ -490,6 +489,7 @@ def build_parser() -> argparse.ArgumentParser:
     train_ranker_parser.add_argument("--ranker-registry", required=True)
     train_ranker_parser.add_argument("--model-version", required=True)
     train_ranker_parser.add_argument("--seed", type=int, default=17)
+    _add_artifact_signing_key_file_argument(train_ranker_parser)
 
     evaluate_ranker_parser = subparsers.add_parser(
         "evaluate-partition-ranker",
@@ -498,6 +498,7 @@ def build_parser() -> argparse.ArgumentParser:
     evaluate_ranker_parser.add_argument("--dataset", required=True)
     evaluate_ranker_parser.add_argument("--ranker-registry", required=True)
     evaluate_ranker_parser.add_argument("--model-version", required=True)
+    _add_artifact_signing_key_file_argument(evaluate_ranker_parser)
 
     replan_parser = subparsers.add_parser(
         "replan-model-partition",
@@ -546,6 +547,7 @@ def _add_partition_planning_arguments(parser: argparse.ArgumentParser) -> None:
         default="",
         help="Optional observed runtime metrics JSON path.",
     )
+    _add_artifact_signing_key_file_argument(parser)
     _add_ranker_selection_arguments(parser)
 
 
@@ -559,6 +561,14 @@ def _add_ranker_selection_arguments(
     )
     parser.add_argument("--ranker-registry", default="")
     parser.add_argument("--ranker-model-version", default="")
+
+
+def _add_artifact_signing_key_file_argument(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--artifact-signing-key-file",
+        default="",
+        help="External HMAC key file for observed partition artifacts.",
+    )
 
 
 def _add_alert_arguments(parser: argparse.ArgumentParser) -> None:
@@ -811,6 +821,7 @@ def run_model_partition_cli(args: argparse.Namespace) -> dict[str, Any]:
             selection_mode=args.selection_mode,
             ranker_registry_root=args.ranker_registry or None,
             ranker_model_version=args.ranker_model_version or None,
+            artifact_signing_key_file=args.artifact_signing_key_file or None,
             **replanning,
         )
     except PartitionContractError as exc:
@@ -860,7 +871,12 @@ def build_partition_ranking_dataset_cli(args: argparse.Namespace) -> dict[str, A
     try:
         output_path = Path(args.output).expanduser().resolve()
         roots = tuple(Path(root).expanduser().resolve() for root in args.artifact_root)
-        summary = build_partition_ranking_dataset(roots, output_path, scope=args.scope)
+        summary = build_partition_ranking_dataset(
+            roots,
+            output_path,
+            scope=args.scope,
+            artifact_signing_key_file=args.artifact_signing_key_file or None,
+        )
         return {
             "command": "build-partition-ranking-dataset",
             "artifact_roots": [str(root) for root in roots],
@@ -882,6 +898,7 @@ def train_partition_ranker_cli(args: argparse.Namespace) -> dict[str, Any]:
             registry_root=args.ranker_registry,
             model_version=args.model_version,
             seed=args.seed,
+            artifact_signing_key_file=args.artifact_signing_key_file or None,
         )
         return {
             "command": "train-partition-ranker",
@@ -902,8 +919,15 @@ def train_partition_ranker_cli(args: argparse.Namespace) -> dict[str, Any]:
 def evaluate_partition_ranker_cli(args: argparse.Namespace) -> dict[str, Any]:
     try:
         artifact = PartitionRankerRepository(args.ranker_registry).get(args.model_version)
-        dataset = load_partition_ranking_dataset(args.dataset)
-        evaluation = evaluate_partition_ranker(dataset.path, artifact)
+        dataset = load_partition_ranking_dataset(
+            args.dataset,
+            artifact_signing_key_file=args.artifact_signing_key_file or None,
+        )
+        evaluation = evaluate_partition_ranker(
+            dataset.path,
+            artifact,
+            artifact_signing_key_file=args.artifact_signing_key_file or None,
+        )
         return {
             "command": "evaluate-partition-ranker",
             "dataset_path": str(dataset.path),

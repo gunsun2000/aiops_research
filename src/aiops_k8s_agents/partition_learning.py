@@ -36,6 +36,7 @@ from aiops_k8s_agents.partition_ranker_repository import (
     PartitionRankerModelArtifact,
     PartitionRankerRepository,
 )
+from aiops_k8s_agents.partition_repository import PartitionArtifactAuthenticator
 from aiops_k8s_agents.partition_ranking import (
     DEFAULT_LEARNED_RANKER_GUARD_POLICY,
     LearnedRewardRanker,
@@ -179,12 +180,22 @@ def build_partition_ranking_dataset(
     output_path: str | Path,
     *,
     scope: str = "observed",
+    artifact_signing_key: str | bytes | None = None,
+    artifact_signing_key_file: str | Path | None = None,
 ) -> PartitionRankingDatasetSummary:
     """Build a deterministic, selected-candidate dataset from committed artifacts only."""
     normalized_scope = _scope(scope)
+    authenticator = (
+        None
+        if normalized_scope != "observed"
+        else PartitionArtifactAuthenticator.from_config(
+            key=artifact_signing_key,
+            key_file=artifact_signing_key_file,
+        )
+    )
     reports = tuple(iter_partition_reports(artifact_roots))
     rows, rejection_counts, source_artifact_contracts = collect_training_rows(
-        reports, scope=normalized_scope
+        reports, scope=normalized_scope, authenticator=authenticator
     )
     ordered_rows = tuple(sorted(rows, key=training_row_sort_key))
     return write_partition_ranking_dataset(
@@ -219,7 +230,10 @@ def iter_partition_reports(
 
 
 def collect_training_rows(
-    reports: Sequence[_PersistedPartitionReport | _ArtifactRejection], *, scope: str
+    reports: Sequence[_PersistedPartitionReport | _ArtifactRejection],
+    *,
+    scope: str,
+    authenticator: PartitionArtifactAuthenticator | None = None,
 ) -> tuple[tuple[PartitionRankingTrainingRow, ...], Counter[str], tuple[dict[str, object], ...]]:
     rejections: Counter[str] = Counter()
     rows: list[PartitionRankingTrainingRow] = []
@@ -229,7 +243,9 @@ def collect_training_rows(
             rejections[item.reason] += 1
             continue
         try:
-            row, reasons = _training_row(item, scope=scope)
+            row, reasons = _training_row(
+                item, scope=scope, authenticator=authenticator
+            )
         except (ValueError, TypeError, KeyError, PartitionContractError):
             rejections["corrupt_or_partial_artifact"] += 1
             continue
@@ -345,13 +361,19 @@ def train_partition_ranker(
     model_version: str,
     seed: int = 17,
     alpha: float = 1.0,
+    artifact_signing_key: str | bytes | None = None,
+    artifact_signing_key_file: str | Path | None = None,
 ) -> PartitionRankerTrainingSummary:
     """Fit an offline Ridge reward regressor and export its runtime-safe JSON contract."""
     if isinstance(alpha, bool) or not isinstance(alpha, (int, float)) or not isfinite(float(alpha)):
         raise PartitionContractError("invalid_training_parameter", "alpha must be finite and positive")
     if float(alpha) <= 0.0:
         raise PartitionContractError("invalid_training_parameter", "alpha must be finite and positive")
-    dataset = load_partition_ranking_dataset(dataset_path)
+    dataset = load_partition_ranking_dataset(
+        dataset_path,
+        artifact_signing_key=artifact_signing_key,
+        artifact_signing_key_file=artifact_signing_key_file,
+    )
     split = group_holdout_split(
         dataset.rows, test_fraction=_DEFAULT_HOLDOUT_TEST_FRACTION, seed=seed
     )
@@ -419,13 +441,21 @@ def train_partition_ranker(
 
 
 def evaluate_partition_ranker(
-    dataset_path: str | Path, artifact: PartitionRankerModelArtifact
+    dataset_path: str | Path,
+    artifact: PartitionRankerModelArtifact,
+    *,
+    artifact_signing_key: str | bytes | None = None,
+    artifact_signing_key_file: str | Path | None = None,
 ) -> PartitionRankerEvaluation:
     """Evaluate one dataset scope with pure-Python inference; scopes are never aggregated."""
     artifact.verify_hash()
     if artifact.model_type != "ridge_reward_regressor":
         raise PartitionContractError("invalid_model_artifact", "artifact must be a ridge reward regressor")
-    dataset = load_partition_ranking_dataset(dataset_path)
+    dataset = load_partition_ranking_dataset(
+        dataset_path,
+        artifact_signing_key=artifact_signing_key,
+        artifact_signing_key_file=artifact_signing_key_file,
+    )
     training_lineages = frozenset(
         artifact.training_provenance["training_lineage_group_hashes"]
     )
@@ -457,7 +487,12 @@ def evaluate_partition_ranker(
     )
 
 
-def load_partition_ranking_dataset(dataset_path: str | Path) -> PartitionRankingDataset:
+def load_partition_ranking_dataset(
+    dataset_path: str | Path,
+    *,
+    artifact_signing_key: str | bytes | None = None,
+    artifact_signing_key_file: str | Path | None = None,
+) -> PartitionRankingDataset:
     path = Path(dataset_path).expanduser().resolve()
     manifest_path = Path(f"{path}.manifest.json")
     try:
@@ -469,6 +504,17 @@ def load_partition_ranking_dataset(dataset_path: str | Path) -> PartitionRanking
         ) from exc
     digest = hashlib.sha256(payload).hexdigest()
     _validate_dataset_manifest(manifest, digest)
+    authenticator = (
+        None
+        if not (
+            manifest.get("scope") == "observed"
+            and manifest.get("eligible_for_real_claims") is True
+        )
+        else PartitionArtifactAuthenticator.from_config(
+            key=artifact_signing_key,
+            key_file=artifact_signing_key_file,
+        )
+    )
     try:
         rows = tuple(
             _training_row_from_dict(json.loads(line), index)
@@ -483,7 +529,7 @@ def load_partition_ranking_dataset(dataset_path: str | Path) -> PartitionRanking
         ) from exc
     if not rows:
         raise PartitionContractError("insufficient_training_data", "dataset must contain training rows")
-    _validate_dataset_rows(rows, manifest)
+    _validate_dataset_rows(rows, manifest, authenticator=authenticator)
     return PartitionRankingDataset(
         rows=rows,
         path=path,
@@ -565,7 +611,10 @@ def _training_row_from_dict(payload: object, index: int) -> PartitionRankingTrai
 
 
 def _validate_dataset_rows(
-    rows: Sequence[PartitionRankingTrainingRow], manifest: Mapping[str, Any]
+    rows: Sequence[PartitionRankingTrainingRow],
+    manifest: Mapping[str, Any],
+    *,
+    authenticator: PartitionArtifactAuthenticator | None,
 ) -> None:
     expected_row_count = manifest.get("row_count")
     if expected_row_count != len(rows):
@@ -593,7 +642,12 @@ def _validate_dataset_rows(
                 "dataset_scope_mismatch", "non-observed datasets must not contain observed rows"
             )
     if manifest["eligible_for_real_claims"]:
-        _validate_observed_source_contract(rows, manifest)
+        if authenticator is None:
+            raise PartitionContractError(
+                "artifact_signing_key_required",
+                "observed real-claim datasets require an external signing key",
+            )
+        _validate_observed_source_contract(rows, manifest, authenticator)
     counts = {
         "unique_job_count": len({row.job_id for row in rows}),
         "unique_snapshot_count": len({row.input_snapshot_hash for row in rows}),
@@ -793,6 +847,9 @@ def _source_artifact_hash(plan_directory: Path, plan_version: int) -> str:
     runtime_outcome = version_directory / "runtime_outcome.json"
     if runtime_outcome.is_file():
         files["versions/runtime_outcome.json"] = runtime_outcome
+    authenticated_manifest = version_directory / "authenticated_manifest.json"
+    if authenticated_manifest.is_file():
+        files["versions/authenticated_manifest.json"] = authenticated_manifest
     payload = {
         name: hashlib.sha256(path.read_bytes()).hexdigest()
         for name, path in files.items()
@@ -801,7 +858,9 @@ def _source_artifact_hash(plan_directory: Path, plan_version: int) -> str:
 
 
 def _validate_observed_source_contract(
-    rows: Sequence[PartitionRankingTrainingRow], manifest: Mapping[str, Any]
+    rows: Sequence[PartitionRankingTrainingRow],
+    manifest: Mapping[str, Any],
+    authenticator: PartitionArtifactAuthenticator,
 ) -> None:
     if manifest.get("builder_provenance") != _DATASET_BUILDER_PROVENANCE:
         raise PartitionContractError(
@@ -847,7 +906,9 @@ def _validate_observed_source_contract(
             plan_directory = (source_root / plan_id).resolve()
             plan_directory.relative_to(source_root)
             artifact = _read_committed_partition_report(plan_directory)
-            source_row, _ = _training_row(artifact, scope="observed")
+            source_row, _ = _training_row(
+                artifact, scope="observed", authenticator=authenticator
+            )
             if (
                 source_row is None
                 or source_row.to_dict() != row.to_dict()
@@ -879,7 +940,10 @@ def _is_sha256_hex(value: str) -> bool:
 
 
 def _training_row(
-    artifact: _PersistedPartitionReport, *, scope: str
+    artifact: _PersistedPartitionReport,
+    *,
+    scope: str,
+    authenticator: PartitionArtifactAuthenticator | None = None,
 ) -> tuple[PartitionRankingTrainingRow | None, Counter[str]]:
     rejections: Counter[str] = Counter()
     report = artifact.report
@@ -909,6 +973,15 @@ def _training_row(
         )
     if scope == "observed" and evaluation.get("estimated") is not False:
         return None, _with_rejection(rejections, "estimated_evidence")
+    if scope == "observed" and (
+        authenticator is None
+        or not authenticator.verifies_version(
+            artifact.runtime_outcome_path.parent,
+            plan_id=plan.plan_id,
+            plan_version=plan.plan_version,
+        )
+    ):
+        return None, _with_rejection(rejections, "authenticated_manifest_mismatch")
 
     reward = _finite_number(evaluation.get("reward"), "evaluation.reward")
     if not -1.0 <= reward <= 1.0:

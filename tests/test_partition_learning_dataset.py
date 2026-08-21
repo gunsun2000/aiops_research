@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from aiops_k8s_agents.partition_artifacts import write_partition_report
+from aiops_k8s_agents.partition_context import canonical_json
 from aiops_k8s_agents.partition_features import candidate_key
 from aiops_k8s_agents.partition_learning import (
     build_partition_ranking_dataset,
@@ -17,6 +18,12 @@ from aiops_k8s_agents.partition_service import run_partition_planning
 
 
 ROOT = Path(__file__).resolve().parents[1]
+SIGNING_KEY = "task-6-observed-artifact-signing-key"
+
+
+@pytest.fixture(autouse=True)
+def observed_artifact_signing_key(monkeypatch):
+    monkeypatch.setenv("AIOPS_PARTITION_ARTIFACT_HMAC_KEY", SIGNING_KEY)
 
 
 def read_jsonl(path: Path) -> list[dict]:
@@ -247,6 +254,47 @@ def test_dataset_has_stable_order_hash_and_provenance_manifest(tmp_path, observe
     assert manifest["selected_candidates_only"] is True
     assert manifest["eligible_for_real_claims"] is True
     assert manifest["schema_version"] == "partition-ranking-dataset-v1"
+
+
+def test_observed_dataset_rejects_coordinated_report_and_sidecar_tampering(
+    observed_report, tmp_path
+):
+    artifact_root = Path(observed_report["artifact_path"]).parent.parent
+    version_directory = (
+        Path(observed_report["artifact_path"]).parent / "versions" / "1"
+    )
+    for path in (version_directory / "report.json", artifact_root / observed_report["plan"]["plan_id"] / "latest.json"):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["evaluation"]["metrics"]["latency_ms"] = 1.0
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    runtime_outcome = version_directory / "runtime_outcome.json"
+    outcome = json.loads(runtime_outcome.read_text(encoding="utf-8"))
+    outcome["metrics"]["latency_ms"] = 1.0
+    unsigned_outcome = dict(outcome)
+    unsigned_outcome.pop("payload_sha256")
+    outcome["payload_sha256"] = hashlib.sha256(
+        canonical_json(unsigned_outcome).encode("utf-8")
+    ).hexdigest()
+    runtime_outcome.write_text(json.dumps(outcome), encoding="utf-8")
+
+    summary = build_partition_ranking_dataset(
+        (artifact_root,), tmp_path / "dataset.jsonl"
+    )
+
+    assert summary.row_count == 0
+    assert summary.rejections["authenticated_manifest_mismatch"] == 1
+
+
+def test_observed_dataset_requires_external_signing_key(
+    observed_report, tmp_path, monkeypatch
+):
+    monkeypatch.delenv("AIOPS_PARTITION_ARTIFACT_HMAC_KEY")
+    artifact_root = Path(observed_report["artifact_path"]).parent.parent
+
+    with pytest.raises(PartitionContractError) as error:
+        build_partition_ranking_dataset((artifact_root,), tmp_path / "dataset.jsonl")
+
+    assert error.value.code == "artifact_signing_key_required"
 
 
 def _planned_report(artifact_root: Path, plan_id: str, *, observed: bool = False) -> dict:

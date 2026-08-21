@@ -24,6 +24,8 @@ def write_partition_report(
     *,
     policy_path: str | Path | None = None,
     sidecars: Mapping[str, object] | None = None,
+    artifact_signing_key: str | bytes | None = None,
+    artifact_signing_key_file: str | Path | None = None,
 ) -> Path:
     plan_id = str(report["plan"]["plan_id"])
     output_directory = Path(artifact_root).expanduser().resolve() / plan_id
@@ -31,7 +33,12 @@ def write_partition_report(
     persisted_report = dict(report)
 
     if _is_v2_report(persisted_report):
-        repository = PartitionPlanRepository(artifact_root, policy_path=policy_path)
+        repository = PartitionPlanRepository(
+            artifact_root,
+            policy_path=policy_path,
+            artifact_signing_key=artifact_signing_key,
+            artifact_signing_key_file=artifact_signing_key_file,
+        )
         normalized_request, partition_intent = _derive_planning_artifacts(
             persisted_report, policy_path=policy_path
         )

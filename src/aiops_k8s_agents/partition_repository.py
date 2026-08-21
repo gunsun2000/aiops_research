@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import os
 import shutil
@@ -12,6 +14,7 @@ from uuid import uuid4
 
 from aiops_k8s_agents.partition_coordination import LegacyFederatedRoundPlanAdapter
 from aiops_k8s_agents.partition_common import PartitionCommonProcessor
+from aiops_k8s_agents.partition_context import canonical_json
 from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
 from aiops_k8s_agents.partition_models import (
     FederatedRoundPlan,
@@ -20,6 +23,114 @@ from aiops_k8s_agents.partition_models import (
 )
 from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
 from aiops_k8s_agents.partition_validator import PartitionPlanValidator
+
+
+_ARTIFACT_SIGNING_KEY_ENV = "AIOPS_PARTITION_ARTIFACT_HMAC_KEY"
+_AUTHENTICATED_MANIFEST_FILE = "authenticated_manifest.json"
+
+
+@dataclass(frozen=True)
+class PartitionArtifactAuthenticator:
+    """HMAC signer whose key is deliberately kept outside partition artifacts."""
+
+    key: bytes
+
+    @classmethod
+    def from_config(
+        cls,
+        *,
+        key: str | bytes | None = None,
+        key_file: str | Path | None = None,
+    ) -> PartitionArtifactAuthenticator:
+        if key is not None and key_file is not None:
+            raise PartitionContractError(
+                "invalid_artifact_signing_key",
+                "provide either an artifact signing key or key file, not both",
+            )
+        if key_file is not None:
+            try:
+                key_bytes = Path(key_file).expanduser().read_bytes().strip()
+            except OSError as exc:
+                raise PartitionContractError(
+                    "invalid_artifact_signing_key",
+                    "artifact signing key file could not be read",
+                ) from exc
+        else:
+            configured = key if key is not None else os.environ.get(_ARTIFACT_SIGNING_KEY_ENV)
+            if configured is None:
+                raise PartitionContractError(
+                    "artifact_signing_key_required",
+                    "observed partition artifacts require an external signing key",
+                )
+            key_bytes = (
+                configured if isinstance(configured, bytes) else str(configured).encode("utf-8")
+            )
+        if len(key_bytes) < 32:
+            raise PartitionContractError(
+                "invalid_artifact_signing_key",
+                "artifact signing keys must contain at least 32 bytes",
+            )
+        return cls(key_bytes)
+
+    def manifest_for_version(
+        self, version_directory: Path, *, plan_id: str, plan_version: int
+    ) -> dict[str, object]:
+        payload = {
+            "schema_version": "partition-artifact-authentication-v1",
+            "plan_id": plan_id,
+            "plan_version": plan_version,
+            "files": self._version_file_digests(version_directory),
+        }
+        return {
+            **payload,
+            "hmac_sha256": hmac.new(
+                self.key, canonical_json(payload).encode("utf-8"), hashlib.sha256
+            ).hexdigest(),
+        }
+
+    def verifies_version(
+        self, version_directory: Path, *, plan_id: str, plan_version: int
+    ) -> bool:
+        try:
+            manifest_path = version_directory / _AUTHENTICATED_MANIFEST_FILE
+            with manifest_path.open(encoding="utf-8") as handle:
+                manifest = json.load(handle)
+            if not isinstance(manifest, Mapping):
+                return False
+            signature = manifest.get("hmac_sha256")
+            payload = {key: value for key, value in manifest.items() if key != "hmac_sha256"}
+            expected_payload = {
+                "schema_version": "partition-artifact-authentication-v1",
+                "plan_id": plan_id,
+                "plan_version": plan_version,
+                "files": self._version_file_digests(version_directory),
+            }
+            expected_signature = hmac.new(
+                self.key, canonical_json(expected_payload).encode("utf-8"), hashlib.sha256
+            ).hexdigest()
+            return (
+                payload == expected_payload
+                and isinstance(signature, str)
+                and hmac.compare_digest(signature, expected_signature)
+            )
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            return False
+
+    @staticmethod
+    def _version_file_digests(version_directory: Path) -> dict[str, str]:
+        names = ["report.json", "runtime_outcome.json"]
+        candidate_ranking = version_directory / "candidate_ranking.json"
+        if candidate_ranking.is_file():
+            names.append("candidate_ranking.json")
+        digests: dict[str, str] = {}
+        for name in names:
+            path = version_directory / name
+            with path.open(encoding="utf-8") as handle:
+                payload = json.load(handle)
+            digests[name] = hashlib.sha256(
+                canonical_json(payload).encode("utf-8")
+            ).hexdigest()
+        return digests
 
 
 @dataclass(frozen=True)
@@ -72,16 +183,24 @@ class PartitionPlanRepository:
             "latest.json",
             "history.json",
             "scheduling_handoff.json",
+            _AUTHENTICATED_MANIFEST_FILE,
             _COMMIT_FILE,
             _PENDING_FILE,
         }
     )
 
     def __init__(
-        self, root: str | Path, *, policy_path: str | Path | None = None
+        self,
+        root: str | Path,
+        *,
+        policy_path: str | Path | None = None,
+        artifact_signing_key: str | bytes | None = None,
+        artifact_signing_key_file: str | Path | None = None,
     ) -> None:
         self.root = Path(root).expanduser().resolve()
         self._policy_path = None if policy_path is None else Path(policy_path)
+        self._artifact_signing_key = artifact_signing_key
+        self._artifact_signing_key_file = artifact_signing_key_file
         self._fault_injector: Callable[[str], None] | None = None
         self._recover_incomplete_transactions()
 
@@ -100,6 +219,14 @@ class PartitionPlanRepository:
         latest_path = plan_directory / "latest.json"
         version_path = plan_directory / "versions" / str(version) / "report.json"
         normalized_sidecars = self._normalize_sidecars(sidecars)
+        authenticator = (
+            None
+            if not any(segments == ("runtime_outcome.json",) for segments, _ in normalized_sidecars)
+            else PartitionArtifactAuthenticator.from_config(
+                key=self._artifact_signing_key,
+                key_file=self._artifact_signing_key_file,
+            )
+        )
 
         if self._is_committed(plan_directory) and latest_path.is_file():
             existing_plan = self._read_json(latest_path).get("plan", {})
@@ -131,6 +258,7 @@ class PartitionPlanRepository:
             history,
             normalized_sidecars,
             include_legacy_report,
+            authenticator,
         )
         if isinstance(report, MutableMapping):
             report["scheduling_handoff"] = persisted_report["scheduling_handoff"]
@@ -341,6 +469,7 @@ class PartitionPlanRepository:
         history: list[dict[str, Any]],
         sidecars: Sequence[tuple[tuple[str, ...], object]],
         include_legacy_report: bool,
+        authenticator: PartitionArtifactAuthenticator | None,
     ) -> None:
         transaction_id = uuid4().hex
         transaction_root = self.root / f"{self._STAGING_PREFIX}{transaction_id}"
@@ -377,6 +506,20 @@ class PartitionPlanRepository:
                     / str(report["plan"]["plan_version"])
                     / Path(*segments),
                     value,
+                )
+            if authenticator is not None:
+                version_directory = (
+                    staged_plan_directory
+                    / "versions"
+                    / str(report["plan"]["plan_version"])
+                )
+                self._write_json(
+                    version_directory / _AUTHENTICATED_MANIFEST_FILE,
+                    authenticator.manifest_for_version(
+                        version_directory,
+                        plan_id=str(report["plan"]["plan_id"]),
+                        plan_version=int(report["plan"]["plan_version"]),
+                    ),
                 )
             self._fsync_directory(staged_plan_directory)
             plan_directory.parent.mkdir(parents=True, exist_ok=True)
