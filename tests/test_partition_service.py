@@ -172,7 +172,15 @@ def test_service_observed_runtime_outcome_is_transactional_and_dataset_eligible(
     assert report["evaluation"]["estimated"] is False
     assert metrics["runtime_outcome_ref"] == "outcomes/observed-service-plan/versions/1/result"
     assert runtime_outcome.is_file()
-    assert runtime_outcome.with_name("authenticated_manifest.json").is_file()
+    authenticated_manifest = runtime_outcome.with_name("authenticated_manifest.json")
+    assert authenticated_manifest.is_file()
+    assert set(json.loads(authenticated_manifest.read_text(encoding="utf-8"))["files"]) == {
+        "report.json",
+        "runtime_outcome.json",
+        "candidate_ranking.json",
+        "normalized_request.json",
+        "partition_intent.json",
+    }
     assert build_partition_ranking_dataset((artifact_root,), tmp_path / "dataset.jsonl").row_count == 1
 
 

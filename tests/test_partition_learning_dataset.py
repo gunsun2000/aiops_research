@@ -285,6 +285,50 @@ def test_observed_dataset_rejects_coordinated_report_and_sidecar_tampering(
     assert summary.rejections["authenticated_manifest_mismatch"] == 1
 
 
+def test_observed_dataset_rejects_tampered_normalized_request_before_features(
+    observed_report, tmp_path
+):
+    artifact_root = Path(observed_report["artifact_path"]).parent.parent
+    sidecar = (
+        Path(observed_report["artifact_path"]).parent
+        / "versions"
+        / "1"
+        / "normalized_request.json"
+    )
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    payload["devices"][0]["compute_units_per_second"] = 999_999_999.0
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+    summary = build_partition_ranking_dataset(
+        (artifact_root,), tmp_path / "dataset.jsonl"
+    )
+
+    assert summary.row_count == 0
+    assert summary.rejections["authenticated_manifest_mismatch"] == 1
+
+
+def test_observed_dataset_rejects_tampered_partition_intent_before_features(
+    observed_report, tmp_path
+):
+    artifact_root = Path(observed_report["artifact_path"]).parent.parent
+    sidecar = (
+        Path(observed_report["artifact_path"]).parent
+        / "versions"
+        / "1"
+        / "partition_intent.json"
+    )
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    payload["objective_weights"][0][1] = 999_999_999.0
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+    summary = build_partition_ranking_dataset(
+        (artifact_root,), tmp_path / "dataset.jsonl"
+    )
+
+    assert summary.row_count == 0
+    assert summary.rejections["authenticated_manifest_mismatch"] == 1
+
+
 def test_observed_dataset_requires_external_signing_key(
     observed_report, tmp_path, monkeypatch
 ):

@@ -118,7 +118,12 @@ class PartitionArtifactAuthenticator:
 
     @staticmethod
     def _version_file_digests(version_directory: Path) -> dict[str, str]:
-        names = ["report.json", "runtime_outcome.json"]
+        names = [
+            "report.json",
+            "runtime_outcome.json",
+            "normalized_request.json",
+            "partition_intent.json",
+        ]
         candidate_ranking = version_directory / "candidate_ranking.json"
         if candidate_ranking.is_file():
             names.append("candidate_ranking.json")
