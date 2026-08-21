@@ -111,8 +111,10 @@ def eligible_artifact() -> PartitionRankerModelArtifact:
                 "minimum_independent_groups": 5,
                 "maximum_holdout_mae": 0.25,
                 "minimum_spearman_correlation": 0.3,
+                "minimum_selection_confidence": 0.7,
+                "maximum_ood_feature_ratio": 0.2,
             },
-            "training_lineage_group_hashes": (),
+            "training_lineage_group_hashes": tuple(f"{index:x}" * 64 for index in range(1, 6)),
         },
         artifact_hash="",
     ).with_computed_hash()

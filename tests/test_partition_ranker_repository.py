@@ -45,8 +45,10 @@ def model_artifact() -> PartitionRankerModelArtifact:
                 "minimum_independent_groups": 5,
                 "maximum_holdout_mae": 0.25,
                 "minimum_spearman_correlation": 0.3,
+                "minimum_selection_confidence": 0.7,
+                "maximum_ood_feature_ratio": 0.2,
             },
-            "training_lineage_group_hashes": (),
+            "training_lineage_group_hashes": ("1" * 64, "2" * 64, "3" * 64),
         },
         artifact_hash="",
     )
@@ -108,6 +110,29 @@ def test_artifact_rejects_a_feature_order_that_does_not_match_the_schema(model_a
 def test_artifact_rejects_non_finite_parameters(model_artifact):
     with pytest.raises(PartitionContractError, match="finite"):
         replace(model_artifact, intercept=float("nan")).with_computed_hash()
+
+
+def test_artifact_rejects_group_count_that_disagrees_with_training_lineages(model_artifact):
+    provenance = {
+        **model_artifact.training_provenance,
+        "training_lineage_group_hashes": ("1" * 64, "2" * 64, "3" * 64),
+    }
+
+    with pytest.raises(PartitionContractError, match="group_count"):
+        replace(model_artifact, group_count=2, training_provenance=provenance).with_computed_hash()
+
+
+def test_artifact_rejects_invalid_eligibility_threshold_semantics(model_artifact):
+    provenance = {
+        **model_artifact.training_provenance,
+        "eligibility_thresholds": {
+            **model_artifact.training_provenance["eligibility_thresholds"],
+            "maximum_holdout_mae": -0.01,
+        },
+    }
+
+    with pytest.raises(PartitionContractError, match="maximum_holdout_mae"):
+        replace(model_artifact, training_provenance=provenance).with_computed_hash()
 
 
 def test_artifact_canonicalizes_feature_range_object_order(model_artifact):

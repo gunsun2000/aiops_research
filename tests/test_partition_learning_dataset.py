@@ -8,8 +8,11 @@ import pytest
 
 from aiops_k8s_agents.partition_artifacts import write_partition_report
 from aiops_k8s_agents.partition_features import candidate_key
-from aiops_k8s_agents.partition_learning import build_partition_ranking_dataset
-from aiops_k8s_agents.partition_models import PartitionCandidate
+from aiops_k8s_agents.partition_learning import (
+    build_partition_ranking_dataset,
+    load_partition_ranking_dataset,
+)
+from aiops_k8s_agents.partition_models import PartitionCandidate, PartitionContractError
 from aiops_k8s_agents.partition_service import run_partition_planning
 
 
@@ -72,6 +75,44 @@ def test_dataset_does_not_copy_selected_reward_to_alternatives(tmp_path, observe
         PartitionCandidate.from_dict(observed_report["plan"]["alternative_candidates"][0]),
         observed_report["plan"]["strategy_version"],
     )
+
+
+def test_loader_rejects_dataset_when_its_committed_source_artifact_changes(
+    tmp_path, observed_report
+):
+    root = tmp_path / "artifacts"
+    write_report_fixture(root, observed_report)
+    dataset_path = tmp_path / "dataset.jsonl"
+    build_partition_ranking_dataset((root,), dataset_path)
+    sidecar = root / observed_report["plan"]["plan_id"] / "versions" / "1" / "normalized_request.json"
+    sidecar.write_text(sidecar.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+    with pytest.raises(PartitionContractError) as error:
+        load_partition_ranking_dataset(dataset_path)
+
+    assert error.value.code == "dataset_source_mismatch"
+
+
+def test_loader_rejects_runtime_outcome_ref_that_disagrees_with_source_contract(
+    tmp_path, observed_report
+):
+    root = tmp_path / "artifacts"
+    write_report_fixture(root, observed_report)
+    dataset_path = tmp_path / "dataset.jsonl"
+    build_partition_ranking_dataset((root,), dataset_path)
+    rows = read_jsonl(dataset_path)
+    rows[0]["runtime_outcome_ref"] = "outcomes/forged/versions/1/result"
+    payload = (json.dumps(rows[0], sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    dataset_path.write_bytes(payload)
+    manifest_path = Path(f"{dataset_path}.manifest.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["dataset_sha256"] = hashlib.sha256(payload).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(PartitionContractError) as error:
+        load_partition_ranking_dataset(dataset_path)
+
+    assert error.value.code == "dataset_source_mismatch"
 
 
 def test_dataset_rejects_observed_row_without_source_or_timestamp(tmp_path, observed_report):

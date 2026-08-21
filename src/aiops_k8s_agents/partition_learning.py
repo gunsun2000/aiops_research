@@ -44,6 +44,10 @@ from aiops_k8s_agents.partition_strategies import PartitionIntent
 
 
 DATASET_SCHEMA_VERSION = "partition-ranking-dataset-v1"
+_DATASET_BUILDER_PROVENANCE = {
+    "builder_id": "aiops_k8s_agents.partition_learning.build_partition_ranking_dataset",
+    "contract_version": "partition-ranking-dataset-builder-v1",
+}
 _OBSERVED_RUNTIME_EVIDENCE_SOURCES = frozenset({"runtime-monitor"})
 _DEFAULT_HOLDOUT_TEST_FRACTION = 0.2
 
@@ -111,6 +115,7 @@ class PartitionRankingDataset:
     manifest_path: Path
     dataset_hash: str
     scope: str
+    eligible_for_real_claims: bool
 
 
 @dataclass(frozen=True)
@@ -157,6 +162,7 @@ class _FeatureNormalizer:
 
 @dataclass(frozen=True)
 class _PersistedPartitionReport:
+    plan_directory: Path
     report: Mapping[str, Any]
     normalized_request: Mapping[str, Any]
     partition_intent: Mapping[str, Any]
@@ -176,7 +182,9 @@ def build_partition_ranking_dataset(
     """Build a deterministic, selected-candidate dataset from committed artifacts only."""
     normalized_scope = _scope(scope)
     reports = tuple(iter_partition_reports(artifact_roots))
-    rows, rejection_counts = collect_training_rows(reports, scope=normalized_scope)
+    rows, rejection_counts, source_artifact_contracts = collect_training_rows(
+        reports, scope=normalized_scope
+    )
     ordered_rows = tuple(sorted(rows, key=training_row_sort_key))
     return write_partition_ranking_dataset(
         ordered_rows,
@@ -184,6 +192,7 @@ def build_partition_ranking_dataset(
         scope=normalized_scope,
         rejection_counts=rejection_counts,
         artifact_roots=artifact_roots,
+        source_artifact_contracts=source_artifact_contracts,
     )
 
 
@@ -210,9 +219,10 @@ def iter_partition_reports(
 
 def collect_training_rows(
     reports: Sequence[_PersistedPartitionReport | _ArtifactRejection], *, scope: str
-) -> tuple[tuple[PartitionRankingTrainingRow, ...], Counter[str]]:
+) -> tuple[tuple[PartitionRankingTrainingRow, ...], Counter[str], tuple[dict[str, object], ...]]:
     rejections: Counter[str] = Counter()
     rows: list[PartitionRankingTrainingRow] = []
+    source_artifact_contracts: list[dict[str, object]] = []
     for item in reports:
         if isinstance(item, _ArtifactRejection):
             rejections[item.reason] += 1
@@ -225,7 +235,9 @@ def collect_training_rows(
         rejections.update(reasons)
         if row is not None:
             rows.append(row)
-    return tuple(rows), rejections
+            if scope == "observed":
+                source_artifact_contracts.append(_source_artifact_contract(item, row))
+    return tuple(rows), rejections, tuple(source_artifact_contracts)
 
 
 def training_row_sort_key(row: PartitionRankingTrainingRow) -> tuple[str, str, str, int]:
@@ -239,6 +251,7 @@ def write_partition_ranking_dataset(
     scope: str,
     rejection_counts: Mapping[str, int],
     artifact_roots: Sequence[str | Path],
+    source_artifact_contracts: Sequence[Mapping[str, object]] = (),
 ) -> PartitionRankingDatasetSummary:
     path = Path(output_path).expanduser().resolve()
     payload = b"".join(
@@ -261,8 +274,14 @@ def write_partition_ranking_dataset(
         "lineage_group_count": len({group_key(row) for row in rows}),
         "source_roots": normalized_roots,
         "selected_candidates_only": True,
-        "eligible_for_real_claims": scope == "observed",
+        "eligible_for_real_claims": scope == "observed" and bool(source_artifact_contracts),
     }
+    if source_artifact_contracts:
+        manifest["builder_provenance"] = dict(_DATASET_BUILDER_PROVENANCE)
+        manifest["source_artifact_contracts"] = [
+            dict(contract)
+            for contract in sorted(source_artifact_contracts, key=lambda item: str(item["row_id"]))
+        ]
     _write_bytes_atomic(
         manifest_path, (canonical_json(manifest) + "\n").encode("utf-8")
     )
@@ -350,7 +369,9 @@ def train_partition_ranker(
     intercept = float(model.intercept_)
     predictions = _linear_predictions(split.test, normalizer, coefficients, intercept)
     metrics = _evaluation_metrics(split.test, predictions)
-    deployment_eligible = _quality_eligible(dataset.scope, dataset.rows, metrics)
+    deployment_eligible = dataset.eligible_for_real_claims and _quality_eligible(
+        dataset.scope, dataset.rows, metrics
+    )
     metrics.update(
         {
             "quality_eligible": float(deployment_eligible),
@@ -421,6 +442,7 @@ def evaluate_partition_ranker(
     metrics = _evaluation_metrics(dataset.rows, predictions)
     deployment_eligible = (
         dataset.scope == "observed"
+        and dataset.eligible_for_real_claims
         and artifact.training_scope == "observed"
         and artifact.validation_metrics.get("deployment_eligible") == 1.0
     )
@@ -467,6 +489,7 @@ def load_partition_ranking_dataset(dataset_path: str | Path) -> PartitionRanking
         manifest_path=manifest_path,
         dataset_hash=digest,
         scope=str(manifest["scope"]),
+        eligible_for_real_claims=manifest["eligible_for_real_claims"],
     )
 
 
@@ -498,9 +521,11 @@ def _validate_dataset_manifest(manifest: Mapping[str, Any], digest: str) -> None
         raise PartitionContractError(
             "invalid_dataset_manifest", "dataset must contain selected candidates only"
         )
-    if manifest.get("eligible_for_real_claims") is not (scope == "observed"):
+    if not isinstance(manifest.get("eligible_for_real_claims"), bool):
+        raise PartitionContractError("invalid_dataset_manifest", "real-claim eligibility must be boolean")
+    if manifest["eligible_for_real_claims"] and scope != "observed":
         raise PartitionContractError(
-            "dataset_scope_mismatch", "real-claim eligibility must match dataset scope"
+            "dataset_scope_mismatch", "only observed datasets can claim real eligibility"
         )
 
 
@@ -527,7 +552,7 @@ def _training_row_from_dict(payload: object, index: int) -> PartitionRankingTrai
         reward_components=_finite_mapping(fields.get("reward_components"), "reward_components"),
         evidence_level=_text(fields.get("evidence_level"), "evidence_level"),
         evidence_source=_text(fields.get("evidence_source"), "evidence_source"),
-        observed_at=str(fields.get("observed_at") or ""),
+        observed_at=_validated_observed_at(fields.get("observed_at")),
         selected_by=_text(fields.get("selected_by"), "selected_by"),
         selection_probability=(
             None
@@ -566,6 +591,8 @@ def _validate_dataset_rows(
             raise PartitionContractError(
                 "dataset_scope_mismatch", "non-observed datasets must not contain observed rows"
             )
+    if manifest["eligible_for_real_claims"]:
+        _validate_observed_source_contract(rows, manifest)
     counts = {
         "unique_job_count": len({row.job_id for row in rows}),
         "unique_snapshot_count": len({row.input_snapshot_hash for row in rows}),
@@ -624,6 +651,8 @@ def _candidate_selection_metrics(
         return {
             "candidate_selection_agreement": 0.0,
             "candidate_selection_agreement_available": 0.0,
+            "learned_regret": 0.0,
+            "learned_regret_available": 0.0,
             "baseline_regret": 0.0,
             "baseline_regret_available": 0.0,
             "ranking_group_count": 0.0,
@@ -707,6 +736,8 @@ def _eligibility_thresholds() -> dict[str, float | int]:
         "minimum_independent_groups": policy.minimum_independent_groups,
         "maximum_holdout_mae": policy.maximum_holdout_mae,
         "minimum_spearman_correlation": policy.minimum_spearman_correlation,
+        "minimum_selection_confidence": policy.minimum_selection_confidence,
+        "maximum_ood_feature_ratio": policy.maximum_ood_feature_ratio,
     }
 
 
@@ -728,10 +759,118 @@ def _read_committed_partition_report(plan_directory: Path) -> _PersistedPartitio
     if report != latest:
         raise ValueError("latest report does not match committed version")
     return _PersistedPartitionReport(
+        plan_directory=plan_directory,
         report=report,
         normalized_request=_read_json(version_directory / "normalized_request.json"),
         partition_intent=_read_json(version_directory / "partition_intent.json"),
     )
+
+
+def _source_artifact_contract(
+    artifact: _PersistedPartitionReport, row: PartitionRankingTrainingRow
+) -> dict[str, object]:
+    return {
+        "row_id": row.row_id,
+        "source_root": str(artifact.plan_directory.parent.resolve()),
+        "plan_id": row.plan_id,
+        "plan_version": row.plan_version,
+        "runtime_outcome_ref": row.runtime_outcome_ref,
+        "artifact_sha256": _source_artifact_hash(artifact.plan_directory, row.plan_version),
+    }
+
+
+def _source_artifact_hash(plan_directory: Path, plan_version: int) -> str:
+    version_directory = plan_directory / "versions" / str(plan_version)
+    files = {
+        "commit.json": plan_directory / "commit.json",
+        "latest.json": plan_directory / "latest.json",
+        "versions/report.json": version_directory / "report.json",
+        "versions/normalized_request.json": version_directory / "normalized_request.json",
+        "versions/partition_intent.json": version_directory / "partition_intent.json",
+    }
+    payload = {
+        name: hashlib.sha256(path.read_bytes()).hexdigest()
+        for name, path in files.items()
+    }
+    return hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _validate_observed_source_contract(
+    rows: Sequence[PartitionRankingTrainingRow], manifest: Mapping[str, Any]
+) -> None:
+    if manifest.get("builder_provenance") != _DATASET_BUILDER_PROVENANCE:
+        raise PartitionContractError(
+            "dataset_source_mismatch", "observed real-claim datasets require the registered builder provenance"
+        )
+    contracts = manifest.get("source_artifact_contracts")
+    if isinstance(contracts, (str, bytes)) or not isinstance(contracts, Sequence):
+        raise PartitionContractError(
+            "dataset_source_mismatch", "observed real-claim datasets require source artifact contracts"
+        )
+    row_by_id = {row.row_id: row for row in rows}
+    if len(row_by_id) != len(rows) or len(contracts) != len(rows):
+        raise PartitionContractError(
+            "dataset_source_mismatch", "source artifact contracts must bind each observed row exactly once"
+        )
+    manifest_roots = set(manifest.get("source_roots", ()))
+    seen_rows: set[str] = set()
+    for contract_payload in contracts:
+        contract = _mapping(contract_payload, "source artifact contract")
+        expected_fields = {
+            "row_id", "source_root", "plan_id", "plan_version", "runtime_outcome_ref", "artifact_sha256"
+        }
+        if set(contract) != expected_fields:
+            raise PartitionContractError("dataset_source_mismatch", "source artifact contract fields are unsupported")
+        row_id = _text(contract.get("row_id"), "source artifact contract.row_id")
+        row = row_by_id.get(row_id)
+        source_root = Path(_text(contract.get("source_root"), "source artifact contract.source_root")).expanduser().resolve()
+        plan_id = _text(contract.get("plan_id"), "source artifact contract.plan_id")
+        plan_version = _positive_int(contract.get("plan_version"), "source artifact contract.plan_version")
+        outcome_ref = _text(contract.get("runtime_outcome_ref"), "source artifact contract.runtime_outcome_ref")
+        artifact_hash = _text(contract.get("artifact_sha256"), "source artifact contract.artifact_sha256")
+        if (
+            row is None
+            or row_id in seen_rows
+            or str(source_root) not in manifest_roots
+            or row.plan_id != plan_id
+            or row.plan_version != plan_version
+            or row.runtime_outcome_ref != outcome_ref
+            or not _is_sha256_hex(artifact_hash)
+        ):
+            raise PartitionContractError("dataset_source_mismatch", "source artifact contract does not bind the dataset row")
+        try:
+            plan_directory = (source_root / plan_id).resolve()
+            plan_directory.relative_to(source_root)
+            artifact = _read_committed_partition_report(plan_directory)
+            source_row, _ = _training_row(artifact, scope="observed")
+            if (
+                source_row is None
+                or source_row.to_dict() != row.to_dict()
+                or _source_artifact_hash(plan_directory, plan_version) != artifact_hash
+            ):
+                raise ValueError("source artifact differs from the recorded contract")
+        except (OSError, ValueError, TypeError, KeyError, PartitionContractError) as exc:
+            raise PartitionContractError(
+                "dataset_source_mismatch", "source artifact does not verify the observed dataset row"
+            ) from exc
+        seen_rows.add(row_id)
+
+
+def _validated_observed_at(value: object) -> str:
+    if value is None or value == "":
+        return ""
+    text = _text(value, "observed_at")
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise PartitionContractError("invalid_dataset_row", "observed_at must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise PartitionContractError("invalid_dataset_row", "observed_at must include a timezone")
+    return text
+
+
+def _is_sha256_hex(value: str) -> bool:
+    return len(value) == 64 and all(character in "0123456789abcdef" for character in value)
 
 
 def _training_row(

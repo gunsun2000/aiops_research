@@ -28,8 +28,8 @@ from aiops_k8s_agents.partition_ranking import LearnedRewardRanker
 def test_group_split_never_leaks_job_snapshot_lineage(dataset_rows):
     split = group_holdout_split(dataset_rows, test_fraction=0.25, seed=17)
 
-    train_groups = {_group_key(row) for row in split.train}
-    test_groups = {_group_key(row) for row in split.test}
+    train_groups = {group_key(row) for row in split.train}
+    test_groups = {group_key(row) for row in split.test}
 
     assert train_groups.isdisjoint(test_groups)
     assert len(split.train) + len(split.test) == len(dataset_rows)
@@ -59,8 +59,10 @@ def test_training_exports_verified_observed_ridge_artifact(tmp_path, observed_da
     assert payload["training_provenance"] == {
         "eligibility_thresholds": {
             "maximum_holdout_mae": 0.25,
+            "maximum_ood_feature_ratio": 0.2,
             "minimum_independent_groups": 5,
             "minimum_observed_samples": 30,
+            "minimum_selection_confidence": 0.7,
             "minimum_spearman_correlation": 0.3,
         },
         "holdout_test_fraction": 0.2,
@@ -191,6 +193,24 @@ def test_dataset_loader_rejects_offline_generator_forged_as_observed(tmp_path, d
     assert error.value.code == "dataset_scope_mismatch"
 
 
+def test_dataset_loader_rejects_malformed_observed_timestamp(tmp_path, dataset_rows):
+    malformed_rows = [_replace_row(dataset_rows[0], observed_at="not-a-timestamp")]
+    dataset_path = _write_dataset(tmp_path / "malformed-timestamp.jsonl", malformed_rows, scope="observed")
+
+    with pytest.raises(PartitionContractError) as error:
+        load_partition_ranking_dataset(dataset_path)
+
+    assert error.value.code == "invalid_dataset_row"
+
+
+def test_direct_observed_jsonl_is_not_eligible_for_real_claims(tmp_path, dataset_rows):
+    dataset_path = _write_dataset(tmp_path / "direct-observed.jsonl", dataset_rows, scope="observed")
+
+    dataset = load_partition_ranking_dataset(dataset_path)
+
+    assert dataset.eligible_for_real_claims is False
+
+
 def test_dataset_writer_and_loader_share_the_lineage_group_contract(tmp_path, dataset_rows):
     rows = (
         _replace_row(
@@ -227,6 +247,15 @@ def test_candidate_selection_agreement_uses_the_reward_best_candidate(dataset_ro
 
     assert metrics["candidate_selection_agreement"] == 1.0
     assert metrics["learned_regret"] == 0.0
+
+
+def test_candidate_selection_metrics_keep_unavailable_keys_without_comparable_groups(dataset_rows):
+    metrics = _candidate_selection_metrics((dataset_rows[0],), predictions=(0.1,))
+
+    assert metrics["candidate_selection_agreement"] == 0.0
+    assert metrics["candidate_selection_agreement_available"] == 0.0
+    assert metrics["learned_regret"] == 0.0
+    assert metrics["learned_regret_available"] == 0.0
 
 
 def test_evaluation_rejects_its_training_dataset_as_not_independent(
@@ -339,10 +368,10 @@ def _write_dataset(
         "dataset_sha256": hashlib.sha256(payload).hexdigest(),
         "unique_job_count": len({row.job_id for row in rows}),
         "unique_snapshot_count": len({row.input_snapshot_hash for row in rows}),
-        "lineage_group_count": len({_group_key(row) for row in rows}),
+        "lineage_group_count": len({group_key(row) for row in rows}),
         "source_roots": [str(path.parent)],
         "selected_candidates_only": True,
-        "eligible_for_real_claims": scope == "observed",
+        "eligible_for_real_claims": False,
     }
     Path(f"{path}.manifest.json").write_text(
         canonical_json(manifest) + "\n", encoding="utf-8"
@@ -367,11 +396,3 @@ def _row_features(row: dict) -> dict[str, float]:
 
 def _replace_row(row: PartitionRankingTrainingRow, **changes) -> PartitionRankingTrainingRow:
     return PartitionRankingTrainingRow(**{**row.__dict__, **changes})
-
-
-def _group_key(row: PartitionRankingTrainingRow) -> tuple[str, str, str]:
-    return (
-        row.job_id,
-        row.input_snapshot_hash,
-        row.runtime_outcome_ref.split("/versions/", 1)[0],
-    )

@@ -180,7 +180,11 @@ class PartitionRankerModelArtifact:
         _validate_feature_ranges(self.training_feature_ranges)
         _numeric_mapping(self.validation_metrics, "validation_metrics")
         _numeric_mapping(self.confidence_policy, "confidence_policy")
-        _training_provenance(self.training_provenance)
+        provenance = _training_provenance(self.training_provenance)
+        if self.group_count != len(provenance["training_lineage_group_hashes"]):
+            raise PartitionContractError(
+                "invalid_model_artifact", "group_count must equal the unique training lineage group hashes"
+            )
         if require_hash:
             _validate_sha256(self.artifact_hash, "artifact_hash")
 
@@ -334,14 +338,48 @@ def _training_provenance(value: Any) -> dict[str, object]:
         "minimum_independent_groups",
         "maximum_holdout_mae",
         "minimum_spearman_correlation",
+        "minimum_selection_confidence",
+        "maximum_ood_feature_ratio",
     }
     if not isinstance(thresholds, Mapping) or set(thresholds) != required_thresholds:
         raise PartitionContractError(
             "invalid_model_artifact", "training_provenance.eligibility_thresholds are unsupported"
         )
     normalized_thresholds = {
-        name: _number(item, f"training_provenance.eligibility_thresholds.{name}")
-        for name, item in thresholds.items()
+        "minimum_observed_samples": _integer(
+            thresholds.get("minimum_observed_samples"),
+            "training_provenance.eligibility_thresholds.minimum_observed_samples",
+            minimum=1,
+        ),
+        "minimum_independent_groups": _integer(
+            thresholds.get("minimum_independent_groups"),
+            "training_provenance.eligibility_thresholds.minimum_independent_groups",
+            minimum=1,
+        ),
+        "maximum_holdout_mae": _bounded_number(
+            thresholds.get("maximum_holdout_mae"),
+            "training_provenance.eligibility_thresholds.maximum_holdout_mae",
+            minimum=0.0,
+            maximum=2.0,
+        ),
+        "minimum_spearman_correlation": _bounded_number(
+            thresholds.get("minimum_spearman_correlation"),
+            "training_provenance.eligibility_thresholds.minimum_spearman_correlation",
+            minimum=0.0,
+            maximum=1.0,
+        ),
+        "minimum_selection_confidence": _bounded_number(
+            thresholds.get("minimum_selection_confidence"),
+            "training_provenance.eligibility_thresholds.minimum_selection_confidence",
+            minimum=0.0,
+            maximum=1.0,
+        ),
+        "maximum_ood_feature_ratio": _bounded_number(
+            thresholds.get("maximum_ood_feature_ratio"),
+            "training_provenance.eligibility_thresholds.maximum_ood_feature_ratio",
+            minimum=0.0,
+            maximum=1.0,
+        ),
     }
     lineage_groups = value.get("training_lineage_group_hashes")
     if isinstance(lineage_groups, (str, bytes)) or not isinstance(lineage_groups, Sequence):
@@ -467,6 +505,15 @@ def _number(value: Any, field: str) -> float:
     number = float(value)
     if not isfinite(number):
         raise PartitionContractError("invalid_model_artifact", f"{field} must be finite")
+    return number
+
+
+def _bounded_number(value: Any, field: str, *, minimum: float, maximum: float) -> float:
+    number = _number(value, field)
+    if not minimum <= number <= maximum:
+        raise PartitionContractError(
+            "invalid_model_artifact", f"{field} must be between {minimum} and {maximum}"
+        )
     return number
 
 
