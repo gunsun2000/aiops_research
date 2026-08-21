@@ -6,7 +6,7 @@ from typing import Protocol, Sequence
 from aiops_k8s_agents.partition_common import NormalizedPartitionRequest
 from aiops_k8s_agents.partition_context import WorkloadForecast
 from aiops_k8s_agents.partition_features import candidate_key
-from aiops_k8s_agents.partition_models import PartitionCandidate
+from aiops_k8s_agents.partition_models import PartitionCandidate, PartitionContractError
 from aiops_k8s_agents.partition_ranking_models import (
     CandidateRankingEntry,
     CandidateSelection,
@@ -15,12 +15,25 @@ from aiops_k8s_agents.partition_ranking_models import (
 from aiops_k8s_agents.partition_strategies import PartitionIntent
 
 
+_FORECAST_UNSET = object()
+
+
 @dataclass(frozen=True)
 class RankingContext:
     request: NormalizedPartitionRequest
     intent: PartitionIntent
     strategy_version: str
-    workload_forecast: WorkloadForecast | None = None
+    workload_forecast: WorkloadForecast | None | object = _FORECAST_UNSET
+
+    def __post_init__(self) -> None:
+        normalized_forecast = self.request.workload_forecast
+        if self.workload_forecast is _FORECAST_UNSET:
+            object.__setattr__(self, "workload_forecast", normalized_forecast)
+        elif self.workload_forecast != normalized_forecast:
+            raise PartitionContractError(
+                "invalid_partition_features",
+                "RankingContext workload_forecast must match the normalized request",
+            )
 
 
 class CandidateRanker(Protocol):

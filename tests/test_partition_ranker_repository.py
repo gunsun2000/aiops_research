@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -61,6 +64,30 @@ def test_repository_rejects_tampered_model_artifact(tmp_path, model_artifact):
         repository.get(model_artifact.model_version)
 
 
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        (lambda payload: payload.update({"unrecognized": True}), "unknown artifact fields"),
+        (lambda payload: payload.update({"intercept": "0.25"}), "intercept must be numeric"),
+        (
+            lambda payload: payload.update({"model_type": " linear-regression "}),
+            "model_type must not contain leading or trailing whitespace",
+        ),
+    ],
+)
+def test_repository_rejects_artifact_input_that_changes_its_hashed_meaning(
+    tmp_path, model_artifact, mutation, message
+):
+    repository = PartitionRankerRepository(tmp_path)
+    path = repository.save(model_artifact)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    mutation(payload)
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(PartitionContractError, match=message):
+        repository.get(model_artifact.model_version)
+
+
 def test_artifact_rejects_a_feature_order_that_does_not_match_the_schema(model_artifact):
     with pytest.raises(PartitionContractError, match="feature order"):
         replace(model_artifact, feature_order=tuple(reversed(FEATURE_ORDER))).with_computed_hash()
@@ -100,3 +127,44 @@ def test_repository_lists_verified_artifacts_in_version_order(tmp_path, model_ar
         "ranker-a",
         "ranker-b",
     ]
+
+
+def test_repository_rejects_symlinked_model_directory_for_get_save_and_list(
+    tmp_path, model_artifact
+):
+    registry_root = tmp_path / "registry"
+    outside_root = tmp_path / "outside"
+    external_repository = PartitionRankerRepository(outside_root)
+    external_path = external_repository.save(model_artifact)
+    external_contents = external_path.read_text(encoding="utf-8")
+    linked_version = registry_root / model_artifact.model_version
+    registry_root.mkdir()
+    _link_directory(linked_version, external_path.parent)
+
+    repository = PartitionRankerRepository(registry_root)
+
+    with pytest.raises(PartitionContractError, match="symlink"):
+        repository.get(model_artifact.model_version)
+    with pytest.raises(PartitionContractError, match="symlink"):
+        repository.save(model_artifact)
+    with pytest.raises(PartitionContractError, match="symlink"):
+        repository.list()
+
+    assert external_path.read_text(encoding="utf-8") == external_contents
+
+
+def _link_directory(link: Path, target: Path) -> None:
+    try:
+        link.symlink_to(target, target_is_directory=True)
+        return
+    except OSError as symlink_error:
+        if os.name != "nt":
+            pytest.skip(f"directory symlinks are unavailable: {symlink_error}")
+    result = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        pytest.skip(f"directory links are unavailable: {result.stderr.strip()}")

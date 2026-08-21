@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import stat
 from dataclasses import dataclass, replace
 from math import isfinite
 from pathlib import Path, PureWindowsPath
@@ -15,6 +16,28 @@ from aiops_k8s_agents.partition_models import PartitionContractError
 
 
 MODEL_ARTIFACT_SCHEMA_VERSION = "partition-ranker-model-v1"
+_ARTIFACT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "model_type",
+        "model_version",
+        "feature_schema_version",
+        "trained_at",
+        "training_dataset_hash",
+        "training_scope",
+        "sample_count",
+        "group_count",
+        "feature_order",
+        "feature_mean",
+        "feature_scale",
+        "coefficients",
+        "intercept",
+        "training_feature_ranges",
+        "validation_metrics",
+        "confidence_policy",
+        "artifact_hash",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -76,6 +99,16 @@ class PartitionRankerModelArtifact:
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> PartitionRankerModelArtifact:
+        unknown_fields = set(payload) - _ARTIFACT_FIELDS
+        if unknown_fields:
+            raise PartitionContractError(
+                "invalid_model_artifact", "unknown artifact fields are not allowed"
+            )
+        missing_fields = _ARTIFACT_FIELDS - set(payload)
+        if missing_fields:
+            raise PartitionContractError(
+                "invalid_model_artifact", "required artifact fields are missing"
+            )
         artifact = cls(
             schema_version=_text(payload.get("schema_version"), "schema_version"),
             model_type=_text(payload.get("model_type"), "model_type"),
@@ -147,29 +180,68 @@ class PartitionRankerModelArtifact:
 
 class PartitionRankerRepository:
     def __init__(self, root: str | Path) -> None:
-        self.root = Path(root).expanduser().resolve()
+        self.root = Path(root).expanduser().absolute()
 
     def save(self, artifact: PartitionRankerModelArtifact) -> Path:
         verified = artifact.with_computed_hash()
-        path = self._model_path(verified.model_version)
+        path = self._model_path(verified.model_version, create_root=True)
         self._write_json_atomic(path, verified.to_dict())
         return path
 
     def get(self, model_version: str) -> PartitionRankerModelArtifact:
         artifact = PartitionRankerModelArtifact.from_dict(
-            self._read_json(self._model_path(model_version))
+            self._read_json(self._model_path(model_version, create_root=False))
         )
         artifact.verify_hash()
         return artifact
 
     def list(self) -> tuple[PartitionRankerModelArtifact, ...]:
-        if not self.root.is_dir():
+        if self._registry_root(create=False) is None:
             return ()
-        versions = sorted(path.parent.name for path in self.root.glob("*/model.json"))
-        return tuple(self.get(version) for version in versions)
+        versions = []
+        for path in self.root.iterdir():
+            if _is_link(path):
+                raise PartitionContractError(
+                    "invalid_model_artifact", "registry path must not contain a symlink"
+                )
+            if not path.is_dir():
+                continue
+            model_path = self._model_path(path.name, create_root=False)
+            if model_path.exists():
+                versions.append(path.name)
+        return tuple(self.get(version) for version in sorted(versions))
 
-    def _model_path(self, model_version: str) -> Path:
-        return self.root / _validate_model_version(model_version) / "model.json"
+    def _model_path(self, model_version: str, *, create_root: bool) -> Path:
+        version = _validate_model_version(model_version)
+        resolved_root = self._registry_root(create=create_root)
+        if resolved_root is None:
+            return self.root / version / "model.json"
+        path = self.root / version / "model.json"
+        current = self.root
+        for component in path.relative_to(self.root).parts:
+            current /= component
+            if _is_link(current):
+                raise PartitionContractError(
+                    "invalid_model_artifact", "registry path must not contain a symlink"
+                )
+        try:
+            path.resolve(strict=False).relative_to(resolved_root)
+        except ValueError as exc:
+            raise PartitionContractError(
+                "invalid_model_artifact", "registry path escapes the configured root"
+            ) from exc
+        return path
+
+    def _registry_root(self, *, create: bool) -> Path | None:
+        if not self.root.exists():
+            if not create:
+                return None
+            self.root.mkdir(parents=True, exist_ok=True)
+        if _is_link(self.root) or not self.root.is_dir():
+            raise PartitionContractError(
+                "invalid_model_artifact", "registry root must be a directory, not a symlink"
+            )
+        return self.root.resolve()
 
     @staticmethod
     def _read_json(path: Path) -> Mapping[str, Any]:
@@ -302,20 +374,30 @@ def _integer(value: Any, field: str, *, minimum: int) -> int:
 
 
 def _number(value: Any, field: str) -> float:
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise PartitionContractError("invalid_model_artifact", f"{field} must be numeric")
-    try:
-        number = float(value)
-    except (TypeError, ValueError) as exc:
-        raise PartitionContractError(
-            "invalid_model_artifact", f"{field} must be numeric"
-        ) from exc
+    number = float(value)
     if not isfinite(number):
         raise PartitionContractError("invalid_model_artifact", f"{field} must be finite")
     return number
 
 
 def _text(value: Any, field: str) -> str:
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str) or not value:
         raise PartitionContractError("invalid_model_artifact", f"{field} is required")
-    return value.strip()
+    if value != value.strip():
+        raise PartitionContractError(
+            "invalid_model_artifact",
+            f"{field} must not contain leading or trailing whitespace",
+        )
+    return value
+
+
+def _is_link(path: Path) -> bool:
+    try:
+        attributes = path.lstat().st_file_attributes
+    except (AttributeError, OSError):
+        return path.is_symlink()
+    return path.is_symlink() or bool(
+        attributes & getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0)
+    )

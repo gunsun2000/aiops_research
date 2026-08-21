@@ -133,7 +133,7 @@ def extract_partition_features(
         for link in links
     )
 
-    forecast = context.workload_forecast
+    forecast = request.workload_forecast
     forecast_request_rate, request_rate_missing = _forecast_value(
         forecast, "expected_request_rate"
     )
