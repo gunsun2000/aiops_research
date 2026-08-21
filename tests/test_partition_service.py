@@ -180,6 +180,7 @@ def test_service_observed_runtime_outcome_is_transactional_and_dataset_eligible(
         "candidate_ranking.json",
         "normalized_request.json",
         "partition_intent.json",
+        "scheduling_handoff.json",
     }
     assert build_partition_ranking_dataset((artifact_root,), tmp_path / "dataset.jsonl").row_count == 1
 

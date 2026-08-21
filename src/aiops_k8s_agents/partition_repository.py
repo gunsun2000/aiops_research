@@ -33,6 +33,23 @@ _AUTHENTICATED_MANIFEST_FILE = "authenticated_manifest.json"
 class PartitionArtifactAuthenticator:
     """HMAC signer whose key is deliberately kept outside partition artifacts."""
 
+    _REQUIRED_VERSION_FILES = frozenset(
+        {
+            "report.json",
+            "runtime_outcome.json",
+            "normalized_request.json",
+            "partition_intent.json",
+            "scheduling_handoff.json",
+        }
+    )
+    _OPTIONAL_VERSION_FILES = frozenset(
+        {
+            "candidate_ranking.json",
+            "runtime_feedback.json",
+            "repartition_directive.json",
+        }
+    )
+
     key: bytes
 
     @classmethod
@@ -79,7 +96,9 @@ class PartitionArtifactAuthenticator:
             "schema_version": "partition-artifact-authentication-v1",
             "plan_id": plan_id,
             "plan_version": plan_version,
-            "files": self._version_file_digests(version_directory),
+            "files": self._version_file_digests(
+                version_directory, manifest_expected=False
+            ),
         }
         return {
             **payload,
@@ -103,7 +122,9 @@ class PartitionArtifactAuthenticator:
                 "schema_version": "partition-artifact-authentication-v1",
                 "plan_id": plan_id,
                 "plan_version": plan_version,
-                "files": self._version_file_digests(version_directory),
+                "files": self._version_file_digests(
+                    version_directory, manifest_expected=True
+                ),
             }
             expected_signature = hmac.new(
                 self.key, canonical_json(expected_payload).encode("utf-8"), hashlib.sha256
@@ -116,19 +137,15 @@ class PartitionArtifactAuthenticator:
         except (OSError, TypeError, ValueError, json.JSONDecodeError):
             return False
 
-    @staticmethod
-    def _version_file_digests(version_directory: Path) -> dict[str, str]:
-        names = [
-            "report.json",
-            "runtime_outcome.json",
-            "normalized_request.json",
-            "partition_intent.json",
-        ]
-        candidate_ranking = version_directory / "candidate_ranking.json"
-        if candidate_ranking.is_file():
-            names.append("candidate_ranking.json")
+    @classmethod
+    def _version_file_digests(
+        cls, version_directory: Path, *, manifest_expected: bool
+    ) -> dict[str, str]:
+        names = cls._validated_version_file_names(
+            version_directory, manifest_expected=manifest_expected
+        )
         digests: dict[str, str] = {}
-        for name in names:
+        for name in sorted(names - {_AUTHENTICATED_MANIFEST_FILE}):
             path = version_directory / name
             with path.open(encoding="utf-8") as handle:
                 payload = json.load(handle)
@@ -136,6 +153,22 @@ class PartitionArtifactAuthenticator:
                 canonical_json(payload).encode("utf-8")
             ).hexdigest()
         return digests
+
+    @classmethod
+    def _validated_version_file_names(
+        cls, version_directory: Path, *, manifest_expected: bool
+    ) -> set[str]:
+        entries = tuple(version_directory.iterdir())
+        if any(not entry.is_file() for entry in entries):
+            raise ValueError("observed version directory must contain files only")
+        names = {entry.name for entry in entries}
+        required = set(cls._REQUIRED_VERSION_FILES)
+        if manifest_expected:
+            required.add(_AUTHENTICATED_MANIFEST_FILE)
+        allowed = required | set(cls._OPTIONAL_VERSION_FILES)
+        if not required <= names or not names <= allowed:
+            raise ValueError("observed version directory contains unsupported files")
+        return names
 
 
 @dataclass(frozen=True)

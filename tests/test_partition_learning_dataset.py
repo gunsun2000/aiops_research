@@ -329,6 +329,26 @@ def test_observed_dataset_rejects_tampered_partition_intent_before_features(
     assert summary.rejections["authenticated_manifest_mismatch"] == 1
 
 
+def test_observed_dataset_rejects_unexpected_version_file_before_features(
+    observed_report, tmp_path
+):
+    artifact_root = Path(observed_report["artifact_path"]).parent.parent
+    unexpected_file = (
+        Path(observed_report["artifact_path"]).parent
+        / "versions"
+        / "1"
+        / "unexpected.json"
+    )
+    unexpected_file.write_text("{}", encoding="utf-8")
+
+    summary = build_partition_ranking_dataset(
+        (artifact_root,), tmp_path / "dataset.jsonl"
+    )
+
+    assert summary.row_count == 0
+    assert summary.rejections["authenticated_manifest_mismatch"] == 1
+
+
 def test_observed_dataset_requires_external_signing_key(
     observed_report, tmp_path, monkeypatch
 ):
