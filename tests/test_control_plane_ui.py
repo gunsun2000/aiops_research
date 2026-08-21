@@ -27,8 +27,8 @@ def test_console_has_five_primary_research_views():
     assert "AI Workload Orchestration" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=34" in html
-    assert "app.js?v=34" in html
+    assert "styles.css?v=35" in html
+    assert "app.js?v=35" in html
 
 
 def test_model_partition_workspace_preserves_upstream_approval_boundary():
@@ -51,7 +51,7 @@ def test_model_partition_workspace_preserves_upstream_approval_boundary():
         "partition-history",
     ):
         assert f'id="{element_id}"' in html
-    assert "Planning boundary" in html
+    assert "계획 범위" in html
     assert 'id="partition-mode-select"' not in html
     assert "/api/model-partition/plans" in script
     assert "/api/model-partition/strategies" in script
@@ -63,12 +63,29 @@ def test_orchestration_workspace_has_four_research_stages():
     index_html = _source(INDEX_HTML)
 
     for label in (
-        "Plan Intake",
-        "Partition Strategy",
-        "Candidate Analysis",
-        "Handoff & Feedback",
+        "입력 검토",
+        "전략 선택",
+        "후보 비교",
+        "전달·재계획",
     ):
         assert label in index_html
+
+
+def test_orchestration_workspace_keeps_primary_results_visible_and_research_metadata_collapsed():
+    index_html = _source(INDEX_HTML)
+    script = _source(APP_JS)
+
+    for element_id in (
+        "partition-intake-research-details",
+        "partition-strategy-research-details",
+        "partition-alternative-candidates",
+        "partition-feedback-details",
+        "partition-history-details",
+    ):
+        assert f'id="{element_id}"' in index_html
+    assert index_html.count("실제 Runtime 결과가 아닙니다") == 1
+    assert "alternativeCandidates=(plan.alternative_candidates||[])" in script
+    assert "candidates=[selected" not in script
 
 
 def test_orchestration_workspace_marks_predicted_results():

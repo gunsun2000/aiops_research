@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="안전 제어형 4-Agent AIOps 연구 운영 플랫폼" />
   <title>4-Agent AIOps Research Platform</title>
-  <link rel="stylesheet" href="/static/styles.css?v=34" />
-  <script defer src="/static/app.js?v=34"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=35" />
+  <script defer src="/static/app.js?v=35"></script>
   <script defer src="/static/reference-ui.js?v=4"></script>
   <script defer src="/static/bulk-delete-ui.js?v=3"></script>
 </head>
@@ -88,41 +88,41 @@
 
       <section class="view-panel partition-workspace" data-view-panel="orchestration" aria-labelledby="partition-title" hidden>
         <header class="page-heading partition-heading"><div><h2 id="partition-title">Model Partition Orchestration</h2><p>승인된 Coordination Plan과 Snapshot을 사용해 분할 후보와 전달 계약을 계획합니다.</p></div><div class="partition-heading-actions"><span id="partition-status" class="status-badge neutral">입력 대기</span><button type="button" id="partition-load-inference" class="secondary-action">Inference 샘플</button><button type="button" id="partition-load-training" class="secondary-action">Training 샘플</button><button type="button" id="partition-plan-run" class="primary-action" disabled>계획 생성</button></div></header>
-        <div class="partition-scope-note"><strong>Planning boundary</strong><span>실행 모드 선택, External Scheduling Agent, GPU 실행은 이 화면의 범위가 아닙니다. 모든 값은 실행 전 예측이며 실제 Runtime 결과가 아닙니다.</span></div>
+        <div class="partition-scope-note"><strong>계획 범위</strong><span>승인된 입력으로 모델 분할 계획을 생성합니다. Scheduling·GPU 실행은 외부 단계입니다.</span><em>실행 전 예측 · 실제 Runtime 결과가 아닙니다</em></div>
         <nav class="partition-stage-flow" aria-label="Model partition planning stages" role="tablist">
-          <button type="button" class="is-active" data-partition-stage="intake" role="tab" aria-selected="true" aria-controls="partition-stage-intake"><span>01</span><strong>Plan Intake</strong><small id="partition-stage-summary-intake">입력 대기</small></button>
-          <button type="button" data-partition-stage="strategy" role="tab" aria-selected="false" aria-controls="partition-stage-strategy"><span>02</span><strong>Partition Strategy</strong><small id="partition-stage-summary-strategy">전략 대기</small></button>
-          <button type="button" data-partition-stage="candidates" role="tab" aria-selected="false" aria-controls="partition-stage-candidates"><span>03</span><strong>Candidate Analysis</strong><small id="partition-stage-summary-candidates">후보 대기</small></button>
-          <button type="button" data-partition-stage="handoff" role="tab" aria-selected="false" aria-controls="partition-stage-handoff"><span>04</span><strong>Handoff & Feedback</strong><small id="partition-stage-summary-handoff">전달 대기</small></button>
+          <button type="button" class="is-active" data-partition-stage="intake" role="tab" aria-selected="true" aria-controls="partition-stage-intake"><span>01</span><strong>입력 검토</strong><small>Plan Intake · <b id="partition-stage-summary-intake">대기</b></small></button>
+          <button type="button" data-partition-stage="strategy" role="tab" aria-selected="false" aria-controls="partition-stage-strategy"><span>02</span><strong>전략 선택</strong><small>Partition Strategy · <b id="partition-stage-summary-strategy">대기</b></small></button>
+          <button type="button" data-partition-stage="candidates" role="tab" aria-selected="false" aria-controls="partition-stage-candidates"><span>03</span><strong>후보 비교</strong><small>Candidate Analysis · <b id="partition-stage-summary-candidates">대기</b></small></button>
+          <button type="button" data-partition-stage="handoff" role="tab" aria-selected="false" aria-controls="partition-stage-handoff"><span>04</span><strong>전달·재계획</strong><small>Handoff · <b id="partition-stage-summary-handoff">대기</b></small></button>
         </nav>
-        <p class="partition-prediction-label">실행 전 예측 · 실제 Runtime 결과가 아닙니다 · External Scheduling Agent 없음</p>
         <section id="partition-stage-intake" class="partition-stage-panel" data-partition-stage-panel="intake" role="tabpanel">
-          <div class="partition-stage-heading"><div><span>01</span><h3>Plan Intake</h3></div><p>승인 provenance, 모델 버전, Snapshot, Forecast를 확인합니다.</p></div>
+          <div class="partition-stage-heading"><div><span>01</span><h3>입력 검토</h3></div><p>승인된 실행 모드와 계획에 필요한 핵심 컨텍스트를 확인합니다.</p></div>
           <dl id="partition-intake-details" class="partition-detail-grid"><div><dt>상태</dt><dd>샘플을 선택하면 V2 planning request가 표시됩니다.</dd></div></dl>
+          <details id="partition-intake-research-details" class="partition-research-details"><summary>세부 입력·provenance</summary><dl id="partition-intake-research-content" class="partition-detail-grid"></dl></details>
           <p id="partition-error" class="partition-error" aria-live="polite"></p>
         </section>
         <section id="partition-stage-strategy" class="partition-stage-panel" data-partition-stage-panel="strategy" role="tabpanel" hidden>
-          <div class="partition-stage-heading"><div><span>02</span><h3>Partition Strategy</h3></div><p>API strategy catalog와 계획 결과의 strategy identity를 함께 표시합니다.</p></div>
+          <div class="partition-stage-heading"><div><span>02</span><h3>전략 선택</h3></div><p>선택된 전략과 최적화 목적을 먼저 확인합니다.</p></div>
           <dl id="partition-strategy-details" class="partition-detail-grid"><div><dt>상태</dt><dd>유효한 plan intake가 필요합니다.</dd></div></dl>
-          <div id="partition-strategy-catalog" class="partition-catalog"><p class="empty-state">Strategy catalog 대기</p></div>
+          <details id="partition-strategy-research-details" class="partition-research-details"><summary>전체 규칙·가정·재현 정보</summary><dl id="partition-strategy-research-content" class="partition-detail-grid"></dl><div id="partition-strategy-catalog" class="partition-catalog"><p class="empty-state">Strategy catalog 대기</p></div></details>
           <p id="partition-strategy-error" class="partition-error" aria-live="polite"></p>
         </section>
         <section id="partition-stage-candidates" class="partition-stage-panel" data-partition-stage-panel="candidates" role="tabpanel" hidden>
-          <div class="partition-stage-heading"><div><span>03</span><h3>Candidate Analysis</h3></div><p>후보의 예측 성능, 메모리, 통신량, 점수와 선택된 실행 그래프를 확인합니다.</p></div>
-          <div id="partition-candidates" class="partition-candidates"><p class="empty-state">계획 생성 후 후보별 예측치를 표시합니다.</p></div>
+          <div class="partition-stage-heading"><div><span>03</span><h3>후보 비교</h3></div><p>선택된 후보와 분할 그래프를 먼저 보고 대안을 비교합니다.</p></div>
           <div id="partition-selected-plan" class="partition-selected-plan"><p class="empty-state">선택된 계획이 없습니다.</p></div>
           <div id="partition-execution-graph" class="partition-execution-graph" aria-label="예측 모델 분할 그래프"><p class="empty-state">실행 그래프 대기</p></div>
+          <details id="partition-alternative-candidates" class="partition-research-details"><summary>대안 후보 비교</summary><div id="partition-candidates" class="partition-candidates"><p class="empty-state">계획 생성 후 대안 후보를 표시합니다.</p></div></details>
         </section>
         <section id="partition-stage-handoff" class="partition-stage-panel" data-partition-stage-panel="handoff" role="tabpanel" hidden>
-          <div class="partition-stage-heading"><div><span>04</span><h3>Handoff & Feedback</h3></div><p>Validator, 예측 reward, handoff, version lineage와 bounded feedback simulation을 확인합니다.</p></div>
+          <div class="partition-stage-heading"><div><span>04</span><h3>전달·재계획</h3></div><p>검증 결과와 Scheduling Agent 전달 준비 상태를 확인합니다.</p></div>
           <div class="partition-handoff-grid">
             <div id="partition-validation" class="partition-validation"><span class="status-badge neutral">대기</span><p>계획 생성 후 독립 검증 결과를 표시합니다.</p></div>
             <div id="partition-evaluation" class="partition-evaluation"><strong>—</strong><span>Estimated reward</span><p>실행 전 예측 Evidence만 표시합니다.</p></div>
             <div id="partition-handoff" class="partition-handoff"><strong>Handoff 대기</strong><p>External Scheduling Agent는 연결되지 않았습니다.</p></div>
           </div>
-          <form id="partition-feedback-form" class="partition-feedback-form"><label>Bounded feedback simulation<select id="partition-feedback-signal" disabled><option value="latency_slo_violation">Latency SLO violation</option><option value="placement_rejected">Placement rejected</option></select></label><label>Simulation note<input id="partition-feedback-reason" type="text" value="Planning-only bounded feedback simulation" disabled /></label><button type="submit" id="partition-feedback-run" class="secondary-action" disabled>피드백 반영</button></form>
+          <details id="partition-feedback-details" class="partition-research-details"><summary>피드백 기반 재계획 실험</summary><form id="partition-feedback-form" class="partition-feedback-form"><label>Bounded feedback simulation<select id="partition-feedback-signal" disabled><option value="latency_slo_violation">Latency SLO violation</option><option value="placement_rejected">Placement rejected</option></select></label><label>Simulation note<input id="partition-feedback-reason" type="text" value="Planning-only bounded feedback simulation" disabled /></label><button type="submit" id="partition-feedback-run" class="secondary-action" disabled>피드백 반영</button></form></details>
           <p id="partition-handoff-error" class="partition-error" aria-live="polite"></p>
-          <ol id="partition-history" class="partition-history"><li>계획 version 이력이 없습니다.</li></ol>
+          <details id="partition-history-details" class="partition-research-details"><summary>Plan version 이력</summary><ol id="partition-history" class="partition-history"><li>계획 version 이력이 없습니다.</li></ol></details>
         </section>
       </section>
 
