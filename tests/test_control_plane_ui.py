@@ -27,8 +27,8 @@ def test_console_has_five_primary_research_views():
     assert "AI Workload Orchestration" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=35" in html
-    assert "app.js?v=35" in html
+    assert "styles.css?v=37" in html
+    assert "app.js?v=37" in html
 
 
 def test_model_partition_workspace_preserves_upstream_approval_boundary():
@@ -51,7 +51,7 @@ def test_model_partition_workspace_preserves_upstream_approval_boundary():
         "partition-history",
     ):
         assert f'id="{element_id}"' in html
-    assert "계획 범위" in html
+    assert "현재 구현 범위" in html
     assert 'id="partition-mode-select"' not in html
     assert "/api/model-partition/plans" in script
     assert "/api/model-partition/strategies" in script
@@ -63,12 +63,28 @@ def test_orchestration_workspace_has_four_research_stages():
     index_html = _source(INDEX_HTML)
 
     for label in (
-        "입력 검토",
-        "전략 선택",
-        "후보 비교",
-        "전달·재계획",
+        "계획 입력 확인",
+        "분할 기준 결정",
+        "최종 분할안 확인",
+        "스케줄러 전달",
     ):
         assert label in index_html
+
+
+def test_orchestration_workspace_explains_its_input_decision_output_and_next_stage():
+    index_html = _source(INDEX_HTML)
+    script = _source(APP_JS)
+
+    assert 'id="partition-purpose-flow"' in index_html
+    for label in (
+        "승인된 Coordination Plan",
+        "Model Partition Orchestrator",
+        "Partition Execution Plan",
+        "Scheduling Agent",
+        "실제 GPU 배치와 실행은 Scheduling Agent 이후 단계",
+    ):
+        assert label in index_html
+    assert "지연시간·메모리 압력·통신량을 함께 비교한 결과" in script
 
 
 def test_orchestration_workspace_keeps_primary_results_visible_and_research_metadata_collapsed():
