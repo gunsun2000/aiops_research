@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="안전 제어형 4-Agent AIOps 연구 운영 플랫폼" />
   <title>4-Agent AIOps Research Platform</title>
-  <link rel="stylesheet" href="/static/styles.css?v=37" />
-  <script defer src="/static/app.js?v=37"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=38" />
+  <script defer src="/static/app.js?v=38"></script>
   <script defer src="/static/reference-ui.js?v=4"></script>
   <script defer src="/static/bulk-delete-ui.js?v=3"></script>
 </head>
@@ -92,14 +92,14 @@
           <article><span>INPUT</span><strong>승인된 Coordination Plan</strong><small>모델·SLA·실행 모드 + System Snapshot</small></article><i aria-hidden="true">→</i>
           <article class="is-agent"><span>AGENT</span><strong>Model Partition Orchestrator</strong><small>분할 위치·장치 배치·통신 비용 비교</small></article><i aria-hidden="true">→</i>
           <article><span>OUTPUT</span><strong>Partition Execution Plan</strong><small>최종 분할점·실행 그래프·자원 요구량</small></article><i aria-hidden="true">→</i>
-          <article class="is-external"><span>NEXT</span><strong>Scheduling Agent</strong><small>외부 Agent가 배치·실행 순서를 결정</small></article>
+          <article class="is-external"><span>NEXT</span><strong>외부 Scheduling 모듈</strong><small>현재 범위 외 · 배치·실행 순서를 결정</small></article>
         </section>
-        <div class="partition-scope-note"><strong>현재 구현 범위</strong><span>Orchestrator Agent가 분할 계획을 생성·검증합니다. 실제 GPU 배치와 실행은 Scheduling Agent 이후 단계입니다.</span><em>실행 전 예측 · 실제 Runtime 결과가 아닙니다</em></div>
+        <div class="partition-scope-note"><strong>현재 구현 범위</strong><span>Orchestrator Agent가 분할 계획을 생성·검증합니다. 실제 GPU 배치와 실행은 외부 Scheduling 단계 이후에 수행됩니다.</span><em>실행 전 예측 · 실제 Runtime 결과가 아닙니다</em></div>
         <nav class="partition-stage-flow" aria-label="Model partition planning stages" role="tablist">
           <button type="button" class="is-active" data-partition-stage="intake" role="tab" aria-selected="true" aria-controls="partition-stage-intake"><span>01</span><strong>계획 입력 확인</strong><small>무엇을 분할할지 · <b id="partition-stage-summary-intake">대기</b></small></button>
           <button type="button" data-partition-stage="strategy" role="tab" aria-selected="false" aria-controls="partition-stage-strategy"><span>02</span><strong>분할 기준 결정</strong><small>어떤 기준으로 고를지 · <b id="partition-stage-summary-strategy">대기</b></small></button>
           <button type="button" data-partition-stage="candidates" role="tab" aria-selected="false" aria-controls="partition-stage-candidates"><span>03</span><strong>최종 분할안 확인</strong><small>어디서 나누고 배치할지 · <b id="partition-stage-summary-candidates">대기</b></small></button>
-          <button type="button" data-partition-stage="handoff" role="tab" aria-selected="false" aria-controls="partition-stage-handoff"><span>04</span><strong>스케줄러 전달</strong><small>다음 Agent에 무엇을 줄지 · <b id="partition-stage-summary-handoff">대기</b></small></button>
+          <button type="button" data-partition-stage="handoff" role="tab" aria-selected="false" aria-controls="partition-stage-handoff"><span>04</span><strong>외부 전달 준비</strong><small>다음 모듈에 무엇을 줄지 · <b id="partition-stage-summary-handoff">대기</b></small></button>
         </nav>
         <section id="partition-stage-intake" class="partition-stage-panel" data-partition-stage-panel="intake" role="tabpanel">
           <div class="partition-stage-heading"><div><span>01</span><h3>계획 입력 확인</h3></div><p>상위 Coordination Agent가 승인한 작업과 현재 시스템 상태를 확인합니다.</p></div>
@@ -110,7 +110,8 @@
         <section id="partition-stage-strategy" class="partition-stage-panel" data-partition-stage-panel="strategy" role="tabpanel" hidden>
           <div class="partition-stage-heading"><div><span>02</span><h3>분할 기준 결정</h3></div><p>지연시간·메모리·통신 비용 중 어떤 항목을 우선해 분할안을 고를지 확인합니다.</p></div>
           <dl id="partition-strategy-details" class="partition-detail-grid"><div><dt>상태</dt><dd>유효한 plan intake가 필요합니다.</dd></div></dl>
-          <details id="partition-strategy-research-details" class="partition-research-details"><summary>전체 규칙·가정·재현 정보</summary><dl id="partition-strategy-research-content" class="partition-detail-grid"></dl><div id="partition-strategy-catalog" class="partition-catalog"><p class="empty-state">Strategy catalog 대기</p></div></details>
+          <div id="partition-priority-bars" class="partition-priority-bars"><p class="empty-state">판단 우선순위 대기</p></div>
+          <details id="partition-strategy-research-details" class="partition-research-details"><summary>연구 재현용 기술 정보</summary><dl id="partition-strategy-research-content" class="partition-detail-grid"></dl><div id="partition-strategy-catalog" class="partition-catalog"><p class="empty-state">Strategy catalog 대기</p></div></details>
           <p id="partition-strategy-error" class="partition-error" aria-live="polite"></p>
         </section>
         <section id="partition-stage-candidates" class="partition-stage-panel" data-partition-stage-panel="candidates" role="tabpanel" hidden>
