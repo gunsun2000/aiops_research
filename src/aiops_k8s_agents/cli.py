@@ -65,6 +65,13 @@ from aiops_k8s_agents.models import (
     RecoveryActionKind,
 )
 from aiops_k8s_agents.partition_models import PartitionContractError
+from aiops_k8s_agents.partition_learning import (
+    build_partition_ranking_dataset,
+    evaluate_partition_ranker,
+    load_partition_ranking_dataset,
+    train_partition_ranker,
+)
+from aiops_k8s_agents.partition_ranker_repository import PartitionRankerRepository
 from aiops_k8s_agents.partition_repository import PartitionPlanRepository
 from aiops_k8s_agents.partition_service import (
     run_partition_feedback,
@@ -465,6 +472,33 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_partition_planning_arguments(partition_v2_parser)
 
+    dataset_parser = subparsers.add_parser(
+        "build-partition-ranking-dataset",
+        help="Build a selected-candidate partition ranking dataset.",
+    )
+    dataset_parser.add_argument("--artifact-root", action="append", required=True)
+    dataset_parser.add_argument("--output", required=True)
+    dataset_parser.add_argument(
+        "--scope", choices=("observed", "predicted", "synthetic"), default="observed"
+    )
+
+    train_ranker_parser = subparsers.add_parser(
+        "train-partition-ranker",
+        help="Train and register a partition reward ranker.",
+    )
+    train_ranker_parser.add_argument("--dataset", required=True)
+    train_ranker_parser.add_argument("--ranker-registry", required=True)
+    train_ranker_parser.add_argument("--model-version", required=True)
+    train_ranker_parser.add_argument("--seed", type=int, default=17)
+
+    evaluate_ranker_parser = subparsers.add_parser(
+        "evaluate-partition-ranker",
+        help="Evaluate a registered partition reward ranker.",
+    )
+    evaluate_ranker_parser.add_argument("--dataset", required=True)
+    evaluate_ranker_parser.add_argument("--ranker-registry", required=True)
+    evaluate_ranker_parser.add_argument("--model-version", required=True)
+
     replan_parser = subparsers.add_parser(
         "replan-model-partition",
         help="Replan a model partition after a supported execution failure.",
@@ -490,6 +524,7 @@ def build_parser() -> argparse.ArgumentParser:
         default="runs/model-partition",
         help="Root directory for persisted partition plans.",
     )
+    _add_ranker_selection_arguments(feedback_parser, optional_mode=True)
 
     return parser
 
@@ -511,6 +546,19 @@ def _add_partition_planning_arguments(parser: argparse.ArgumentParser) -> None:
         default="",
         help="Optional observed runtime metrics JSON path.",
     )
+    _add_ranker_selection_arguments(parser)
+
+
+def _add_ranker_selection_arguments(
+    parser: argparse.ArgumentParser, *, optional_mode: bool = False
+) -> None:
+    parser.add_argument(
+        "--selection-mode",
+        choices=("deterministic", "shadow", "learned_guarded"),
+        default="" if optional_mode else "deterministic",
+    )
+    parser.add_argument("--ranker-registry", default="")
+    parser.add_argument("--ranker-model-version", default="")
 
 
 def _add_alert_arguments(parser: argparse.ArgumentParser) -> None:
@@ -647,6 +695,21 @@ def main(
         _emit_json_report(args, report)
         return 0 if report["valid"] else 2
 
+    if args.command == "build-partition-ranking-dataset":
+        report = build_partition_ranking_dataset_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report.get("error") is None else 2
+
+    if args.command == "train-partition-ranker":
+        report = train_partition_ranker_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report.get("error") is None else 2
+
+    if args.command == "evaluate-partition-ranker":
+        report = evaluate_partition_ranker_cli(args)
+        _emit_json_report(args, report)
+        return 0 if report.get("error") is None else 2
+
     if args.command == "recommend-action":
         report = recommend_action_cli(args)
         _emit_json_report(args, report)
@@ -745,6 +808,9 @@ def run_model_partition_cli(args: argparse.Namespace) -> dict[str, Any]:
             policy_path=args.policy,
             artifact_root=args.artifact_root,
             observed=observed,
+            selection_mode=args.selection_mode,
+            ranker_registry_root=args.ranker_registry or None,
+            ranker_model_version=args.ranker_model_version or None,
             **replanning,
         )
     except PartitionContractError as exc:
@@ -770,6 +836,9 @@ def run_partition_feedback_cli(args: argparse.Namespace) -> dict[str, Any]:
             _load_json_object(args.feedback),
             PartitionPlanRepository(args.artifact_root, policy_path=args.policy),
             args.policy,
+            selection_mode=args.selection_mode or None,
+            ranker_registry_root=args.ranker_registry or None,
+            ranker_model_version=args.ranker_model_version or None,
         )
     except PartitionContractError as exc:
         return {
@@ -785,6 +854,77 @@ def run_partition_feedback_cli(args: argparse.Namespace) -> dict[str, Any]:
             "valid": False,
             "error": {"code": "invalid_input", "message": str(exc)},
         }
+
+
+def build_partition_ranking_dataset_cli(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        output_path = Path(args.output).expanduser().resolve()
+        roots = tuple(Path(root).expanduser().resolve() for root in args.artifact_root)
+        summary = build_partition_ranking_dataset(roots, output_path, scope=args.scope)
+        return {
+            "command": "build-partition-ranking-dataset",
+            "artifact_roots": [str(root) for root in roots],
+            "dataset_path": str(output_path),
+            "manifest_path": str(summary.manifest_path),
+            "dataset_hash": summary.dataset_hash,
+            "scope": summary.scope,
+            "row_count": summary.row_count,
+            "rejections": summary.rejections,
+        }
+    except (OSError, ValueError, PartitionContractError) as exc:
+        return _partition_ranker_cli_error("build-partition-ranking-dataset", exc)
+
+
+def train_partition_ranker_cli(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        summary = train_partition_ranker(
+            args.dataset,
+            registry_root=args.ranker_registry,
+            model_version=args.model_version,
+            seed=args.seed,
+        )
+        return {
+            "command": "train-partition-ranker",
+            "dataset_path": str(Path(args.dataset).expanduser().resolve()),
+            "ranker_registry": str(Path(args.ranker_registry).expanduser().resolve()),
+            "dataset_hash": summary.artifact.training_dataset_hash,
+            "scope": summary.artifact.training_scope,
+            "model_version": summary.model_version,
+            "artifact_path": str(summary.artifact_path),
+            "artifact_hash": summary.artifact.artifact_hash,
+            "metrics": summary.validation_metrics,
+            "guarded_eligible": summary.deployment_eligible,
+        }
+    except (OSError, ValueError, PartitionContractError) as exc:
+        return _partition_ranker_cli_error("train-partition-ranker", exc)
+
+
+def evaluate_partition_ranker_cli(args: argparse.Namespace) -> dict[str, Any]:
+    try:
+        artifact = PartitionRankerRepository(args.ranker_registry).get(args.model_version)
+        dataset = load_partition_ranking_dataset(args.dataset)
+        evaluation = evaluate_partition_ranker(dataset.path, artifact)
+        return {
+            "command": "evaluate-partition-ranker",
+            "dataset_path": str(dataset.path),
+            "dataset_hash": dataset.dataset_hash,
+            "ranker_registry": str(Path(args.ranker_registry).expanduser().resolve()),
+            "scope": evaluation.scope,
+            "model_version": artifact.model_version,
+            "artifact_hash": artifact.artifact_hash,
+            "metrics": evaluation.metrics,
+            "guarded_eligible": evaluation.deployment_eligible,
+        }
+    except (OSError, ValueError, PartitionContractError) as exc:
+        return _partition_ranker_cli_error("evaluate-partition-ranker", exc)
+
+
+def _partition_ranker_cli_error(command: str, exc: Exception) -> dict[str, Any]:
+    if isinstance(exc, PartitionContractError):
+        error = {"code": exc.code, "message": exc.message}
+    else:
+        error = {"code": "invalid_input", "message": str(exc)}
+    return {"command": command, "valid": False, "error": error}
 
 
 def _load_json_object(path: str | Path) -> dict[str, Any]:

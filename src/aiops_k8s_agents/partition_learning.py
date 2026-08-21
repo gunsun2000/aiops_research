@@ -166,6 +166,7 @@ class _PersistedPartitionReport:
     report: Mapping[str, Any]
     normalized_request: Mapping[str, Any]
     partition_intent: Mapping[str, Any]
+    runtime_outcome_path: Path
 
 
 @dataclass(frozen=True)
@@ -763,6 +764,7 @@ def _read_committed_partition_report(plan_directory: Path) -> _PersistedPartitio
         report=report,
         normalized_request=_read_json(version_directory / "normalized_request.json"),
         partition_intent=_read_json(version_directory / "partition_intent.json"),
+        runtime_outcome_path=version_directory / "runtime_outcome.json",
     )
 
 
@@ -788,6 +790,9 @@ def _source_artifact_hash(plan_directory: Path, plan_version: int) -> str:
         "versions/normalized_request.json": version_directory / "normalized_request.json",
         "versions/partition_intent.json": version_directory / "partition_intent.json",
     }
+    runtime_outcome = version_directory / "runtime_outcome.json"
+    if runtime_outcome.is_file():
+        files["versions/runtime_outcome.json"] = runtime_outcome
     payload = {
         name: hashlib.sha256(path.read_bytes()).hexdigest()
         for name, path in files.items()
@@ -921,6 +926,10 @@ def _training_row(
         return None, _with_rejection(rejections, "non_runtime_evidence_source")
     if evidence_level == "observed":
         ObservedPartitionMetrics.from_dict(metrics)
+    if scope == "observed" and not _runtime_outcome_matches_report(
+        artifact, plan, evaluation
+    ):
+        return None, _with_rejection(rejections, "runtime_outcome_mismatch")
 
     context = RankingContext(
         request=_normalized_request(artifact.normalized_request),
@@ -975,6 +984,37 @@ def _training_row(
         ),
         rejections,
     )
+
+
+def _runtime_outcome_matches_report(
+    artifact: _PersistedPartitionReport,
+    plan: PartitionExecutionPlan,
+    evaluation: Mapping[str, Any],
+) -> bool:
+    try:
+        outcome = _read_json(artifact.runtime_outcome_path)
+        payload_sha256 = _text(outcome.pop("payload_sha256"), "runtime outcome payload_sha256")
+        if not _is_sha256_hex(payload_sha256) or hashlib.sha256(
+            canonical_json(outcome).encode("utf-8")
+        ).hexdigest() != payload_sha256:
+            return False
+        selection = plan.selection
+        metrics = _mapping(evaluation.get("metrics"), "evaluation.metrics")
+        components = _mapping(evaluation.get("components"), "evaluation.components")
+        return outcome == {
+            "schema_version": "partition-runtime-outcome-v1",
+            "plan_id": plan.plan_id,
+            "plan_version": plan.plan_version,
+            "selected_candidate_key": selection.final_selected_candidate_key,
+            "source": metrics.get("source"),
+            "observed_at": metrics.get("observed_at"),
+            "runtime_outcome_ref": metrics.get("runtime_outcome_ref"),
+            "metrics": dict(metrics),
+            "evaluation_reward": evaluation.get("reward"),
+            "evaluation_components": dict(components),
+        }
+    except (OSError, ValueError, TypeError, KeyError, PartitionContractError):
+        return False
 
 
 def _normalized_request(payload: Mapping[str, Any]) -> NormalizedPartitionRequest:

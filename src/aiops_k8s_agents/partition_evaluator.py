@@ -27,6 +27,7 @@ class ObservedPartitionMetrics:
     total_transfer_bytes: int
     source: str = ""
     observed_at: str = ""
+    runtime_outcome_ref: str = ""
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> ObservedPartitionMetrics:
@@ -40,18 +41,26 @@ class ObservedPartitionMetrics:
             ),
             source=_runtime_text(payload.get("source"), "source"),
             observed_at=_runtime_text(payload.get("observed_at"), "observed_at"),
+            runtime_outcome_ref=_runtime_text(
+                payload.get("runtime_outcome_ref"), "runtime_outcome_ref"
+            ),
         )
         if not metrics.is_complete_runtime_evidence():
-            raise ValueError("runtime evidence requires nonblank source and observed_at")
+            raise ValueError(
+                "runtime evidence requires nonblank source, observed_at, and runtime_outcome_ref"
+            )
         return metrics
 
     def is_complete_runtime_evidence(self) -> bool:
         _validate_runtime_metrics(self)
         source = _runtime_text(self.source, "source")
         observed_at = _runtime_text(self.observed_at, "observed_at")
+        runtime_outcome_ref = _runtime_text(
+            self.runtime_outcome_ref, "runtime_outcome_ref"
+        )
         if observed_at:
             _parse_runtime_timestamp(observed_at)
-        return bool(source and observed_at)
+        return bool(source and observed_at and runtime_outcome_ref)
 
 
 @dataclass(frozen=True)
@@ -149,6 +158,14 @@ class PartitionPlanEvaluator:
             "maximum_memory_pressure": round(memory_pressure, 6),
             "total_transfer_bytes": transfer_bytes,
         }
+        if observed_is_runtime and observed is not None:
+            metrics.update(
+                {
+                    "source": observed.source,
+                    "observed_at": observed.observed_at,
+                    "runtime_outcome_ref": observed.runtime_outcome_ref,
+                }
+            )
         if isinstance(request, PartitionPlanningRequest) and plan.plan_type == "inference":
             self._add_inference_planning_metrics(metrics, request, round_plan, plan)
         return PartitionEvaluation(

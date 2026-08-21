@@ -2,6 +2,13 @@ import json
 from pathlib import Path
 
 from aiops_k8s_agents.cli import main
+from aiops_k8s_agents.partition_features import FEATURE_ORDER
+from aiops_k8s_agents.partition_ranker_repository import (
+    VALIDATION_METRIC_KEYS,
+    PartitionRankerModelArtifact,
+    PartitionRankerRepository,
+)
+from aiops_k8s_agents.partition_service import run_partition_planning
 
 
 EXAMPLE = "config/examples/model_partition_job.json"
@@ -54,6 +61,121 @@ def _latency_feedback(report: dict) -> dict:
         "plan_id": report["plan"]["plan_id"],
         "plan_version": report["plan"]["plan_version"],
     }
+
+
+def _ranker_registry(root: Path) -> Path:
+    registry = root / "ranker-registry"
+    artifact = PartitionRankerModelArtifact(
+        schema_version="partition-ranker-model-v2",
+        model_type="ridge_reward_regressor",
+        model_version="partition-ridge-observed-v1",
+        feature_schema_version="partition-feature-v1",
+        trained_at="2026-08-21T00:00:00Z",
+        training_dataset_hash="a" * 64,
+        training_scope="observed",
+        sample_count=30,
+        group_count=5,
+        feature_order=FEATURE_ORDER,
+        feature_mean=tuple(0.0 for _ in FEATURE_ORDER),
+        feature_scale=tuple(1.0 for _ in FEATURE_ORDER),
+        coefficients=tuple(0.0 for _ in FEATURE_ORDER),
+        intercept=0.0,
+        training_feature_ranges={name: (0.0, 10_000_000_000.0) for name in FEATURE_ORDER},
+        validation_metrics={
+            **{key: 0.0 for key in VALIDATION_METRIC_KEYS},
+            "holdout_mae": 0.1,
+            "mae": 0.1,
+            "rmse": 0.1,
+            "spearman_correlation": 0.8,
+        },
+        confidence_policy={"base_confidence": 0.95},
+        training_provenance={
+            "seed": 17,
+            "ridge_alpha": 1.0,
+            "holdout_test_fraction": 0.2,
+            "eligibility_thresholds": {
+                "minimum_observed_samples": 30,
+                "minimum_independent_groups": 5,
+                "maximum_holdout_mae": 0.25,
+                "minimum_spearman_correlation": 0.3,
+                "minimum_selection_confidence": 0.7,
+                "maximum_ood_feature_ratio": 0.2,
+            },
+            "training_lineage_group_hashes": tuple(
+                f"{index:x}" * 64 for index in range(1, 6)
+            ),
+        },
+        artifact_hash="",
+    ).with_computed_hash()
+    PartitionRankerRepository(registry).save(artifact)
+    return registry
+
+
+def test_plan_cli_accepts_registered_model_version(tmp_path, capsys):
+    input_path = _v2_input_path(tmp_path)
+    registry = _ranker_registry(tmp_path)
+
+    exit_code = main(
+        [
+            "plan-model-partition-v2",
+            "--input",
+            str(input_path),
+            "--policy",
+            POLICY,
+            "--artifact-root",
+            str(tmp_path / "artifacts"),
+            "--selection-mode",
+            "shadow",
+            "--ranker-model-version",
+            "partition-ridge-observed-v1",
+            "--ranker-registry",
+            str(registry),
+        ]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["plan"]["selection"]["mode"] == "shadow"
+
+
+def test_build_partition_ranking_dataset_cli_reports_observed_source(tmp_path, capsys):
+    input_path = _v2_input_path(tmp_path)
+    artifact_root = tmp_path / "artifacts"
+    payload = json.loads(input_path.read_text(encoding="utf-8"))
+    run_partition_planning(
+        payload,
+        policy_path=POLICY,
+        artifact_root=artifact_root,
+        observed={
+            "latency_ms": 120.0,
+            "maximum_memory_pressure": 0.4,
+            "total_transfer_bytes": 2048,
+            "source": "runtime-monitor",
+            "observed_at": "2026-08-21T09:30:00Z",
+            "runtime_outcome_ref": "outcomes/cli-observed/versions/1/result",
+        },
+        plan_id_factory=lambda: "cli-observed",
+        v2_request=True,
+    )
+    output = tmp_path / "dataset.jsonl"
+
+    exit_code = main(
+        [
+            "build-partition-ranking-dataset",
+            "--artifact-root",
+            str(artifact_root),
+            "--output",
+            str(output),
+            "--scope",
+            "observed",
+        ]
+    )
+
+    report = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert report["scope"] == "observed"
+    assert report["row_count"] == 1
+    assert report["dataset_path"] == str(output.resolve())
 
 
 def test_plan_model_partition_cli_writes_validated_artifact(tmp_path, capsys):

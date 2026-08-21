@@ -16,11 +16,18 @@ from aiops_k8s_agents.partition_common import PartitionCommonProcessor
 from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
 from aiops_k8s_agents.partition_evaluator import PartitionPlanEvaluator
 from aiops_k8s_agents.partition_feedback import PartitionRuntimeFeedback
+from aiops_k8s_agents.partition_features import FEATURE_ORDER
+from aiops_k8s_agents.partition_learning import build_partition_ranking_dataset
 from aiops_k8s_agents.partition_models import (
     FederatedRoundPlan,
     PartitionContractError,
 )
 from aiops_k8s_agents.partition_repository import PartitionPlanRepository
+from aiops_k8s_agents.partition_ranker_repository import (
+    VALIDATION_METRIC_KEYS,
+    PartitionRankerModelArtifact,
+    PartitionRankerRepository,
+)
 from aiops_k8s_agents.partition_service import (
     PartitionFeedbackService,
     run_partition_planning,
@@ -29,6 +36,231 @@ from aiops_k8s_agents.partition_validator import PartitionPlanValidator
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+@pytest.fixture
+def ranker_registry(tmp_path: Path) -> Path:
+    registry = tmp_path / "ranker-registry"
+    artifact = PartitionRankerModelArtifact(
+        schema_version="partition-ranker-model-v2",
+        model_type="ridge_reward_regressor",
+        model_version="partition-ridge-observed-v1",
+        feature_schema_version="partition-feature-v1",
+        trained_at="2026-08-21T00:00:00Z",
+        training_dataset_hash="a" * 64,
+        training_scope="observed",
+        sample_count=30,
+        group_count=5,
+        feature_order=FEATURE_ORDER,
+        feature_mean=tuple(0.0 for _ in FEATURE_ORDER),
+        feature_scale=tuple(1.0 for _ in FEATURE_ORDER),
+        coefficients=tuple(0.0 for _ in FEATURE_ORDER),
+        intercept=0.0,
+        training_feature_ranges={name: (0.0, 10_000_000_000.0) for name in FEATURE_ORDER},
+        validation_metrics={
+            **{key: 0.0 for key in VALIDATION_METRIC_KEYS},
+            "holdout_mae": 0.1,
+            "mae": 0.1,
+            "rmse": 0.1,
+            "spearman_correlation": 0.8,
+        },
+        confidence_policy={"base_confidence": 0.95},
+        training_provenance={
+            "seed": 17,
+            "ridge_alpha": 1.0,
+            "holdout_test_fraction": 0.2,
+            "eligibility_thresholds": {
+                "minimum_observed_samples": 30,
+                "minimum_independent_groups": 5,
+                "maximum_holdout_mae": 0.25,
+                "minimum_spearman_correlation": 0.3,
+                "minimum_selection_confidence": 0.7,
+                "maximum_ood_feature_ratio": 0.2,
+            },
+            "training_lineage_group_hashes": tuple(
+                f"{index:x}" * 64 for index in range(1, 6)
+            ),
+        },
+        artifact_hash="",
+    ).with_computed_hash()
+    PartitionRankerRepository(registry).save(artifact)
+    return registry
+
+
+def _observed_runtime_payload(plan_id: str) -> dict[str, object]:
+    return {
+        "latency_ms": 120.0,
+        "maximum_memory_pressure": 0.4,
+        "total_transfer_bytes": 2048,
+        "source": "runtime-monitor",
+        "observed_at": "2026-08-21T09:30:00Z",
+        "runtime_outcome_ref": f"outcomes/{plan_id}/versions/1/result",
+    }
+
+
+def test_shadow_service_persists_baseline_and_learned_ranking(
+    tmp_path: Path, ranker_registry: Path
+):
+    payload = json.loads(
+        (ROOT / "config/examples/model_partition_inference_v2.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["coordination_plan"]["payload"]["latency_slo_ms"] = 500.0
+    payload["coordination_plan"]["payload"]["constraints"][
+        "max_end_to_end_latency_ms"
+    ] = 500.0
+
+    report = run_partition_planning(
+        payload,
+        policy_path=ROOT / "config/model_partition_policy.json",
+        artifact_root=tmp_path / "artifacts",
+        selection_mode="shadow",
+        ranker_registry_root=ranker_registry,
+        ranker_model_version="partition-ridge-observed-v1",
+        plan_id_factory=lambda: "shadow-service-plan",
+        v2_request=True,
+    )
+
+    selection = report["plan"]["selection"]
+    assert selection["mode"] == "shadow"
+    assert selection["final_selected_candidate_key"] == selection["baseline_selected_candidate_key"]
+    assert (
+        Path(report["artifact_path"]).parent
+        / "versions"
+        / "1"
+        / "candidate_ranking.json"
+    ).is_file()
+
+
+def test_service_observed_runtime_outcome_is_transactional_and_dataset_eligible(
+    tmp_path: Path,
+):
+    payload = json.loads(
+        (ROOT / "config/examples/model_partition_inference_v2.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["coordination_plan"]["payload"]["latency_slo_ms"] = 500.0
+    payload["coordination_plan"]["payload"]["constraints"][
+        "max_end_to_end_latency_ms"
+    ] = 500.0
+    artifact_root = tmp_path / "artifacts"
+    report = run_partition_planning(
+        payload,
+        policy_path=ROOT / "config/model_partition_policy.json",
+        artifact_root=artifact_root,
+        observed=_observed_runtime_payload("observed-service-plan"),
+        plan_id_factory=lambda: "observed-service-plan",
+        v2_request=True,
+    )
+
+    metrics = report["evaluation"]["metrics"]
+    runtime_outcome = (
+        Path(report["artifact_path"]).parent
+        / "versions"
+        / "1"
+        / "runtime_outcome.json"
+    )
+    assert report["evaluation"]["evidence_level"] == "observed"
+    assert report["evaluation"]["estimated"] is False
+    assert metrics["runtime_outcome_ref"] == "outcomes/observed-service-plan/versions/1/result"
+    assert runtime_outcome.is_file()
+    assert build_partition_ranking_dataset((artifact_root,), tmp_path / "dataset.jsonl").row_count == 1
+
+
+def test_feedback_replan_preserves_selection_mode_and_exclusions(
+    tmp_path: Path, ranker_registry: Path
+):
+    payload = json.loads(
+        (ROOT / "config/examples/model_partition_inference_v2.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["coordination_plan"]["payload"]["latency_slo_ms"] = 500.0
+    payload["coordination_plan"]["payload"]["constraints"][
+        "max_end_to_end_latency_ms"
+    ] = 500.0
+    repository = PartitionPlanRepository(tmp_path / "artifacts")
+    initial = run_partition_planning(
+        payload,
+        policy_path=ROOT / "config/model_partition_policy.json",
+        artifact_root=repository.root,
+        selection_mode="shadow",
+        ranker_registry_root=ranker_registry,
+        ranker_model_version="partition-ridge-observed-v1",
+        plan_id_factory=lambda: "shadow-feedback-v1",
+        v2_request=True,
+    )
+    service = PartitionFeedbackService(
+        repository,
+        ROOT / "config/model_partition_policy.json",
+        ranker_registry_root=ranker_registry,
+        plan_id_factory=lambda: "shadow-feedback-v2",
+    )
+
+    report = service.process_feedback(
+        initial["plan"]["plan_id"],
+        {
+            "signal": "placement_rejected",
+            "source": "runtime-monitor",
+            "reason": "runtime placement rejected the selected candidate",
+            "received_at": "2026-08-21T10:00:00Z",
+            "plan_id": initial["plan"]["plan_id"],
+            "plan_version": initial["plan"]["plan_version"],
+        },
+    )
+
+    assert report["plan"]["selection"]["mode"] == "shadow"
+    assert report["replanning"]["bounded_exclusions"]["excluded_candidate_splits"]
+
+
+@pytest.mark.parametrize("tamper", ("missing", "candidate", "plan", "ref", "metrics"))
+def test_observed_dataset_rejects_tampered_runtime_outcome_sidecar(
+    tmp_path: Path, tamper: str
+):
+    payload = json.loads(
+        (ROOT / "config/examples/model_partition_inference_v2.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    payload["coordination_plan"]["payload"]["latency_slo_ms"] = 500.0
+    payload["coordination_plan"]["payload"]["constraints"][
+        "max_end_to_end_latency_ms"
+    ] = 500.0
+    artifact_root = tmp_path / "artifacts"
+    report = run_partition_planning(
+        payload,
+        policy_path=ROOT / "config/model_partition_policy.json",
+        artifact_root=artifact_root,
+        observed=_observed_runtime_payload("tampered-service-plan"),
+        plan_id_factory=lambda: "tampered-service-plan",
+        v2_request=True,
+    )
+    runtime_outcome = (
+        Path(report["artifact_path"]).parent
+        / "versions"
+        / "1"
+        / "runtime_outcome.json"
+    )
+    if tamper == "missing":
+        runtime_outcome.unlink()
+    else:
+        sidecar = json.loads(runtime_outcome.read_text(encoding="utf-8"))
+        if tamper == "candidate":
+            sidecar["selected_candidate_key"] = "forged-candidate"
+        elif tamper == "plan":
+            sidecar["plan_id"] = "forged-plan"
+        elif tamper == "ref":
+            sidecar["runtime_outcome_ref"] = "outcomes/forged/versions/1/result"
+        else:
+            sidecar["metrics"]["latency_ms"] = 1.0
+        runtime_outcome.write_text(json.dumps(sidecar), encoding="utf-8")
+
+    summary = build_partition_ranking_dataset((artifact_root,), tmp_path / "dataset.jsonl")
+
+    assert summary.row_count == 0
+    assert summary.rejections["runtime_outcome_mismatch"] == 1
 
 
 def test_partition_service_persists_same_validated_and_evaluated_plan(tmp_path):

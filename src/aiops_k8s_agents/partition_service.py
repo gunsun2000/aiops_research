@@ -8,7 +8,10 @@ from aiops_k8s_agents.model_partition_agent import (
     ModelPartitionOrchestrationAgent,
     ModelPartitionPolicy,
 )
-from aiops_k8s_agents.partition_artifacts import write_partition_report
+from aiops_k8s_agents.partition_artifacts import (
+    build_runtime_outcome_sidecar,
+    write_partition_report,
+)
 from aiops_k8s_agents.partition_evaluator import (
     ObservedPartitionMetrics,
     PartitionPlanEvaluator,
@@ -29,6 +32,13 @@ from aiops_k8s_agents.partition_repository import (
     PartitionPlanRepository,
     SchedulingHandoff,
 )
+from aiops_k8s_agents.partition_ranker_repository import PartitionRankerRepository
+from aiops_k8s_agents.partition_ranking import (
+    DeterministicPolicyRanker,
+    GuardedCandidateSelector,
+    LearnedRewardRanker,
+)
+from aiops_k8s_agents.partition_ranking_models import SelectionMode
 from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
 from aiops_k8s_agents.partition_validator import PartitionPlanValidator
 
@@ -44,13 +54,29 @@ def run_partition_planning(
     replan_attempt: int = 1,
     plan_id_factory: Callable[[], str] | None = None,
     v2_request: bool | None = None,
+    selection_mode: str = "deterministic",
+    ranker_registry_root: str | Path | None = None,
+    ranker_model_version: str | None = None,
 ) -> dict[str, Any]:
     policy = ModelPartitionPolicy.from_path(policy_path)
     strategy_registry = PartitionStrategyRegistry.default(Path(policy_path))
+    selector = build_candidate_selector(
+        policy=policy,
+        selection_mode=SelectionMode(selection_mode),
+        ranker_repository=(
+            None
+            if ranker_registry_root is None
+            else PartitionRankerRepository(ranker_registry_root)
+        ),
+        model_version=ranker_model_version,
+    )
     agent = ModelPartitionOrchestrationAgent(
         policy,
         plan_id_factory=plan_id_factory,
         strategy_registry=strategy_registry,
+        selector=selector,
+        selection_mode=SelectionMode(selection_mode),
+        ranker_model_version=ranker_model_version,
     )
     is_v2_request = "coordination_plan" in payload if v2_request is None else v2_request
     planning_request = (
@@ -128,10 +154,45 @@ def run_partition_planning(
             id_factory=lambda: f"scheduling-handoff-{plan.plan_id}",
             clock=lambda: datetime.now(timezone.utc).isoformat(),
         ).to_dict()
+    runtime_outcome = build_runtime_outcome_sidecar(report)
     artifact_path = write_partition_report(
-        report, artifact_root, policy_path=policy_path
+        report,
+        artifact_root,
+        policy_path=policy_path,
+        sidecars=(
+            {} if runtime_outcome is None else {"runtime_outcome.json": runtime_outcome}
+        ),
     )
     return {**report, "artifact_path": str(artifact_path)}
+
+
+def build_candidate_selector(
+    *,
+    policy: ModelPartitionPolicy,
+    selection_mode: SelectionMode,
+    ranker_repository: PartitionRankerRepository | None,
+    model_version: str | None,
+) -> GuardedCandidateSelector:
+    """Load a ranker only from the registered repository boundary."""
+    mode = SelectionMode(selection_mode)
+    if mode is not SelectionMode.DETERMINISTIC and not model_version:
+        raise PartitionContractError(
+            "ranker_model_version_required",
+            "shadow and learned_guarded selection require a registered model version",
+        )
+    if model_version and ranker_repository is None:
+        raise PartitionContractError(
+            "ranker_registry_required",
+            "an explicitly requested ranker model must be resolved from a registry",
+        )
+    learned = None
+    if ranker_repository is not None and model_version:
+        learned = LearnedRewardRanker(ranker_repository.get(model_version))
+    return GuardedCandidateSelector(
+        deterministic=DeterministicPolicyRanker(),
+        learned=learned,
+        guard_policy=policy.learned_ranker_guard,
+    )
 
 
 class PartitionFeedbackService:
@@ -143,11 +204,17 @@ class PartitionFeedbackService:
         policy_path: str | Path,
         *,
         plan_id_factory: Callable[[], str] | None = None,
+        selection_mode: str | None = None,
+        ranker_registry_root: str | Path | None = None,
+        ranker_model_version: str | None = None,
     ) -> None:
         self._repository = repository
         self._policy = ModelPartitionPolicy.from_path(policy_path)
         self._strategy_registry = PartitionStrategyRegistry.default(Path(policy_path))
         self._plan_id_factory = plan_id_factory
+        self._selection_mode = selection_mode
+        self._ranker_registry_root = ranker_registry_root
+        self._ranker_model_version = ranker_model_version
         self._analyzer = PartitionFeedbackAnalyzer()
 
     def process_feedback(
@@ -175,10 +242,33 @@ class PartitionFeedbackService:
         directive = self._analyzer.analyze(runtime_feedback, previous_plan)
         effective_directive = self._prior_exclusions(previous_report).merge(directive)
         round_plan = FederatedRoundPlan.from_dict(previous_report["round_plan"])
+        previous_selection = previous_plan.selection
+        inherited_selection_mode = (
+            self._selection_mode
+            or ("deterministic" if previous_selection is None else previous_selection.mode)
+        )
+        inherited_model_version = (
+            self._ranker_model_version
+            if self._ranker_model_version is not None
+            else (None if previous_selection is None else previous_selection.model_version)
+        )
+        selector = build_candidate_selector(
+            policy=self._policy,
+            selection_mode=SelectionMode(inherited_selection_mode),
+            ranker_repository=(
+                None
+                if self._ranker_registry_root is None
+                else PartitionRankerRepository(self._ranker_registry_root)
+            ),
+            model_version=inherited_model_version,
+        )
         agent = ModelPartitionOrchestrationAgent(
             self._policy,
             plan_id_factory=self._plan_id_factory,
             strategy_registry=self._strategy_registry,
+            selector=selector,
+            selection_mode=SelectionMode(inherited_selection_mode),
+            ranker_model_version=inherited_model_version,
         )
         request_payload = previous_report.get("planning_request")
         request = (
@@ -237,6 +327,7 @@ class PartitionFeedbackService:
                 sidecars={
                     "runtime_feedback.json": runtime_feedback.to_dict(),
                     "repartition_directive.json": effective_directive.to_dict(),
+                    "candidate_ranking.json": plan.selection.to_dict(),
                 },
             )
             return {**report, "artifact_path": str(artifact_path)}
@@ -266,7 +357,15 @@ def run_partition_feedback(
     policy_path: str | Path,
     *,
     plan_id_factory: Callable[[], str] | None = None,
+    selection_mode: str | None = None,
+    ranker_registry_root: str | Path | None = None,
+    ranker_model_version: str | None = None,
 ) -> dict[str, Any]:
     return PartitionFeedbackService(
-        repository, policy_path, plan_id_factory=plan_id_factory
+        repository,
+        policy_path,
+        plan_id_factory=plan_id_factory,
+        selection_mode=selection_mode,
+        ranker_registry_root=ranker_registry_root,
+        ranker_model_version=ranker_model_version,
     ).process_feedback(plan_id, feedback)

@@ -114,6 +114,7 @@ def test_observed_metrics_are_labeled_and_reduce_reward_when_performance_worsens
             total_transfer_bytes=4_500_000,
             source="runtime-monitor",
             observed_at="2026-08-20T09:30:00Z",
+            runtime_outcome_ref="outcomes/evaluator-plan/versions/1/result",
         ),
     )
 
@@ -254,6 +255,7 @@ def test_evaluate_rejects_invalid_direct_runtime_evidence():
                 total_transfer_bytes=2_000,
                 source="runtime-monitor",
                 observed_at="2026-08-20T09:30:00Z",
+                runtime_outcome_ref="outcomes/evaluator-plan/versions/1/result",
             ),
         )
 

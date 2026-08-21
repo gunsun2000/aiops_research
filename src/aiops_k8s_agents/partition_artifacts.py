@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import MutableMapping
 from dataclasses import asdict
@@ -7,6 +8,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from aiops_k8s_agents.partition_common import PartitionCommonProcessor
+from aiops_k8s_agents.partition_context import canonical_json
 from aiops_k8s_agents.partition_coordination import (
     LegacyFederatedRoundPlanAdapter,
     PartitionPlanningRequest,
@@ -21,6 +23,7 @@ def write_partition_report(
     artifact_root: str | Path,
     *,
     policy_path: str | Path | None = None,
+    sidecars: Mapping[str, object] | None = None,
 ) -> Path:
     plan_id = str(report["plan"]["plan_id"])
     output_directory = Path(artifact_root).expanduser().resolve() / plan_id
@@ -32,12 +35,16 @@ def write_partition_report(
         normalized_request, partition_intent = _derive_planning_artifacts(
             persisted_report, policy_path=policy_path
         )
+        repository_sidecars: dict[str, object] = {
+            "normalized_request.json": normalized_request,
+            "partition_intent.json": partition_intent,
+            "candidate_ranking.json": dict(report["plan"]["selection"]),
+        }
+        if sidecars:
+            repository_sidecars.update(sidecars)
         repository.save(
             persisted_report,
-            sidecars={
-                "normalized_request.json": normalized_request,
-                "partition_intent.json": partition_intent,
-            },
+            sidecars=repository_sidecars,
             include_legacy_report=True,
         )
         if isinstance(report, MutableMapping):
@@ -45,6 +52,50 @@ def write_partition_report(
     else:
         _write_json(output_path, persisted_report)
     return output_path
+
+
+def build_runtime_outcome_sidecar(report: Mapping[str, Any]) -> dict[str, object] | None:
+    """Bind observed evaluation evidence to the selected persisted candidate."""
+    evaluation = report.get("evaluation")
+    plan = report.get("plan")
+    if not isinstance(evaluation, Mapping) or evaluation.get("evidence_level") != "observed":
+        return None
+    if not isinstance(plan, Mapping):
+        raise ValueError("observed runtime outcome requires a plan")
+    selection = plan.get("selection")
+    metrics = evaluation.get("metrics")
+    components = evaluation.get("components")
+    if not isinstance(selection, Mapping) or not isinstance(metrics, Mapping) or not isinstance(components, Mapping):
+        raise ValueError("observed runtime outcome requires selection and evaluation details")
+    payload: dict[str, object] = {
+        "schema_version": "partition-runtime-outcome-v1",
+        "plan_id": str(plan.get("plan_id") or "").strip(),
+        "plan_version": plan.get("plan_version"),
+        "selected_candidate_key": str(
+            selection.get("final_selected_candidate_key") or ""
+        ).strip(),
+        "source": str(metrics.get("source") or "").strip(),
+        "observed_at": str(metrics.get("observed_at") or "").strip(),
+        "runtime_outcome_ref": str(metrics.get("runtime_outcome_ref") or "").strip(),
+        "metrics": dict(metrics),
+        "evaluation_reward": evaluation.get("reward"),
+        "evaluation_components": dict(components),
+    }
+    if (
+        not payload["plan_id"]
+        or not isinstance(payload["plan_version"], int)
+        or not payload["selected_candidate_key"]
+        or not payload["source"]
+        or not payload["observed_at"]
+        or not payload["runtime_outcome_ref"]
+    ):
+        return None
+    return {
+        **payload,
+        "payload_sha256": hashlib.sha256(
+            canonical_json(payload).encode("utf-8")
+        ).hexdigest(),
+    }
 
 
 def _is_v2_report(report: Mapping[str, Any]) -> bool:

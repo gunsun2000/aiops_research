@@ -24,13 +24,27 @@ def read_jsonl(path: Path) -> list[dict]:
 
 
 def write_report_fixture(root: Path, report: dict) -> Path:
-    return write_partition_report(report, root)
+    version = report["plan"]["plan_version"]
+    source_sidecar = (
+        Path(report["artifact_path"]).parent
+        / "versions"
+        / str(version)
+        / "runtime_outcome.json"
+    )
+    return write_partition_report(
+        report,
+        root,
+        sidecars=(
+            None
+            if not source_sidecar.is_file()
+            else {"runtime_outcome.json": json.loads(source_sidecar.read_text(encoding="utf-8"))}
+        ),
+    )
 
 
 @pytest.fixture
 def observed_report(tmp_path) -> dict:
-    report = _planned_report(tmp_path / "source", "observed-plan")
-    return _as_observed(report)
+    return _planned_report(tmp_path / "source", "observed-plan", observed=True)
 
 
 @pytest.fixture
@@ -212,8 +226,8 @@ def test_dataset_rejects_artifact_with_committed_and_pending_markers(
 
 
 def test_dataset_has_stable_order_hash_and_provenance_manifest(tmp_path, observed_report):
-    first = _as_observed(_planned_report(tmp_path / "source-z", "z-plan"))
-    second = _as_observed(_planned_report(tmp_path / "source-a", "a-plan"))
+    first = _planned_report(tmp_path / "source-z", "z-plan", observed=True)
+    second = _planned_report(tmp_path / "source-a", "a-plan", observed=True)
     write_report_fixture(tmp_path / "z-root", first)
     write_report_fixture(tmp_path / "a-root", second)
 
@@ -235,7 +249,7 @@ def test_dataset_has_stable_order_hash_and_provenance_manifest(tmp_path, observe
     assert manifest["schema_version"] == "partition-ranking-dataset-v1"
 
 
-def _planned_report(artifact_root: Path, plan_id: str) -> dict:
+def _planned_report(artifact_root: Path, plan_id: str, *, observed: bool = False) -> dict:
     payload = json.loads(
         (ROOT / "config/examples/model_partition_inference_v2.json").read_text(
             encoding="utf-8"
@@ -246,20 +260,16 @@ def _planned_report(artifact_root: Path, plan_id: str) -> dict:
         policy_path=ROOT / "config/model_partition_policy.json",
         artifact_root=artifact_root,
         plan_id_factory=lambda: plan_id,
+        observed=(
+            None
+            if not observed
+            else {
+                "latency_ms": 120.0,
+                "maximum_memory_pressure": 0.4,
+                "total_transfer_bytes": 2048,
+                "source": "runtime-monitor",
+                "observed_at": "2026-08-21T09:30:00Z",
+                "runtime_outcome_ref": f"outcomes/{plan_id}/versions/1/result",
+            }
+        ),
     )
-
-
-def _as_observed(report: dict) -> dict:
-    report["evaluation"] = {
-        **report["evaluation"],
-        "evidence_level": "observed",
-        "estimated": False,
-        "label": "Observed reward (runtime evidence)",
-        "metrics": {
-            **report["evaluation"]["metrics"],
-            "source": "runtime-monitor",
-            "observed_at": "2026-08-21T09:30:00Z",
-            "runtime_outcome_ref": f"outcomes/{report['plan']['plan_id']}/versions/1/result",
-        },
-    }
-    return report

@@ -307,6 +307,19 @@ class PartitionPlanRepository:
     ) -> list[dict[str, Any]]:
         path = plan_directory / "history.json"
         entries = self._read_json(path) if path.is_file() else []
+        selection = plan.get("selection")
+        selection_metadata = (
+            {
+                "selection_mode": selection.get("mode"),
+                "ranker_model_version": selection.get("model_version"),
+                "ranker_artifact_hash": selection.get("model_artifact_hash"),
+                "final_selected_candidate_key": selection.get(
+                    "final_selected_candidate_key"
+                ),
+            }
+            if isinstance(selection, Mapping)
+            else {}
+        )
         entries.append(
             {
                 "plan_id": plan["plan_id"],
@@ -315,6 +328,7 @@ class PartitionPlanRepository:
                 "deterministic_signature": plan["deterministic_signature"],
                 "status": report["status"],
                 "created_at": datetime.now(timezone.utc).isoformat(),
+                **selection_metadata,
             }
         )
         return entries
