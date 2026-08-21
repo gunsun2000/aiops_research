@@ -13,7 +13,14 @@ from aiops_k8s_agents.partition_models import PartitionContractError
 from aiops_k8s_agents.partition_ranker_repository import (
     PartitionRankerModelArtifact,
     PartitionRankerRepository,
+    VALIDATION_METRIC_KEYS,
 )
+
+
+def _validation_metrics(**overrides: float) -> dict[str, float]:
+    metrics = {key: 0.0 for key in VALIDATION_METRIC_KEYS}
+    metrics.update(overrides)
+    return metrics
 
 
 @pytest.fixture
@@ -34,7 +41,7 @@ def model_artifact() -> PartitionRankerModelArtifact:
         coefficients=tuple(0.1 for _ in FEATURE_ORDER),
         intercept=0.25,
         training_feature_ranges={name: (0.0, 100.0) for name in FEATURE_ORDER},
-        validation_metrics={"mae": 0.1},
+        validation_metrics=_validation_metrics(mae=0.1),
         confidence_policy={"minimum_confidence": 0.8},
         training_provenance={
             "seed": 17,
@@ -110,6 +117,11 @@ def test_artifact_rejects_a_feature_order_that_does_not_match_the_schema(model_a
 def test_artifact_rejects_non_finite_parameters(model_artifact):
     with pytest.raises(PartitionContractError, match="finite"):
         replace(model_artifact, intercept=float("nan")).with_computed_hash()
+
+
+def test_artifact_rejects_incomplete_validation_metrics(model_artifact):
+    with pytest.raises(PartitionContractError, match="validation_metrics keys"):
+        replace(model_artifact, validation_metrics={"mae": 0.1}).with_computed_hash()
 
 
 def test_artifact_rejects_group_count_that_disagrees_with_training_lineages(model_artifact):

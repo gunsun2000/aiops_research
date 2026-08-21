@@ -16,6 +16,21 @@ from aiops_k8s_agents.partition_models import PartitionContractError
 
 
 MODEL_ARTIFACT_SCHEMA_VERSION = "partition-ranker-model-v2"
+VALIDATION_METRIC_KEYS = (
+    "holdout_mae",
+    "mae",
+    "rmse",
+    "spearman_correlation",
+    "candidate_selection_agreement",
+    "candidate_selection_agreement_available",
+    "learned_regret",
+    "learned_regret_available",
+    "baseline_regret",
+    "baseline_regret_available",
+    "ranking_group_count",
+    "quality_eligible",
+    "deployment_eligible",
+)
 _ARTIFACT_FIELDS = frozenset(
     {
         "schema_version",
@@ -134,7 +149,7 @@ class PartitionRankerModelArtifact:
             training_feature_ranges=_feature_ranges(
                 payload.get("training_feature_ranges")
             ),
-            validation_metrics=_numeric_mapping(
+            validation_metrics=_validation_metrics(
                 payload.get("validation_metrics"), "validation_metrics"
             ),
             confidence_policy=_numeric_mapping(
@@ -178,7 +193,7 @@ class PartitionRankerModelArtifact:
         _validate_vector(self.coefficients, "coefficients", positive=False)
         _number(self.intercept, "intercept")
         _validate_feature_ranges(self.training_feature_ranges)
-        _numeric_mapping(self.validation_metrics, "validation_metrics")
+        _validation_metrics(self.validation_metrics, "validation_metrics")
         _numeric_mapping(self.confidence_policy, "confidence_policy")
         provenance = _training_provenance(self.training_provenance)
         if self.group_count != len(provenance["training_lineage_group_hashes"]):
@@ -477,6 +492,15 @@ def _numeric_mapping(value: Any, field: str) -> dict[str, float]:
         _text(name, f"{field} key"): _number(item, f"{field}.{name}")
         for name, item in value.items()
     }
+
+
+def _validation_metrics(value: Any, field: str) -> dict[str, float]:
+    metrics = _numeric_mapping(value, field)
+    if set(metrics) != set(VALIDATION_METRIC_KEYS):
+        raise PartitionContractError(
+            "invalid_model_artifact", f"{field} keys must exactly match the validation_metrics keys"
+        )
+    return metrics
 
 
 def _text_tuple(value: Any, field: str) -> tuple[str, ...]:

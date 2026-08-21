@@ -23,7 +23,10 @@ from aiops_k8s_agents.partition_ranking import (
     RankingContext,
     candidate_key,
 )
-from aiops_k8s_agents.partition_ranker_repository import PartitionRankerModelArtifact
+from aiops_k8s_agents.partition_ranker_repository import (
+    VALIDATION_METRIC_KEYS,
+    PartitionRankerModelArtifact,
+)
 from aiops_k8s_agents.partition_ranking_models import SelectionMode
 from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
 
@@ -100,7 +103,13 @@ def eligible_artifact() -> PartitionRankerModelArtifact:
         ),
         intercept=0.0,
         training_feature_ranges={name: (0.0, 10_000_000_000.0) for name in FEATURE_ORDER},
-        validation_metrics={"holdout_mae": 0.10, "spearman_correlation": 0.80},
+        validation_metrics={
+            **{key: 0.0 for key in VALIDATION_METRIC_KEYS},
+            "holdout_mae": 0.10,
+            "mae": 0.10,
+            "rmse": 0.10,
+            "spearman_correlation": 0.80,
+        },
         confidence_policy={"base_confidence": 0.95},
         training_provenance={
             "seed": 17,

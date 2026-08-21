@@ -21,7 +21,10 @@ from aiops_k8s_agents.partition_learning import (
     write_partition_ranking_dataset,
 )
 from aiops_k8s_agents.partition_models import PartitionContractError
-from aiops_k8s_agents.partition_ranker_repository import PartitionRankerRepository
+from aiops_k8s_agents.partition_ranker_repository import (
+    VALIDATION_METRIC_KEYS,
+    PartitionRankerRepository,
+)
 from aiops_k8s_agents.partition_ranking import LearnedRewardRanker
 
 
@@ -54,6 +57,7 @@ def test_training_exports_verified_observed_ridge_artifact(tmp_path, observed_da
             "utf-8"
         )
     ).hexdigest()
+    assert set(payload["validation_metrics"]) == set(VALIDATION_METRIC_KEYS)
     assert payload["validation_metrics"]["quality_eligible"] in (0.0, 1.0)
     assert payload["validation_metrics"]["deployment_eligible"] in (0.0, 1.0)
     assert payload["training_provenance"] == {
