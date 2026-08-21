@@ -12,9 +12,13 @@ from aiops_k8s_agents.partition_context import canonical_json
 from aiops_k8s_agents.partition_features import FEATURE_ORDER, FEATURE_SCHEMA_VERSION
 from aiops_k8s_agents.partition_learning import (
     PartitionRankingTrainingRow,
+    _candidate_selection_metrics,
     evaluate_partition_ranker,
     group_holdout_split,
+    group_key,
+    load_partition_ranking_dataset,
     train_partition_ranker,
+    write_partition_ranking_dataset,
 )
 from aiops_k8s_agents.partition_models import PartitionContractError
 from aiops_k8s_agents.partition_ranker_repository import PartitionRankerRepository
@@ -52,6 +56,18 @@ def test_training_exports_verified_observed_ridge_artifact(tmp_path, observed_da
     ).hexdigest()
     assert payload["validation_metrics"]["quality_eligible"] in (0.0, 1.0)
     assert payload["validation_metrics"]["deployment_eligible"] in (0.0, 1.0)
+    assert payload["training_provenance"] == {
+        "eligibility_thresholds": {
+            "maximum_holdout_mae": 0.25,
+            "minimum_independent_groups": 5,
+            "minimum_observed_samples": 30,
+            "minimum_spearman_correlation": 0.3,
+        },
+        "holdout_test_fraction": 0.2,
+        "ridge_alpha": 1.0,
+        "seed": 17,
+        "training_lineage_group_hashes": sorted({group_key(row) for row in _read_training_rows(observed_dataset_path)}),
+    }
 
 
 def test_registered_artifact_reproduces_prediction_without_sklearn(
@@ -150,6 +166,7 @@ def test_evaluation_keeps_synthetic_scope_non_deployment_eligible(tmp_path, data
             evidence_level="synthetic",
             evidence_source="offline-generator",
             observed_at="",
+            runtime_outcome_ref=f"synthetic/{row.row_id}/versions/1/result",
         )
         for row in dataset_rows
     ]
@@ -160,6 +177,92 @@ def test_evaluation_keeps_synthetic_scope_non_deployment_eligible(tmp_path, data
     assert evaluation.scope == "synthetic"
     assert evaluation.deployment_eligible is False
     assert evaluation.metrics["deployment_eligible"] == 0.0
+
+
+def test_dataset_loader_rejects_offline_generator_forged_as_observed(tmp_path, dataset_rows):
+    forged_rows = [
+        _replace_row(row, evidence_source="offline-generator") for row in dataset_rows
+    ]
+    forged_path = _write_dataset(tmp_path / "forged-observed.jsonl", forged_rows, scope="observed")
+
+    with pytest.raises(PartitionContractError) as error:
+        load_partition_ranking_dataset(forged_path)
+
+    assert error.value.code == "dataset_scope_mismatch"
+
+
+def test_dataset_writer_and_loader_share_the_lineage_group_contract(tmp_path, dataset_rows):
+    rows = (
+        _replace_row(
+            dataset_rows[0],
+            job_id="shared-job",
+            input_snapshot_hash="shared-snapshot",
+            runtime_outcome_ref="outcomes/one/versions/1/result",
+        ),
+        _replace_row(
+            dataset_rows[1],
+            job_id="shared-job",
+            input_snapshot_hash="shared-snapshot",
+            runtime_outcome_ref="outcomes/two/versions/1/result",
+        ),
+    )
+
+    summary = write_partition_ranking_dataset(
+        rows,
+        tmp_path / "lineage.jsonl",
+        scope="observed",
+        rejection_counts={},
+        artifact_roots=(),
+    )
+    dataset = load_partition_ranking_dataset(tmp_path / "lineage.jsonl")
+
+    assert summary.lineage_group_count == len({group_key(row) for row in rows}) == 2
+    assert len({group_key(row) for row in dataset.rows}) == summary.lineage_group_count
+
+
+def test_candidate_selection_agreement_uses_the_reward_best_candidate(dataset_rows):
+    rows = dataset_rows[:2]
+
+    metrics = _candidate_selection_metrics(rows, predictions=(0.1, 0.9))
+
+    assert metrics["candidate_selection_agreement"] == 1.0
+    assert metrics["learned_regret"] == 0.0
+
+
+def test_evaluation_rejects_its_training_dataset_as_not_independent(
+    tmp_path, observed_dataset_path
+):
+    pytest.importorskip("sklearn")
+    summary = train_partition_ranker(
+        observed_dataset_path,
+        registry_root=tmp_path / "registry",
+        model_version="partition-ridge-observed-v1",
+    )
+
+    with pytest.raises(PartitionContractError) as error:
+        evaluate_partition_ranker(observed_dataset_path, summary.artifact)
+
+    assert error.value.code == "evaluation_dataset_not_independent"
+
+
+def test_evaluation_rejects_lineage_overlap_with_its_training_dataset(
+    tmp_path, observed_dataset_path
+):
+    pytest.importorskip("sklearn")
+    summary = train_partition_ranker(
+        observed_dataset_path,
+        registry_root=tmp_path / "registry",
+        model_version="partition-ridge-observed-v1",
+    )
+    evaluation_rows = [
+        _replace_row(row, target_reward=row.target_reward + 0.001) for row in _read_training_rows(observed_dataset_path)
+    ]
+    evaluation_path = _write_dataset(tmp_path / "overlap.jsonl", evaluation_rows, scope="observed")
+
+    with pytest.raises(PartitionContractError) as error:
+        evaluate_partition_ranker(evaluation_path, summary.artifact)
+
+    assert error.value.code == "evaluation_dataset_not_independent"
 
 
 def test_training_reports_missing_optional_ml_dependency(tmp_path, observed_dataset_path, monkeypatch):
@@ -249,6 +352,13 @@ def _write_dataset(
 
 def _read_rows(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def _read_training_rows(path: Path) -> list[PartitionRankingTrainingRow]:
+    return [
+        PartitionRankingTrainingRow(**row)
+        for row in _read_rows(path)
+    ]
 
 
 def _row_features(row: dict) -> dict[str, float]:

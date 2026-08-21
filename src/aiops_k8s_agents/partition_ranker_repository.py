@@ -15,7 +15,7 @@ from aiops_k8s_agents.partition_features import FEATURE_ORDER, FEATURE_SCHEMA_VE
 from aiops_k8s_agents.partition_models import PartitionContractError
 
 
-MODEL_ARTIFACT_SCHEMA_VERSION = "partition-ranker-model-v1"
+MODEL_ARTIFACT_SCHEMA_VERSION = "partition-ranker-model-v2"
 _ARTIFACT_FIELDS = frozenset(
     {
         "schema_version",
@@ -35,6 +35,7 @@ _ARTIFACT_FIELDS = frozenset(
         "training_feature_ranges",
         "validation_metrics",
         "confidence_policy",
+        "training_provenance",
         "artifact_hash",
     }
 )
@@ -59,6 +60,7 @@ class PartitionRankerModelArtifact:
     training_feature_ranges: dict[str, tuple[float, float]]
     validation_metrics: dict[str, float]
     confidence_policy: dict[str, float]
+    training_provenance: dict[str, object]
     artifact_hash: str
 
     def with_computed_hash(self) -> PartitionRankerModelArtifact:
@@ -94,6 +96,7 @@ class PartitionRankerModelArtifact:
             },
             "validation_metrics": dict(self.validation_metrics),
             "confidence_policy": dict(self.confidence_policy),
+            "training_provenance": _training_provenance_to_dict(self.training_provenance),
             "artifact_hash": self.artifact_hash,
         }
 
@@ -137,6 +140,9 @@ class PartitionRankerModelArtifact:
             confidence_policy=_numeric_mapping(
                 payload.get("confidence_policy"), "confidence_policy"
             ),
+            training_provenance=_training_provenance(
+                payload.get("training_provenance")
+            ),
             artifact_hash=_text(payload.get("artifact_hash"), "artifact_hash"),
         )
         artifact._validate(require_hash=True)
@@ -174,6 +180,7 @@ class PartitionRankerModelArtifact:
         _validate_feature_ranges(self.training_feature_ranges)
         _numeric_mapping(self.validation_metrics, "validation_metrics")
         _numeric_mapping(self.confidence_policy, "confidence_policy")
+        _training_provenance(self.training_provenance)
         if require_hash:
             _validate_sha256(self.artifact_hash, "artifact_hash")
 
@@ -291,6 +298,87 @@ def _validate_sha256(value: Any, field: str) -> None:
         raise PartitionContractError(
             "invalid_model_artifact", f"{field} must be a lowercase SHA-256 hex digest"
         )
+
+
+def _training_provenance(value: Any) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        raise PartitionContractError("invalid_model_artifact", "training_provenance must be an object")
+    required_fields = {
+        "seed",
+        "ridge_alpha",
+        "holdout_test_fraction",
+        "eligibility_thresholds",
+        "training_lineage_group_hashes",
+    }
+    if set(value) != required_fields:
+        raise PartitionContractError(
+            "invalid_model_artifact", "training_provenance fields are unsupported"
+        )
+    seed = value.get("seed")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise PartitionContractError("invalid_model_artifact", "training_provenance.seed must be an integer")
+    alpha = _number(value.get("ridge_alpha"), "training_provenance.ridge_alpha")
+    if alpha <= 0.0:
+        raise PartitionContractError("invalid_model_artifact", "training_provenance.ridge_alpha must be positive")
+    test_fraction = _number(
+        value.get("holdout_test_fraction"), "training_provenance.holdout_test_fraction"
+    )
+    if not 0.0 < test_fraction < 1.0:
+        raise PartitionContractError(
+            "invalid_model_artifact",
+            "training_provenance.holdout_test_fraction must be between 0 and 1",
+        )
+    thresholds = value.get("eligibility_thresholds")
+    required_thresholds = {
+        "minimum_observed_samples",
+        "minimum_independent_groups",
+        "maximum_holdout_mae",
+        "minimum_spearman_correlation",
+    }
+    if not isinstance(thresholds, Mapping) or set(thresholds) != required_thresholds:
+        raise PartitionContractError(
+            "invalid_model_artifact", "training_provenance.eligibility_thresholds are unsupported"
+        )
+    normalized_thresholds = {
+        name: _number(item, f"training_provenance.eligibility_thresholds.{name}")
+        for name, item in thresholds.items()
+    }
+    lineage_groups = value.get("training_lineage_group_hashes")
+    if isinstance(lineage_groups, (str, bytes)) or not isinstance(lineage_groups, Sequence):
+        raise PartitionContractError(
+            "invalid_model_artifact", "training_provenance.training_lineage_group_hashes must be an array"
+        )
+    normalized_lineages = tuple(
+        _validated_lineage_hash(item) for item in lineage_groups
+    )
+    if tuple(sorted(normalized_lineages)) != normalized_lineages or len(set(normalized_lineages)) != len(normalized_lineages):
+        raise PartitionContractError(
+            "invalid_model_artifact", "training provenance lineage hashes must be sorted and unique"
+        )
+    return {
+        "seed": seed,
+        "ridge_alpha": alpha,
+        "holdout_test_fraction": test_fraction,
+        "eligibility_thresholds": normalized_thresholds,
+        "training_lineage_group_hashes": normalized_lineages,
+    }
+
+
+def _training_provenance_to_dict(value: Mapping[str, object]) -> dict[str, object]:
+    provenance = _training_provenance(value)
+    return {
+        "seed": provenance["seed"],
+        "ridge_alpha": provenance["ridge_alpha"],
+        "holdout_test_fraction": provenance["holdout_test_fraction"],
+        "eligibility_thresholds": provenance["eligibility_thresholds"],
+        "training_lineage_group_hashes": list(provenance["training_lineage_group_hashes"]),
+    }
+
+
+def _validated_lineage_hash(value: Any) -> str:
+    text = _text(value, "training_provenance.training_lineage_group_hashes[]")
+    _validate_sha256(text, "training_provenance.training_lineage_group_hashes[]")
+    return text
 
 
 def _validate_vector(values: tuple[float, ...], field: str, *, positive: bool) -> None:

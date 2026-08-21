@@ -44,7 +44,8 @@ from aiops_k8s_agents.partition_strategies import PartitionIntent
 
 
 DATASET_SCHEMA_VERSION = "partition-ranking-dataset-v1"
-_NON_RUNTIME_SOURCE_MARKERS = ("mock", "dry-run", "dry_run", "synthetic", "predicted")
+_OBSERVED_RUNTIME_EVIDENCE_SOURCES = frozenset({"runtime-monitor"})
+_DEFAULT_HOLDOUT_TEST_FRACTION = 0.2
 
 
 @dataclass(frozen=True)
@@ -257,9 +258,7 @@ def write_partition_ranking_dataset(
         "dataset_sha256": dataset_hash,
         "unique_job_count": len({row.job_id for row in rows}),
         "unique_snapshot_count": len({row.input_snapshot_hash for row in rows}),
-        "lineage_group_count": len(
-            {(row.job_id, row.input_snapshot_hash) for row in rows}
-        ),
+        "lineage_group_count": len({group_key(row) for row in rows}),
         "source_roots": normalized_roots,
         "selected_candidates_only": True,
         "eligible_for_real_claims": scope == "observed",
@@ -333,7 +332,9 @@ def train_partition_ranker(
     if float(alpha) <= 0.0:
         raise PartitionContractError("invalid_training_parameter", "alpha must be finite and positive")
     dataset = load_partition_ranking_dataset(dataset_path)
-    split = group_holdout_split(dataset.rows, seed=seed)
+    split = group_holdout_split(
+        dataset.rows, test_fraction=_DEFAULT_HOLDOUT_TEST_FRACTION, seed=seed
+    )
     normalizer = fit_feature_normalizer(split.train)
     try:
         from sklearn.linear_model import Ridge
@@ -374,6 +375,15 @@ def train_partition_ranker(
         training_feature_ranges=normalizer.ranges,
         validation_metrics=metrics,
         confidence_policy={"base_confidence": 0.95 if deployment_eligible else 0.0},
+        training_provenance={
+            "seed": seed,
+            "ridge_alpha": float(alpha),
+            "holdout_test_fraction": _DEFAULT_HOLDOUT_TEST_FRACTION,
+            "eligibility_thresholds": _eligibility_thresholds(),
+            "training_lineage_group_hashes": sorted(
+                {group_key(row) for row in dataset.rows}
+            ),
+        },
         artifact_hash="",
     ).with_computed_hash()
     artifact_path = PartitionRankerRepository(registry_root).save(artifact)
@@ -394,6 +404,18 @@ def evaluate_partition_ranker(
     if artifact.model_type != "ridge_reward_regressor":
         raise PartitionContractError("invalid_model_artifact", "artifact must be a ridge reward regressor")
     dataset = load_partition_ranking_dataset(dataset_path)
+    training_lineages = frozenset(
+        artifact.training_provenance["training_lineage_group_hashes"]
+    )
+    evaluation_lineages = frozenset(group_key(row) for row in dataset.rows)
+    if (
+        dataset.dataset_hash == artifact.training_dataset_hash
+        or training_lineages.intersection(evaluation_lineages)
+    ):
+        raise PartitionContractError(
+            "evaluation_dataset_not_independent",
+            "evaluation dataset must not reuse the training dataset or its lineage groups",
+        )
     ranker = LearnedRewardRanker(artifact)
     predictions = [ranker.predict(row.features)[0] for row in dataset.rows]
     metrics = _evaluation_metrics(dataset.rows, predictions)
@@ -534,7 +556,8 @@ def _validate_dataset_rows(
             if (
                 row.evidence_level != "observed"
                 or not row.observed_at.strip()
-                or _non_runtime_source(row.evidence_source)
+                or not _is_observed_runtime_source(row.evidence_source)
+                or not row.runtime_outcome_ref.strip()
             ):
                 raise PartitionContractError(
                     "dataset_scope_mismatch", "observed dataset requires runtime observed evidence"
@@ -606,18 +629,25 @@ def _candidate_selection_metrics(
             "ranking_group_count": 0.0,
         }
     agreement = 0
+    learned_regrets: list[float] = []
     regrets: list[float] = []
     for group in comparable:
         learned = max(group, key=lambda item: (item[1], item[0].candidate_key))[0]
+        reward_best = max(
+            group, key=lambda item: (item[0].target_reward, item[0].candidate_key)
+        )[0]
         baseline = min(
             group,
             key=lambda item: (item[0].features["baseline_score"], item[0].candidate_key),
         )[0]
-        agreement += learned.candidate_key == baseline.candidate_key
-        regrets.append(max(item[0].target_reward for item in group) - baseline.target_reward)
+        agreement += learned.candidate_key == reward_best.candidate_key
+        learned_regrets.append(reward_best.target_reward - learned.target_reward)
+        regrets.append(reward_best.target_reward - baseline.target_reward)
     return {
         "candidate_selection_agreement": agreement / len(comparable),
         "candidate_selection_agreement_available": 1.0,
+        "learned_regret": sum(learned_regrets) / len(learned_regrets),
+        "learned_regret_available": 1.0,
         "baseline_regret": sum(regrets) / len(regrets),
         "baseline_regret_available": 1.0,
         "ranking_group_count": float(len(comparable)),
@@ -668,6 +698,16 @@ def _quality_eligible(
         and metrics["holdout_mae"] <= policy.maximum_holdout_mae
         and metrics["spearman_correlation"] >= policy.minimum_spearman_correlation
     )
+
+
+def _eligibility_thresholds() -> dict[str, float | int]:
+    policy = DEFAULT_LEARNED_RANKER_GUARD_POLICY
+    return {
+        "minimum_observed_samples": policy.minimum_observed_samples,
+        "minimum_independent_groups": policy.minimum_independent_groups,
+        "maximum_holdout_mae": policy.maximum_holdout_mae,
+        "minimum_spearman_correlation": policy.minimum_spearman_correlation,
+    }
 
 
 def _read_committed_partition_report(plan_directory: Path) -> _PersistedPartitionReport:
@@ -733,9 +773,12 @@ def _training_row(
     metrics = _mapping(evaluation.get("metrics"), "evaluation.metrics")
     source = _optional_text(metrics.get("source"))
     observed_at = _optional_text(metrics.get("observed_at"))
-    if scope == "observed" and (source is None or observed_at is None):
+    runtime_outcome_ref = _optional_text(metrics.get("runtime_outcome_ref"))
+    if scope == "observed" and (
+        source is None or observed_at is None or runtime_outcome_ref is None
+    ):
         return None, _with_rejection(rejections, "missing_observed_provenance")
-    if scope == "observed" and _non_runtime_source(source):
+    if scope == "observed" and not _is_observed_runtime_source(source):
         return None, _with_rejection(rejections, "non_runtime_evidence_source")
     if evidence_level == "observed":
         ObservedPartitionMetrics.from_dict(metrics)
@@ -752,7 +795,7 @@ def _training_row(
         return None, _with_rejection(rejections, "nonfinite_features")
     source_text = source or "non_observed"
     observed_at_text = observed_at or ""
-    runtime_outcome_ref = _optional_text(metrics.get("runtime_outcome_ref")) or (
+    runtime_outcome_ref = runtime_outcome_ref or (
         f"{plan.plan_id}:{plan.plan_version}:evaluation"
     )
     row_id = hashlib.sha256(
@@ -947,8 +990,8 @@ def _finite_mapping(value: object, field: str) -> dict[str, float]:
     return {str(key): _finite_number(item, f"{field}.{key}") for key, item in mapping.items()}
 
 
-def _non_runtime_source(source: str | None) -> bool:
-    return source is not None and any(marker in source.casefold() for marker in _NON_RUNTIME_SOURCE_MARKERS)
+def _is_observed_runtime_source(source: str | None) -> bool:
+    return source is not None and source.casefold() in _OBSERVED_RUNTIME_EVIDENCE_SOURCES
 
 
 def _with_rejection(rejections: Counter[str], reason: str) -> Counter[str]:

@@ -84,7 +84,7 @@ def test_dataset_rejects_observed_row_without_source_or_timestamp(tmp_path, obse
     assert summary.rejections["missing_observed_provenance"] == 1
 
 
-@pytest.mark.parametrize("source", ("mock", "dry-run", "synthetic"))
+@pytest.mark.parametrize("source", ("mock", "dry-run", "synthetic", "offline-generator"))
 def test_dataset_excludes_non_runtime_sources_and_discloses_the_reason(
     tmp_path, observed_report, source
 ):
@@ -218,6 +218,7 @@ def _as_observed(report: dict) -> dict:
             **report["evaluation"]["metrics"],
             "source": "runtime-monitor",
             "observed_at": "2026-08-21T09:30:00Z",
+            "runtime_outcome_ref": f"outcomes/{report['plan']['plan_id']}/versions/1/result",
         },
     }
     return report

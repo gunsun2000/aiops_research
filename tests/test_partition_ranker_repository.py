@@ -19,7 +19,7 @@ from aiops_k8s_agents.partition_ranker_repository import (
 @pytest.fixture
 def model_artifact() -> PartitionRankerModelArtifact:
     return PartitionRankerModelArtifact(
-        schema_version="partition-ranker-model-v1",
+        schema_version="partition-ranker-model-v2",
         model_type="linear-regression",
         model_version="ranker-2026-08-21",
         feature_schema_version=FEATURE_SCHEMA_VERSION,
@@ -36,6 +36,18 @@ def model_artifact() -> PartitionRankerModelArtifact:
         training_feature_ranges={name: (0.0, 100.0) for name in FEATURE_ORDER},
         validation_metrics={"mae": 0.1},
         confidence_policy={"minimum_confidence": 0.8},
+        training_provenance={
+            "seed": 17,
+            "ridge_alpha": 1.0,
+            "holdout_test_fraction": 0.2,
+            "eligibility_thresholds": {
+                "minimum_observed_samples": 30,
+                "minimum_independent_groups": 5,
+                "maximum_holdout_mae": 0.25,
+                "minimum_spearman_correlation": 0.3,
+            },
+            "training_lineage_group_hashes": (),
+        },
         artifact_hash="",
     )
 

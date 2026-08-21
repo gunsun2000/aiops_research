@@ -83,7 +83,7 @@ def candidates() -> tuple[PartitionCandidate, PartitionCandidate]:
 @pytest.fixture
 def eligible_artifact() -> PartitionRankerModelArtifact:
     return PartitionRankerModelArtifact(
-        schema_version="partition-ranker-model-v1",
+        schema_version="partition-ranker-model-v2",
         model_type="ridge_reward_regressor",
         model_version="ranker-observed-v1",
         feature_schema_version=FEATURE_SCHEMA_VERSION,
@@ -102,6 +102,18 @@ def eligible_artifact() -> PartitionRankerModelArtifact:
         training_feature_ranges={name: (0.0, 10_000_000_000.0) for name in FEATURE_ORDER},
         validation_metrics={"holdout_mae": 0.10, "spearman_correlation": 0.80},
         confidence_policy={"base_confidence": 0.95},
+        training_provenance={
+            "seed": 17,
+            "ridge_alpha": 1.0,
+            "holdout_test_fraction": 0.2,
+            "eligibility_thresholds": {
+                "minimum_observed_samples": 30,
+                "minimum_independent_groups": 5,
+                "maximum_holdout_mae": 0.25,
+                "minimum_spearman_correlation": 0.3,
+            },
+            "training_lineage_group_hashes": (),
+        },
         artifact_hash="",
     ).with_computed_hash()
 
