@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from aiops_k8s_agents import control_plane_web
 from aiops_k8s_agents.control_plane_web import create_app
 from aiops_k8s_agents.partition_features import FEATURE_ORDER
 from aiops_k8s_agents.partition_ranker_repository import (
@@ -118,6 +119,13 @@ def _ranker_registry(tmp_path: Path) -> Path:
     return registry
 
 
+def _tamper_ranker_artifact(registry: Path, model_version: str) -> None:
+    artifact_path = registry / model_version / "model.json"
+    artifact = json.loads(artifact_path.read_text(encoding="utf-8"))
+    artifact["intercept"] = 0.25
+    artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+
+
 def test_plan_api_accepts_shadow_mode_with_registered_model(tmp_path):
     client = TestClient(
         create_app(
@@ -178,6 +186,40 @@ def test_ranker_status_list_exposes_registered_model_metadata(tmp_path):
     assert models[0]["guard_failures"] == []
 
 
+def test_ranker_status_surfaces_corrupt_registered_artifact_without_path(tmp_path):
+    registry = _ranker_registry(tmp_path)
+    _tamper_ranker_artifact(registry, "partition-ridge-observed-v1")
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            ranker_registry_root=registry,
+        )
+    )
+
+    detail = client.get("/api/model-partition/rankers/partition-ridge-observed-v1")
+    collection = client.get("/api/model-partition/rankers")
+
+    assert detail.status_code == 422
+    assert detail.json() == {
+        "error_code": "invalid_model_artifact",
+        "integrity_reason": "artifact_hash_mismatch",
+        "message": "registered ranker artifact failed integrity validation",
+        "model_version": "partition-ridge-observed-v1",
+    }
+    assert collection.status_code == 200
+    assert [model["model_version"] for model in collection.json()["models"]] == [
+        "undertrained-v1"
+    ]
+    assert collection.json()["integrity_errors"] == [
+        {
+            "error_code": "invalid_model_artifact",
+            "integrity_reason": "artifact_hash_mismatch",
+            "message": "registered ranker artifact failed integrity validation",
+            "model_version": "partition-ridge-observed-v1",
+        }
+    ]
+
+
 @pytest.mark.parametrize("path_like_version", ("../../model.json", r"C:\\model.json"))
 def test_ranker_api_rejects_path_like_model_versions(tmp_path, path_like_version):
     client = TestClient(
@@ -214,6 +256,46 @@ def test_ranker_api_returns_not_found_for_unknown_model_version(tmp_path):
     assert response.json()["error_code"] == "model_not_found"
 
 
+@pytest.mark.parametrize(
+    "encoded_version",
+    (
+        "..%2F..%2Fmodel.json",
+        "%2E%2E%2F%2E%2E%2Fmodel.json",
+        "C:%5Cmodel.json",
+    ),
+)
+def test_ranker_detail_rejects_encoded_path_like_model_versions(
+    tmp_path, encoded_version
+):
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            ranker_registry_root=_ranker_registry(tmp_path),
+        )
+    )
+
+    response = client.get(f"/api/model-partition/rankers/{encoded_version}")
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "invalid_model_version"
+
+
+def test_ranker_detail_accepts_valid_version_token(tmp_path):
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            ranker_registry_root=_ranker_registry(tmp_path),
+        )
+    )
+
+    response = client.get(
+        "/api/model-partition/rankers/partition-ridge-observed-v1"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["model_version"] == "partition-ridge-observed-v1"
+
+
 def test_plan_api_keeps_legacy_request_deterministic_when_rankers_exist(tmp_path):
     client = TestClient(
         create_app(
@@ -228,11 +310,33 @@ def test_plan_api_keeps_legacy_request_deterministic_when_rankers_exist(tmp_path
             "round_plan": _example_payload(),
             "selection_mode": "learned_guarded",
             "ranker_model_version": "partition-ridge-observed-v1",
+            "legacy_extension": "preserved-compatible-extra",
         },
     )
 
     assert response.status_code == 200
     assert response.json()["plan"]["selection"]["mode"] == "deterministic"
+
+
+@pytest.mark.parametrize(
+    "reserved_field, value",
+    (
+        ("artifact_signing_key", "untrusted-http-key"),
+        ("artifact_signing_key_file", "../../untrusted.key"),
+        ("ranker_registry_root", "../../untrusted-registry"),
+    ),
+)
+def test_plan_api_rejects_http_server_owned_fields(tmp_path, reserved_field, value):
+    client = TestClient(
+        create_app(model_partition_artifact_root=tmp_path / "artifacts")
+    )
+
+    response = client.post(
+        "/api/model-partition/plans",
+        json={"request": _inference_payload(), reserved_field: value},
+    )
+
+    assert response.status_code == 422
 
 
 def test_plan_api_uses_only_server_owned_artifact_hmac_configuration(tmp_path):
@@ -252,16 +356,37 @@ def test_plan_api_uses_only_server_owned_artifact_hmac_configuration(tmp_path):
 
     response = client.post(
         "/api/model-partition/plans",
-        json={
-            "request": _inference_payload(),
-            "artifact_signing_key": "untrusted-http-key",
-            "artifact_signing_key_file": "../../untrusted.key",
-        },
+        json={"request": _inference_payload()},
     )
 
     assert response.status_code == 200
     assert captured["artifact_signing_key"] == "trusted-server-key"
     assert captured["artifact_signing_key_file"] is None
+
+
+def test_feedback_api_uses_server_owned_ranker_registry_root(tmp_path, monkeypatch):
+    captured: dict[str, object] = {}
+    registry = _ranker_registry(tmp_path)
+
+    def feedback_service(*_args, **kwargs):
+        captured.update(kwargs)
+        return {"status": "feedback_recorded"}
+
+    monkeypatch.setattr(control_plane_web, "run_partition_feedback", feedback_service)
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            ranker_registry_root=registry,
+        )
+    )
+
+    response = client.post(
+        "/api/model-partition/plans/plan-001/feedback",
+        json={"signal": "latency_slo_violation"},
+    )
+
+    assert response.status_code == 200
+    assert captured["ranker_registry_root"] == registry.resolve()
 
 
 def test_model_partition_examples_expose_approved_upstream_contract(tmp_path):

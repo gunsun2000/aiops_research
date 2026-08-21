@@ -8,7 +8,7 @@ import shutil
 import subprocess
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Callable, Literal, Mapping
 from urllib.error import URLError
 from urllib.request import urlopen
@@ -79,7 +79,7 @@ try:
         StreamingResponse,
     )
     from fastapi.staticfiles import StaticFiles
-    from pydantic import BaseModel, ConfigDict, Field
+    from pydantic import BaseModel, ConfigDict, Field, model_validator
 except ModuleNotFoundError as exc:  # pragma: no cover - exercised at runtime.
     raise RuntimeError(
         "Control Plane UI dependencies are not installed. "
@@ -191,6 +191,27 @@ class ModelPartitionPlanRequest(BaseModel):
         "deterministic"
     )
     ranker_model_version: str | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_server_owned_fields(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        attempted = sorted(
+            set(value).intersection(
+                {
+                    "artifact_signing_key",
+                    "artifact_signing_key_file",
+                    "ranker_registry_root",
+                }
+            )
+        )
+        if attempted:
+            raise ValueError(
+                "server-owned fields are not accepted in request bodies: "
+                + ", ".join(attempted)
+            )
+        return value
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -318,8 +339,14 @@ def api_model_partition_plan(
             artifact_signing_key_file=state.partition_artifact_signing_key_file,
         )
     except PartitionContractError as exc:
-        if exc.code in {"model_not_found", "invalid_model_artifact"}:
-            return _ranker_error_response(exc)
+        if exc.code in {
+            "invalid_model_artifact",
+            "invalid_model_version",
+            "model_not_found",
+        }:
+            return _ranker_error_response(
+                exc, model_version=ranker_model_version
+            )
         return (
             _partition_error_response(exc)
             if is_v2_request
@@ -344,11 +371,10 @@ def api_model_partition_rankers(request: Request) -> dict[str, object] | JSONRes
         guard_policy = ModelPartitionPolicy.from_path(
             state.model_partition_policy_path
         ).learned_ranker_guard
-        models = tuple(
-            _ranker_status(artifact, guard_policy)
-            for artifact in PartitionRankerRepository(state.ranker_registry_root).list()
+        models, integrity_errors = _ranker_collection_status(
+            state, guard_policy
         )
-        return {"models": list(models)}
+        return {"models": models, "integrity_errors": integrity_errors}
     except PartitionContractError as exc:
         return _ranker_error_response(exc)
     except Exception:
@@ -356,7 +382,7 @@ def api_model_partition_rankers(request: Request) -> dict[str, object] | JSONRes
         return _partition_internal_error()
 
 
-@router.get("/api/model-partition/rankers/{model_version}", response_model=None)
+@router.get("/api/model-partition/rankers/{model_version:path}", response_model=None)
 def api_model_partition_ranker_by_version(
     model_version: str, request: Request
 ) -> dict[str, object] | JSONResponse:
@@ -368,7 +394,7 @@ def api_model_partition_ranker_by_version(
         ).learned_ranker_guard
         return _ranker_status(artifact, guard_policy)
     except PartitionContractError as exc:
-        return _ranker_error_response(exc)
+        return _ranker_error_response(exc, model_version=model_version)
     except Exception:
         LOGGER.exception("Unexpected model partition ranker lookup failure")
         return _partition_internal_error()
@@ -480,13 +506,15 @@ def _partition_error_response(error: PartitionContractError) -> JSONResponse:
     )
 
 
-def _ranker_error_response(error: PartitionContractError) -> JSONResponse:
+def _ranker_error_response(
+    error: PartitionContractError, *, model_version: str | None = None
+) -> JSONResponse:
     if error.code == "model_not_found":
         return JSONResponse(
             status_code=404,
             content={"error_code": "model_not_found", "message": "ranker model is not registered"},
         )
-    if error.code == "invalid_model_artifact":
+    if error.code == "invalid_model_version":
         return JSONResponse(
             status_code=422,
             content={
@@ -494,13 +522,96 @@ def _ranker_error_response(error: PartitionContractError) -> JSONResponse:
                 "message": "ranker model version must be a safe registered token",
             },
         )
+    if error.code == "invalid_model_artifact":
+        content: dict[str, str] = {
+            "error_code": "invalid_model_artifact",
+            "message": "registered ranker artifact failed integrity validation",
+            "integrity_reason": _ranker_integrity_reason(error),
+        }
+        if model_version is not None:
+            content["model_version"] = model_version
+        return JSONResponse(status_code=422, content=content)
     return _partition_error_response(error)
 
 
 def _resolve_ranker_model(
     state: RuntimeApiState, model_version: str
 ) -> PartitionRankerModelArtifact:
-    return PartitionRankerRepository(state.ranker_registry_root).get(model_version)
+    version = _validate_ranker_model_version_token(model_version)
+    return PartitionRankerRepository(state.ranker_registry_root).get(version)
+
+
+def _validate_ranker_model_version_token(model_version: object) -> str:
+    if not isinstance(model_version, str) or not model_version:
+        raise PartitionContractError(
+            "invalid_model_version", "model version must be a safe registered token"
+        )
+    windows_path = PureWindowsPath(model_version)
+    if (
+        model_version != model_version.strip()
+        or "/" in model_version
+        or "\\" in model_version
+        or windows_path.drive
+        or model_version in {".", ".."}
+        or model_version != model_version.rstrip(" .")
+    ):
+        raise PartitionContractError(
+            "invalid_model_version", "model version must be a safe registered token"
+        )
+    return model_version
+
+
+def _ranker_collection_status(
+    state: RuntimeApiState,
+    guard_policy: LearnedRankerGuardPolicy,
+) -> tuple[list[dict[str, object]], list[dict[str, str]]]:
+    repository = PartitionRankerRepository(state.ranker_registry_root)
+    if not state.ranker_registry_root.exists():
+        return [], []
+    try:
+        entries = tuple(
+            sorted(
+                state.ranker_registry_root.iterdir(), key=lambda item: item.name
+            )
+        )
+    except OSError as exc:
+        raise PartitionContractError(
+            "invalid_model_artifact", "ranker registry could not be read"
+        ) from exc
+    models: list[dict[str, object]] = []
+    integrity_errors: list[dict[str, str]] = []
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        try:
+            version = _validate_ranker_model_version_token(entry.name)
+            artifact = repository.get(version)
+        except PartitionContractError as exc:
+            if exc.code == "invalid_model_version":
+                continue
+            integrity_errors.append(_ranker_integrity_error(entry.name, exc))
+            continue
+        models.append(_ranker_status(artifact, guard_policy))
+    return models, integrity_errors
+
+
+def _ranker_integrity_error(
+    model_version: str, error: PartitionContractError
+) -> dict[str, str]:
+    return {
+        "error_code": "invalid_model_artifact",
+        "message": "registered ranker artifact failed integrity validation",
+        "model_version": model_version,
+        "integrity_reason": _ranker_integrity_reason(error),
+    }
+
+
+def _ranker_integrity_reason(error: PartitionContractError) -> str:
+    if "hash" in error.message:
+        return "artifact_hash_mismatch"
+    if "schema" in error.message:
+        return "artifact_schema_invalid"
+    return "artifact_validation_failed"
 
 
 def _ranker_status(
