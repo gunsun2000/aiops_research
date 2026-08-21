@@ -57,10 +57,17 @@ from aiops_k8s_agents.prometheus_port_forward import (
 )
 from aiops_k8s_agents.partition_models import PartitionContractError
 from aiops_k8s_agents.partition_repository import PartitionPlanRepository
+from aiops_k8s_agents.partition_features import FEATURE_SCHEMA_VERSION
+from aiops_k8s_agents.partition_ranker_repository import (
+    PartitionRankerModelArtifact,
+    PartitionRankerRepository,
+)
+from aiops_k8s_agents.model_partition_agent import ModelPartitionPolicy
 from aiops_k8s_agents.partition_service import (
     run_partition_feedback,
     run_partition_planning,
 )
+from aiops_k8s_agents.partition_ranking import LearnedRankerGuardPolicy
 from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
 
 try:
@@ -109,6 +116,9 @@ class RuntimeApiState:
     model_partition_artifact_root: Path
     model_partition_repository: PartitionPlanRepository
     model_partition_example_path: Path
+    ranker_registry_root: Path
+    partition_artifact_signing_key: str | bytes | None
+    partition_artifact_signing_key_file: Path | None
 
 
 class EmptyEventSink:
@@ -177,6 +187,10 @@ class ModelPartitionPlanRequest(BaseModel):
     previous_plan: dict[str, Any] | None = Field(default=None)
     failure: dict[str, Any] | None = Field(default=None)
     replan_attempt: int = Field(default=1, ge=1)
+    selection_mode: Literal["deterministic", "shadow", "learned_guarded"] = (
+        "deterministic"
+    )
+    ranker_model_version: str | None = None
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -283,7 +297,11 @@ def api_model_partition_plan(
                 "previous_plan and failure must be provided together",
             )
         )
+    selection_mode = body.selection_mode if is_v2_request else "deterministic"
+    ranker_model_version = body.ranker_model_version if is_v2_request else None
     try:
+        if ranker_model_version is not None:
+            _resolve_ranker_model(state, ranker_model_version)
         return state.model_partition_service(
             body.v2_request if is_v2_request else body.round_plan,
             policy_path=state.model_partition_policy_path,
@@ -293,8 +311,15 @@ def api_model_partition_plan(
             failure_payload=body.failure,
             replan_attempt=body.replan_attempt,
             v2_request=is_v2_request,
+            selection_mode=selection_mode,
+            ranker_registry_root=state.ranker_registry_root,
+            ranker_model_version=ranker_model_version,
+            artifact_signing_key=state.partition_artifact_signing_key,
+            artifact_signing_key_file=state.partition_artifact_signing_key_file,
         )
     except PartitionContractError as exc:
+        if exc.code in {"model_not_found", "invalid_model_artifact"}:
+            return _ranker_error_response(exc)
         return (
             _partition_error_response(exc)
             if is_v2_request
@@ -309,6 +334,43 @@ def api_model_partition_plan(
         )
     except Exception:
         LOGGER.exception("Unexpected model partition planning failure")
+        return _partition_internal_error()
+
+
+@router.get("/api/model-partition/rankers", response_model=None)
+def api_model_partition_rankers(request: Request) -> dict[str, object] | JSONResponse:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        guard_policy = ModelPartitionPolicy.from_path(
+            state.model_partition_policy_path
+        ).learned_ranker_guard
+        models = tuple(
+            _ranker_status(artifact, guard_policy)
+            for artifact in PartitionRankerRepository(state.ranker_registry_root).list()
+        )
+        return {"models": list(models)}
+    except PartitionContractError as exc:
+        return _ranker_error_response(exc)
+    except Exception:
+        LOGGER.exception("Unexpected model partition ranker lookup failure")
+        return _partition_internal_error()
+
+
+@router.get("/api/model-partition/rankers/{model_version}", response_model=None)
+def api_model_partition_ranker_by_version(
+    model_version: str, request: Request
+) -> dict[str, object] | JSONResponse:
+    state: RuntimeApiState = request.app.state.runtime_api
+    try:
+        artifact = _resolve_ranker_model(state, model_version)
+        guard_policy = ModelPartitionPolicy.from_path(
+            state.model_partition_policy_path
+        ).learned_ranker_guard
+        return _ranker_status(artifact, guard_policy)
+    except PartitionContractError as exc:
+        return _ranker_error_response(exc)
+    except Exception:
+        LOGGER.exception("Unexpected model partition ranker lookup failure")
         return _partition_internal_error()
 
 
@@ -381,6 +443,7 @@ def api_model_partition_feedback(
             body,
             state.model_partition_repository,
             state.model_partition_policy_path,
+            ranker_registry_root=state.ranker_registry_root,
         )
     except PartitionContractError as exc:
         return _partition_error_response(exc)
@@ -415,6 +478,75 @@ def _partition_error_response(error: PartitionContractError) -> JSONResponse:
         status_code=status_code,
         content={"error_code": error.code, "message": error.message},
     )
+
+
+def _ranker_error_response(error: PartitionContractError) -> JSONResponse:
+    if error.code == "model_not_found":
+        return JSONResponse(
+            status_code=404,
+            content={"error_code": "model_not_found", "message": "ranker model is not registered"},
+        )
+    if error.code == "invalid_model_artifact":
+        return JSONResponse(
+            status_code=422,
+            content={
+                "error_code": "invalid_model_version",
+                "message": "ranker model version must be a safe registered token",
+            },
+        )
+    return _partition_error_response(error)
+
+
+def _resolve_ranker_model(
+    state: RuntimeApiState, model_version: str
+) -> PartitionRankerModelArtifact:
+    return PartitionRankerRepository(state.ranker_registry_root).get(model_version)
+
+
+def _ranker_status(
+    artifact: PartitionRankerModelArtifact,
+    guard_policy: LearnedRankerGuardPolicy,
+) -> dict[str, object]:
+    failures = _ranker_guard_failures(artifact, guard_policy)
+    return {
+        "model_version": artifact.model_version,
+        "feature_schema_version": artifact.feature_schema_version,
+        "training_scope": artifact.training_scope,
+        "sample_count": artifact.sample_count,
+        "group_count": artifact.group_count,
+        "validation_metrics": dict(artifact.validation_metrics),
+        "artifact_hash": artifact.artifact_hash,
+        "guarded_eligible": not failures,
+        "guard_failures": failures,
+    }
+
+
+def _ranker_guard_failures(
+    artifact: PartitionRankerModelArtifact,
+    guard_policy: LearnedRankerGuardPolicy,
+) -> list[str]:
+    if (
+        artifact.model_type != "ridge_reward_regressor"
+        or artifact.training_scope != "observed"
+    ):
+        return ["model_unavailable"]
+    if artifact.feature_schema_version != FEATURE_SCHEMA_VERSION:
+        return ["feature_schema_mismatch"]
+    failures: list[str] = []
+    if artifact.sample_count < guard_policy.minimum_observed_samples:
+        failures.append("insufficient_observed_samples")
+    if artifact.group_count < guard_policy.minimum_independent_groups:
+        failures.append("insufficient_independent_groups")
+    holdout_mae = artifact.validation_metrics.get("holdout_mae")
+    if holdout_mae is None or holdout_mae > guard_policy.maximum_holdout_mae:
+        failures.append("holdout_mae_exceeded")
+    correlation = artifact.validation_metrics.get("spearman_correlation")
+    if (
+        correlation is None
+        or correlation < guard_policy.minimum_spearman_correlation
+    ):
+        failures.append("rank_correlation_below_threshold")
+    return failures
 
 
 def _legacy_partition_error_response(error: PartitionContractError) -> JSONResponse:
@@ -1556,6 +1688,9 @@ def create_app(
     model_partition_policy_path: str | Path | None = None,
     model_partition_artifact_root: str | Path | None = None,
     model_partition_example_path: str | Path | None = None,
+    ranker_registry_root: str | Path | None = None,
+    partition_artifact_signing_key: str | bytes | None = None,
+    partition_artifact_signing_key_file: str | Path | None = None,
 ) -> FastAPI:
     root = project_root()
     config_path = Path(configuration_path or root / "config" / "experiment_runtime.json")
@@ -1666,8 +1801,19 @@ def create_app(
         model_partition_artifact_root
         or root / "runs" / "control-plane" / "model-partition"
     ).expanduser().resolve()
+    configured_ranker_registry_root = Path(
+        ranker_registry_root or partition_artifact_root / "rankers"
+    ).expanduser().resolve()
+    configured_signing_key_file = (
+        None
+        if partition_artifact_signing_key_file is None
+        else Path(partition_artifact_signing_key_file).expanduser().resolve()
+    )
     partition_repository = PartitionPlanRepository(
-        partition_artifact_root, policy_path=partition_policy_path
+        partition_artifact_root,
+        policy_path=partition_policy_path,
+        artifact_signing_key=partition_artifact_signing_key,
+        artifact_signing_key_file=configured_signing_key_file,
     )
     partition_example_path = Path(
         model_partition_example_path
@@ -1723,6 +1869,9 @@ def create_app(
         model_partition_artifact_root=partition_artifact_root,
         model_partition_repository=partition_repository,
         model_partition_example_path=partition_example_path,
+        ranker_registry_root=configured_ranker_registry_root,
+        partition_artifact_signing_key=partition_artifact_signing_key,
+        partition_artifact_signing_key_file=configured_signing_key_file,
     )
     app_instance.include_router(router)
     app_instance.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

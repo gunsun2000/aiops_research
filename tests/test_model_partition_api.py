@@ -1,9 +1,16 @@
 import json
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from aiops_k8s_agents.control_plane_web import create_app
+from aiops_k8s_agents.partition_features import FEATURE_ORDER
+from aiops_k8s_agents.partition_ranker_repository import (
+    VALIDATION_METRIC_KEYS,
+    PartitionRankerModelArtifact,
+    PartitionRankerRepository,
+)
 
 
 def _example_payload() -> dict:
@@ -54,6 +61,207 @@ def _custom_policy_path(tmp_path: Path) -> Path:
     path = tmp_path / "custom-policy.json"
     path.write_text(json.dumps(policy), encoding="utf-8")
     return path
+
+
+def _ranker_registry(tmp_path: Path) -> Path:
+    registry = tmp_path / "ranker-registry"
+    repository = PartitionRankerRepository(registry)
+    for model_version, sample_count in (
+        ("partition-ridge-observed-v1", 30),
+        ("undertrained-v1", 29),
+    ):
+        artifact = PartitionRankerModelArtifact(
+            schema_version="partition-ranker-model-v2",
+            model_type="ridge_reward_regressor",
+            model_version=model_version,
+            feature_schema_version="partition-feature-v1",
+            trained_at="2026-08-21T00:00:00Z",
+            training_dataset_hash="a" * 64,
+            training_scope="observed",
+            sample_count=sample_count,
+            group_count=5,
+            feature_order=FEATURE_ORDER,
+            feature_mean=tuple(0.0 for _ in FEATURE_ORDER),
+            feature_scale=tuple(1.0 for _ in FEATURE_ORDER),
+            coefficients=tuple(0.0 for _ in FEATURE_ORDER),
+            intercept=0.0,
+            training_feature_ranges={
+                name: (0.0, 10_000_000_000.0) for name in FEATURE_ORDER
+            },
+            validation_metrics={
+                **{key: 0.0 for key in VALIDATION_METRIC_KEYS},
+                "holdout_mae": 0.1,
+                "mae": 0.1,
+                "rmse": 0.1,
+                "spearman_correlation": 0.8,
+            },
+            confidence_policy={"base_confidence": 0.95},
+            training_provenance={
+                "seed": 17,
+                "ridge_alpha": 1.0,
+                "holdout_test_fraction": 0.2,
+                "eligibility_thresholds": {
+                    "minimum_observed_samples": 30,
+                    "minimum_independent_groups": 5,
+                    "maximum_holdout_mae": 0.25,
+                    "minimum_spearman_correlation": 0.3,
+                    "minimum_selection_confidence": 0.7,
+                    "maximum_ood_feature_ratio": 0.2,
+                },
+                "training_lineage_group_hashes": tuple(
+                    f"{index:x}" * 64 for index in range(1, 6)
+                ),
+            },
+            artifact_hash="",
+        ).with_computed_hash()
+        repository.save(artifact)
+    return registry
+
+
+def test_plan_api_accepts_shadow_mode_with_registered_model(tmp_path):
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            ranker_registry_root=_ranker_registry(tmp_path),
+        )
+    )
+
+    response = client.post(
+        "/api/model-partition/plans",
+        json={
+            "request": _inference_payload(),
+            "selection_mode": "shadow",
+            "ranker_model_version": "partition-ridge-observed-v1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["plan"]["selection"]["mode"] == "shadow"
+
+
+def test_ranker_status_explains_guarded_ineligibility(tmp_path):
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            ranker_registry_root=_ranker_registry(tmp_path),
+        )
+    )
+
+    response = client.get("/api/model-partition/rankers/undertrained-v1")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["guarded_eligible"] is False
+    assert payload["guard_failures"] == ["insufficient_observed_samples"]
+    assert payload["sample_count"] == 29
+    assert payload["training_scope"] == "observed"
+
+
+def test_ranker_status_list_exposes_registered_model_metadata(tmp_path):
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            ranker_registry_root=_ranker_registry(tmp_path),
+        )
+    )
+
+    response = client.get("/api/model-partition/rankers")
+
+    assert response.status_code == 200
+    models = response.json()["models"]
+    assert [model["model_version"] for model in models] == [
+        "partition-ridge-observed-v1",
+        "undertrained-v1",
+    ]
+    assert models[0]["feature_schema_version"] == "partition-feature-v1"
+    assert models[0]["guarded_eligible"] is True
+    assert models[0]["guard_failures"] == []
+
+
+@pytest.mark.parametrize("path_like_version", ("../../model.json", r"C:\\model.json"))
+def test_ranker_api_rejects_path_like_model_versions(tmp_path, path_like_version):
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            ranker_registry_root=_ranker_registry(tmp_path),
+        )
+    )
+
+    response = client.post(
+        "/api/model-partition/plans",
+        json={
+            "request": _inference_payload(),
+            "selection_mode": "shadow",
+            "ranker_model_version": path_like_version,
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error_code"] == "invalid_model_version"
+
+
+def test_ranker_api_returns_not_found_for_unknown_model_version(tmp_path):
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            ranker_registry_root=_ranker_registry(tmp_path),
+        )
+    )
+
+    response = client.get("/api/model-partition/rankers/not-registered-v1")
+
+    assert response.status_code == 404
+    assert response.json()["error_code"] == "model_not_found"
+
+
+def test_plan_api_keeps_legacy_request_deterministic_when_rankers_exist(tmp_path):
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            ranker_registry_root=_ranker_registry(tmp_path),
+        )
+    )
+
+    response = client.post(
+        "/api/model-partition/plans",
+        json={
+            "round_plan": _example_payload(),
+            "selection_mode": "learned_guarded",
+            "ranker_model_version": "partition-ridge-observed-v1",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["plan"]["selection"]["mode"] == "deterministic"
+
+
+def test_plan_api_uses_only_server_owned_artifact_hmac_configuration(tmp_path):
+    captured: dict[str, object] = {}
+
+    def service(*_args, **kwargs):
+        captured.update(kwargs)
+        return {"status": "planned"}
+
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            model_partition_service=service,
+            partition_artifact_signing_key="trusted-server-key",
+        )
+    )
+
+    response = client.post(
+        "/api/model-partition/plans",
+        json={
+            "request": _inference_payload(),
+            "artifact_signing_key": "untrusted-http-key",
+            "artifact_signing_key_file": "../../untrusted.key",
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured["artifact_signing_key"] == "trusted-server-key"
+    assert captured["artifact_signing_key_file"] is None
 
 
 def test_model_partition_examples_expose_approved_upstream_contract(tmp_path):
