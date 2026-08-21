@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+import aiops_k8s_agents.partition_ranking as partition_ranking
 from aiops_k8s_agents.partition_common import PartitionCommonProcessor
 from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
 from aiops_k8s_agents.partition_features import FEATURE_ORDER, FEATURE_SCHEMA_VERSION
@@ -185,6 +186,39 @@ def test_guarded_mode_falls_back_when_model_has_too_few_observed_samples(
     assert selection.fallback_reason == "insufficient_observed_samples"
 
 
+@pytest.mark.parametrize(
+    "artifact_changes",
+    (
+        pytest.param(
+            {"model_type": "random_forest_reward_regressor"},
+            id="unsupported-model-type",
+        ),
+        pytest.param(
+            {"training_scope": "offline-evaluation"},
+            id="non-observed-training-scope",
+        ),
+    ),
+)
+def test_guarded_mode_falls_back_for_non_deployment_artifact(
+    training_context,
+    candidates,
+    eligible_artifact,
+    guard_policy,
+    artifact_changes,
+):
+    artifact = replace(
+        eligible_artifact, **artifact_changes, artifact_hash=""
+    ).with_computed_hash()
+
+    selection = guarded_selector(artifact, guard_policy).select(
+        training_context, candidates, SelectionMode.LEARNED_GUARDED
+    )
+
+    assert selection.final_selected_candidate_key == selection.baseline_selected_candidate_key
+    assert selection.fallback_used is True
+    assert selection.fallback_reason == "model_unavailable"
+
+
 def test_guarded_mode_falls_back_when_features_are_out_of_distribution(
     training_context, candidates, eligible_artifact, guard_policy
 ):
@@ -195,6 +229,20 @@ def test_guarded_mode_falls_back_when_features_are_out_of_distribution(
     ).with_computed_hash()
 
     selection = guarded_selector(shifted_artifact, guard_policy).select(
+        training_context, candidates, SelectionMode.LEARNED_GUARDED
+    )
+
+    assert selection.final_selected_candidate_key == selection.baseline_selected_candidate_key
+    assert selection.fallback_used is True
+    assert selection.fallback_reason == "feature_distribution_shift"
+
+
+def test_guarded_mode_falls_back_at_ood_policy_boundary(
+    training_context, candidates, eligible_artifact, guard_policy, monkeypatch
+):
+    monkeypatch.setattr(partition_ranking, "_ood_feature_ratio", lambda *_: 0.20)
+
+    selection = guarded_selector(eligible_artifact, guard_policy).select(
         training_context, candidates, SelectionMode.LEARNED_GUARDED
     )
 

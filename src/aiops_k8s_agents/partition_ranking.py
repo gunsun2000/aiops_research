@@ -263,6 +263,11 @@ class GuardedCandidateSelector:
         if model_version is not None and artifact.model_version != model_version:
             return "model_unavailable"
         if (
+            artifact.model_type != "ridge_reward_regressor"
+            or artifact.training_scope != "observed"
+        ):
+            return "model_unavailable"
+        if (
             artifact.feature_schema_version != FEATURE_SCHEMA_VERSION
             or artifact.feature_order != FEATURE_ORDER
         ):
@@ -388,7 +393,7 @@ class GuardedCandidateSelector:
             artifact,
             extract_partition_features(context, selected_candidate),
         )
-        if features_ood_ratio > policy.maximum_ood_feature_ratio:
+        if features_ood_ratio >= policy.maximum_ood_feature_ratio:
             return "feature_distribution_shift"
         if (
             selected.prediction_confidence is None
