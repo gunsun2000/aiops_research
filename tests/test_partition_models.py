@@ -12,6 +12,11 @@ from aiops_k8s_agents.partition_models import (
     PartitionExecutionPlan,
     PartitionFailure,
 )
+from aiops_k8s_agents.partition_ranking_models import (
+    CandidateRankingEntry,
+    CandidateSelection,
+    SelectionMode,
+)
 
 
 def example_payload() -> dict:
@@ -189,6 +194,31 @@ def test_execution_plan_serializes_selected_candidate_and_safe_failure():
         valid=True,
         human_review_required=False,
         errors=(),
+        selection=CandidateSelection(
+            mode=SelectionMode.DETERMINISTIC,
+            active_ranker_id="deterministic-policy-ranker",
+            active_ranker_version="1.0",
+            baseline_selected_candidate_key="candidate-key-1",
+            learned_selected_candidate_key=None,
+            final_selected_candidate_key="candidate-key-1",
+            model_version=None,
+            model_artifact_hash=None,
+            feature_schema_version="partition-feature-v1",
+            entries=(
+                CandidateRankingEntry(
+                    candidate_key="candidate-key-1",
+                    baseline_score=0.25,
+                    predicted_reward=None,
+                    prediction_confidence=None,
+                    rank=1,
+                    eligible=True,
+                ),
+            ),
+            confidence=1.0,
+            fallback_used=False,
+            fallback_reason=None,
+            rationale=("deterministic policy ordering",),
+        ),
     )
     failed = PartitionExecutionPlan.safe_failure(
         plan_id="partition-plan-002",
@@ -200,6 +230,7 @@ def test_execution_plan_serializes_selected_candidate_and_safe_failure():
     )
 
     assert selected.to_dict()["selected_candidate"]["split_points"] == [2]
+    assert selected.to_dict()["selection"]["mode"] == "deterministic"
     assert PartitionExecutionPlan.from_dict(selected.to_dict()) == selected
     assert failed.to_dict()["selected_candidate"] is None
     assert failed.human_review_required is True
@@ -229,6 +260,7 @@ def test_execution_plan_reads_legacy_payload_with_v2_metadata_defaults():
         "confidence",
         "deterministic_signature",
         "handoff_status",
+        "selection",
     ):
         legacy_payload.pop(field, None)
 
@@ -247,6 +279,7 @@ def test_execution_plan_reads_legacy_payload_with_v2_metadata_defaults():
     assert plan.confidence == 0.0
     assert plan.deterministic_signature == ""
     assert plan.handoff_status == "not_ready"
+    assert plan.selection is None
 
 
 def test_partition_failure_requires_supported_signal():

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from math import isfinite
 from typing import Any, Mapping, Sequence
 
+from aiops_k8s_agents.partition_ranking_models import CandidateSelection
+
 
 class PartitionContractError(ValueError):
     def __init__(self, code: str, message: str) -> None:
@@ -566,6 +568,7 @@ class PartitionExecutionPlan:
     confidence: float = 0.0
     deterministic_signature: str = ""
     handoff_status: str = "not_ready"
+    selection: CandidateSelection | None = None
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> PartitionExecutionPlan:
@@ -624,6 +627,11 @@ class PartitionExecutionPlan:
             confidence=_float(payload.get("confidence", 0.0), "confidence"),
             deterministic_signature=str(payload.get("deterministic_signature") or ""),
             handoff_status=str(payload.get("handoff_status") or "not_ready"),
+            selection=(
+                None
+                if payload.get("selection") is None
+                else CandidateSelection.from_dict(_mapping(payload["selection"], "selection"))
+            ),
         )
 
     @classmethod
@@ -637,6 +645,7 @@ class PartitionExecutionPlan:
         policy_version: str,
         errors: tuple[str, ...],
         alternative_candidates: tuple[PartitionCandidate, ...] = (),
+        selection: CandidateSelection | None = None,
     ) -> PartitionExecutionPlan:
         return cls(
             plan_id=plan_id,
@@ -650,6 +659,7 @@ class PartitionExecutionPlan:
             valid=False,
             human_review_required=True,
             errors=errors,
+            selection=selection,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -684,6 +694,7 @@ class PartitionExecutionPlan:
             "confidence": self.confidence,
             "deterministic_signature": self.deterministic_signature,
             "handoff_status": self.handoff_status,
+            "selection": None if self.selection is None else self.selection.to_dict(),
         }
 
 

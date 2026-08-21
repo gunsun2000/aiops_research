@@ -28,6 +28,13 @@ from aiops_k8s_agents.partition_models import (
     PartitionExecutionPlan,
     PartitionFailure,
 )
+from aiops_k8s_agents.partition_ranking import (
+    CandidateRanker,
+    DeterministicPolicyRanker,
+    GuardedCandidateSelector,
+    RankingContext,
+    candidate_key,
+)
 from aiops_k8s_agents.partition_strategies import (
     PartitionIntent,
     PartitionStrategyRegistry,
@@ -97,6 +104,7 @@ class ModelPartitionOrchestrationAgent:
         common_processor: PartitionCommonProcessor | None = None,
         strategy_registry: PartitionStrategyRegistry | None = None,
         legacy_adapter: LegacyFederatedRoundPlanAdapter | None = None,
+        ranker: CandidateRanker | None = None,
     ) -> None:
         self.policy = policy
         self._plan_id_factory = plan_id_factory or (
@@ -105,6 +113,9 @@ class ModelPartitionOrchestrationAgent:
         self._common_processor = common_processor or PartitionCommonProcessor()
         self._strategy_registry = strategy_registry or PartitionStrategyRegistry.default()
         self._legacy_adapter = legacy_adapter or LegacyFederatedRoundPlanAdapter()
+        self._candidate_selector = GuardedCandidateSelector(
+            ranker or DeterministicPolicyRanker()
+        )
 
     def plan(self, round_plan: FederatedRoundPlan) -> PartitionExecutionPlan:
         return self.plan_request(self._legacy_adapter.adapt(round_plan))
@@ -119,7 +130,8 @@ class ModelPartitionOrchestrationAgent:
         intent = strategy.build_partition_intent(normalized)
         plan = self._plan(
             self._round_plan_from_normalized(normalized),
-            partition_intent=(intent if normalized.plan_type == "training" else None),
+            normalized=normalized,
+            partition_intent=intent,
         )
         return self._with_v2_metadata(plan, normalized, intent)
 
@@ -164,12 +176,16 @@ class ModelPartitionOrchestrationAgent:
         attempt: int,
     ) -> PartitionExecutionPlan:
         normalized = self._common_processor.process(self._legacy_adapter.adapt(round_plan))
+        strategy = self._strategy_registry.resolve(
+            normalized.plan_type, normalized.approved_execution_mode.name
+        )
         return self._replan(
             round_plan,
             previous_plan,
             directive,
             attempt=attempt,
             normalized=normalized,
+            partition_intent=strategy.build_partition_intent(normalized),
         )
 
     def replan_request(
@@ -191,7 +207,7 @@ class ModelPartitionOrchestrationAgent:
             directive,
             attempt=attempt,
             normalized=normalized,
-            partition_intent=(intent if normalized.plan_type == "training" else None),
+            partition_intent=intent,
         )
 
     def _replan(
@@ -202,7 +218,7 @@ class ModelPartitionOrchestrationAgent:
         *,
         attempt: int,
         normalized: NormalizedPartitionRequest,
-        partition_intent: PartitionIntent | None = None,
+        partition_intent: PartitionIntent,
     ) -> PartitionExecutionPlan:
         if attempt > self.policy.max_replan_attempts:
             return self._with_replan_metadata(
@@ -235,6 +251,7 @@ class ModelPartitionOrchestrationAgent:
                 | set(directive.excluded_candidate_splits)
             ),
             memory_limits=dict(directive.memory_limits),
+            normalized=normalized,
             partition_intent=partition_intent,
         )
         return self._with_replan_metadata(
@@ -249,7 +266,8 @@ class ModelPartitionOrchestrationAgent:
         excluded_links: set[tuple[str, str]] | None = None,
         excluded_splits: set[tuple[int, ...]] | None = None,
         memory_limits: dict[str, int] | None = None,
-        partition_intent: PartitionIntent | None = None,
+        normalized: NormalizedPartitionRequest,
+        partition_intent: PartitionIntent,
     ) -> PartitionExecutionPlan:
         excluded_devices = excluded_devices or set()
         excluded_links = excluded_links or set()
@@ -267,14 +285,17 @@ class ModelPartitionOrchestrationAgent:
 
         split_count = len(participants) - 1
         split_options = combinations(range(1, len(round_plan.layers)), split_count)
+        candidate_intent = (
+            partition_intent if normalized.plan_type == "training" else None
+        )
         candidate_splits = tuple(
             split_points
             for split_points in split_options
             if split_points not in excluded_splits
             and (
-                partition_intent is None
+                candidate_intent is None
                 or not any(
-                    boundary in partition_intent.forbidden_split_boundaries
+                    boundary in candidate_intent.forbidden_split_boundaries
                     for boundary in split_points
                 )
             )
@@ -286,19 +307,32 @@ class ModelPartitionOrchestrationAgent:
                 split_points,
                 excluded_links=excluded_links,
                 memory_limits=memory_limits,
-                partition_intent=partition_intent,
+                partition_intent=candidate_intent,
             )
             for split_points in candidate_splits
         )
-        ordered = tuple(
-            sorted(candidates, key=lambda item: (not item.valid, item.score, item.split_points))
+        context = RankingContext(
+            request=normalized,
+            intent=partition_intent,
+            strategy_version=partition_intent.strategy_version,
         )
-        selected = next((candidate for candidate in ordered if candidate.valid), None)
+        selection = self._candidate_selector.select(context, candidates)
+        candidates_by_key = {
+            candidate_key(candidate, context.strategy_version): candidate
+            for candidate in candidates
+        }
+        ordered = tuple(
+            candidates_by_key[entry.candidate_key]
+            for entry in selection.entries
+            if entry.candidate_key in candidates_by_key
+        )
+        selected = candidates_by_key.get(selection.final_selected_candidate_key)
         if selected is None:
             return self._safe_failure(
                 round_plan,
                 ("no_feasible_partition",),
                 alternative_candidates=ordered,
+                selection=selection,
             )
         alternatives = tuple(candidate for candidate in ordered if candidate != selected)
         return PartitionExecutionPlan(
@@ -316,6 +350,7 @@ class ModelPartitionOrchestrationAgent:
             valid=True,
             human_review_required=False,
             errors=(),
+            selection=selection,
         )
 
     @staticmethod
@@ -344,6 +379,10 @@ class ModelPartitionOrchestrationAgent:
             "strategy_id": intent.strategy_id,
             "strategy_version": intent.strategy_version,
             "policy_version": self.policy.version,
+            "signature_version": "partition-selection-v2",
+            "selection": (
+                None if plan.selection is None else plan.selection.signature_provenance()
+            ),
             "selected_candidate": (
                 None
                 if plan.selected_candidate is None
@@ -387,6 +426,10 @@ class ModelPartitionOrchestrationAgent:
             "strategy_id": previous_plan.strategy_id,
             "strategy_version": previous_plan.strategy_version,
             "policy_version": self.policy.version,
+            "signature_version": "partition-selection-v2",
+            "selection": (
+                None if plan.selection is None else plan.selection.signature_provenance()
+            ),
             "selected_candidate": (
                 None
                 if plan.selected_candidate is None
@@ -742,6 +785,7 @@ class ModelPartitionOrchestrationAgent:
         errors: tuple[str, ...],
         *,
         alternative_candidates: Iterable[PartitionCandidate] = (),
+        selection=None,
     ) -> PartitionExecutionPlan:
         return PartitionExecutionPlan.safe_failure(
             plan_id=self._plan_id_factory(),
@@ -751,4 +795,5 @@ class ModelPartitionOrchestrationAgent:
             policy_version=self.policy.version,
             errors=errors,
             alternative_candidates=tuple(alternative_candidates),
+            selection=selection,
         )

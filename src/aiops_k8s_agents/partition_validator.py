@@ -356,6 +356,10 @@ class PartitionPlanValidator:
             "strategy_id": plan.strategy_id,
             "strategy_version": plan.strategy_version,
             "policy_version": plan.policy_version,
+            "signature_version": "partition-selection-v2",
+            "selection": (
+                None if plan.selection is None else plan.selection.signature_provenance()
+            ),
             "selected_candidate": (
                 None
                 if plan.selected_candidate is None

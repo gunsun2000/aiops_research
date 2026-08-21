@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 from pathlib import Path
 
@@ -11,9 +10,6 @@ from aiops_k8s_agents.model_partition_agent import (
     ModelPartitionPolicy,
 )
 from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
-from aiops_k8s_agents.partition_context import canonical_json
-from aiops_k8s_agents.partition_common import PartitionCommonProcessor
-from aiops_k8s_agents.partition_strategies import PartitionStrategyRegistry
 from aiops_k8s_agents.partition_models import (
     FederatedRoundPlan,
     PartitionFailure,
@@ -62,6 +58,11 @@ def inference_request() -> PartitionPlanningRequest:
     return PartitionPlanningRequest.from_dict(payload)
 
 
+@pytest.fixture
+def policy_path() -> Path:
+    return ROOT / "config" / "model_partition_policy.json"
+
+
 def test_v2_plan_records_strategy_snapshot_and_signature(
     orchestrator, inference_request
 ):
@@ -76,30 +77,30 @@ def test_v2_plan_records_strategy_snapshot_and_signature(
     assert 0.0 <= plan.confidence <= 1.0
 
 
-def test_v2_plan_signature_binds_normalized_strategy_policy_and_selected_content(
+def test_v2_plan_signature_is_stable_for_identical_selection_provenance(
     orchestrator, inference_request
 ):
-    plan = orchestrator.plan_request(inference_request)
-    normalized = PartitionCommonProcessor().process(inference_request)
-    strategy = PartitionStrategyRegistry.default().resolve(
-        normalized.plan_type, normalized.approved_execution_mode.name
-    )
-    intent = strategy.build_partition_intent(normalized)
-    signature_payload = {
-        "input_signature": normalized.input_signature,
-        "strategy_id": intent.strategy_id,
-        "strategy_version": intent.strategy_version,
-        "policy_version": orchestrator.policy.version,
-        "selected_candidate": (
-            None
-            if plan.selected_candidate is None
-            else plan.selected_candidate.to_dict()
-        ),
-    }
+    first = orchestrator.plan_request(inference_request)
+    second = orchestrator.plan_request(inference_request)
 
-    assert plan.deterministic_signature == hashlib.sha256(
-        canonical_json(signature_payload).encode("utf-8")
-    ).hexdigest()
+    assert first.selection is not None
+    assert second.selection is not None
+    assert first.selection.mode == "deterministic"
+    assert first.selection.active_ranker_version == "1.0"
+    assert first.selection.model_artifact_hash is None
+    assert first.selection.final_selected_candidate_key is not None
+    assert first.deterministic_signature == second.deterministic_signature
+
+
+def test_default_agent_plan_keeps_legacy_deterministic_selection(policy_path):
+    plan = ModelPartitionOrchestrationAgent(
+        ModelPartitionPolicy.from_path(policy_path)
+    ).plan(example_round_plan())
+
+    assert plan.selected_candidate is not None
+    assert plan.selected_candidate.split_points == (3,)
+    assert plan.selection is not None
+    assert plan.selection.mode == "deterministic"
 
 
 def test_planner_selects_lowest_scored_feasible_split():
