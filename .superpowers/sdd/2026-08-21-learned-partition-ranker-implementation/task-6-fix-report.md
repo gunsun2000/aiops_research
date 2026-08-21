@@ -49,3 +49,27 @@ Implemented the Task 6 review fixes for production observed runtime outcome prov
 ### Commit
 
 - Re-review implementation and tests: `9358ec27944b985702b8e9942e945460c7813b95` (`Authenticate observed feature inputs`).
+
+## Final Task 6 Fix Round
+
+- Defined the observed committed-version directory contract: required `report.json`, `runtime_outcome.json`, `normalized_request.json`, `partition_intent.json`, `scheduling_handoff.json`, and `authenticated_manifest.json`; optional `candidate_ranking.json`, `runtime_feedback.json`, and `repartition_directive.json`.
+- Verification validates the exact on-disk file set before observed `RankingContext` creation and feature extraction. It signs every allowed JSON content file; the self-authenticating manifest is required on disk and protected by its HMAC rather than recursively digested.
+- Added the `versions/1/unexpected.json` regression test, which now produces no observed row with `authenticated_manifest_mismatch`.
+
+### Changed Files
+
+- `src/aiops_k8s_agents/partition_repository.py`
+- `tests/test_partition_learning_dataset.py`
+- `tests/test_partition_service.py`
+
+### Verification
+
+- Red: `python -m pytest tests/test_partition_learning_dataset.py -q -k unexpected_version_file_before_features` - 1 failed before the allowed-file validation.
+- Green: `python -m pytest tests/test_partition_service.py tests/test_partition_learning_dataset.py -q -k "unexpected_version_file_before_features or observed_runtime_outcome_is_transactional_and_dataset_eligible or tampered_normalized_request_before_features or tampered_partition_intent_before_features"` - 4 passed.
+- Focused: `python -m pytest tests/test_partition_service.py tests/test_partition_repository.py tests/test_partition_feedback.py tests/test_model_partition_cli.py tests/test_partition_learning_dataset.py tests/test_partition_evaluator.py -q` - 123 passed.
+- Full: `python -m pytest -q` - 940 passed, 1 third-party FastAPI/Starlette deprecation warning.
+- `git diff --check` passed before commit.
+
+### Commit
+
+- Final implementation and tests: `c9bc069c7b621b4316f0e535ece1165e95ad5444` (`Reject unexpected observed artifact files`).
