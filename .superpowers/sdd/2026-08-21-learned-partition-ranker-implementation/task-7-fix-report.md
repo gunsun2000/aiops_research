@@ -51,3 +51,43 @@ also passed.
 - Recovery, AIOpsLab, AutoGen, UI, CLI, and deterministic partition behavior
   were not modified.
 - No push or merge was performed.
+
+## Re-review Closure: Registry Root Enumeration Boundary
+
+- Implementation and regression-test commit: `070e543c8e8e37f6dd59d35d8c2983a08a69a0f4`
+- Production files: `src/aiops_k8s_agents/partition_ranker_repository.py` and
+  `src/aiops_k8s_agents/control_plane_web.py`
+- Test file: `tests/test_model_partition_api.py`
+
+`PartitionRankerRepository.collection_model_versions()` now validates and
+canonicalizes the configured registry root before it enumerates any child
+entries. It enumerates the validated resolved root only, rejects a
+symlink/junction/reparse-point root through the existing repository boundary,
+and rejects linked child directories. The control-plane collection endpoint no
+longer calls `ranker_registry_root.iterdir()` directly.
+
+The Windows-friendly regression models a registry root detected as a reparse
+point while it contains an external-looking directory name. The endpoint now
+returns a generic `422 invalid_model_artifact` response before collection and
+does not emit the directory name in `integrity_errors` or any response field.
+This test failed before the boundary change with `200` and an exposed model
+version, then passed after the change.
+
+### Verification
+
+```text
+python -m pytest tests/test_model_partition_api.py \
+  tests/test_control_plane_web.py \
+  tests/test_partition_ranker_repository.py -q
+
+85 passed, 1 warning in 10.40s
+
+python -m pytest -q
+
+958 passed, 1 warning in 59.72s
+```
+
+The sole warning is the existing FastAPI/TestClient Starlette deprecation
+warning. `python -m py_compile` for both modified production modules and
+`git diff --check` also completed successfully. No push or merge was
+performed.
