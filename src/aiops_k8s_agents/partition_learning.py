@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import random
 from collections import Counter
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
-from math import isfinite
+from datetime import datetime, timezone
+from math import isfinite, sqrt
 from pathlib import Path
 from typing import Any
 
@@ -13,6 +15,7 @@ from aiops_k8s_agents.partition_common import NormalizedPartitionRequest
 from aiops_k8s_agents.partition_context import WorkloadForecast, canonical_json
 from aiops_k8s_agents.partition_evaluator import ObservedPartitionMetrics
 from aiops_k8s_agents.partition_features import (
+    FEATURE_ORDER,
     FEATURE_SCHEMA_VERSION,
     candidate_key,
     extract_partition_features,
@@ -28,6 +31,15 @@ from aiops_k8s_agents.partition_models import (
     ResourceDevice,
 )
 from aiops_k8s_agents.partition_ranking import RankingContext
+from aiops_k8s_agents.partition_ranker_repository import (
+    MODEL_ARTIFACT_SCHEMA_VERSION,
+    PartitionRankerModelArtifact,
+    PartitionRankerRepository,
+)
+from aiops_k8s_agents.partition_ranking import (
+    DEFAULT_LEARNED_RANKER_GUARD_POLICY,
+    LearnedRewardRanker,
+)
 from aiops_k8s_agents.partition_strategies import PartitionIntent
 
 
@@ -89,6 +101,57 @@ class PartitionRankingDatasetSummary:
     unique_snapshot_count: int
     lineage_group_count: int
     manifest_path: Path
+
+
+@dataclass(frozen=True)
+class PartitionRankingDataset:
+    rows: tuple[PartitionRankingTrainingRow, ...]
+    path: Path
+    manifest_path: Path
+    dataset_hash: str
+    scope: str
+
+
+@dataclass(frozen=True)
+class PartitionRankingGroupSplit:
+    train: tuple[PartitionRankingTrainingRow, ...]
+    test: tuple[PartitionRankingTrainingRow, ...]
+
+
+@dataclass(frozen=True)
+class PartitionRankerTrainingSummary:
+    model_version: str
+    artifact_path: Path
+    artifact: PartitionRankerModelArtifact
+    validation_metrics: dict[str, float]
+    deployment_eligible: bool
+
+
+@dataclass(frozen=True)
+class PartitionRankerEvaluation:
+    scope: str
+    sample_count: int
+    group_count: int
+    metrics: dict[str, float]
+    deployment_eligible: bool
+
+
+@dataclass(frozen=True)
+class _FeatureNormalizer:
+    mean: tuple[float, ...]
+    scale: tuple[float, ...]
+    ranges: dict[str, tuple[float, float]]
+
+    def transform(self, rows: Sequence[PartitionRankingTrainingRow]) -> list[list[float]]:
+        return [
+            [
+                (row.features[name] - mean) / scale
+                for name, mean, scale in zip(
+                    FEATURE_ORDER, self.mean, self.scale, strict=True
+                )
+            ]
+            for row in rows
+        ]
 
 
 @dataclass(frozen=True)
@@ -213,6 +276,397 @@ def write_partition_ranking_dataset(
         unique_snapshot_count=manifest["unique_snapshot_count"],
         lineage_group_count=manifest["lineage_group_count"],
         manifest_path=manifest_path,
+    )
+
+
+def group_key(row: PartitionRankingTrainingRow) -> str:
+    """Return the stable lineage key used to prevent train/test leakage."""
+    return hashlib.sha256(
+        canonical_json(
+            {
+                "job_id": row.job_id,
+                "input_snapshot_hash": row.input_snapshot_hash,
+                "lineage_root": row.runtime_outcome_ref.split("/versions/", 1)[0],
+            }
+        ).encode("utf-8")
+    ).hexdigest()
+
+
+def group_holdout_split(
+    rows: Sequence[PartitionRankingTrainingRow], *, test_fraction: float = 0.2, seed: int = 17
+) -> PartitionRankingGroupSplit:
+    if isinstance(test_fraction, bool) or not isinstance(test_fraction, (int, float)):
+        raise PartitionContractError("invalid_split", "test_fraction must be numeric")
+    if not 0.0 < float(test_fraction) < 1.0:
+        raise PartitionContractError("invalid_split", "test_fraction must be between 0 and 1")
+    if isinstance(seed, bool) or not isinstance(seed, int):
+        raise PartitionContractError("invalid_split", "seed must be an integer")
+    grouped: dict[str, list[PartitionRankingTrainingRow]] = {}
+    for row in rows:
+        grouped.setdefault(group_key(row), []).append(row)
+    if len(grouped) < 2:
+        raise PartitionContractError(
+            "insufficient_training_data", "at least two independent lineage groups are required"
+        )
+    group_ids = sorted(grouped)
+    random.Random(seed).shuffle(group_ids)
+    test_count = min(len(group_ids) - 1, max(1, round(len(group_ids) * float(test_fraction))))
+    test_ids = frozenset(group_ids[:test_count])
+    train = tuple(row for row in rows if group_key(row) not in test_ids)
+    test = tuple(row for row in rows if group_key(row) in test_ids)
+    if not train or not test:
+        raise PartitionContractError("insufficient_training_data", "group split must retain train and test rows")
+    return PartitionRankingGroupSplit(train=train, test=test)
+
+
+def train_partition_ranker(
+    dataset_path: str | Path,
+    *,
+    registry_root: str | Path,
+    model_version: str,
+    seed: int = 17,
+    alpha: float = 1.0,
+) -> PartitionRankerTrainingSummary:
+    """Fit an offline Ridge reward regressor and export its runtime-safe JSON contract."""
+    if isinstance(alpha, bool) or not isinstance(alpha, (int, float)) or not isfinite(float(alpha)):
+        raise PartitionContractError("invalid_training_parameter", "alpha must be finite and positive")
+    if float(alpha) <= 0.0:
+        raise PartitionContractError("invalid_training_parameter", "alpha must be finite and positive")
+    dataset = load_partition_ranking_dataset(dataset_path)
+    split = group_holdout_split(dataset.rows, seed=seed)
+    normalizer = fit_feature_normalizer(split.train)
+    try:
+        from sklearn.linear_model import Ridge
+    except ImportError as exc:
+        raise PartitionContractError(
+            "ml_dependency_missing",
+            "scikit-learn is required only for training; install aiops-k8s-agents[ml]",
+        ) from exc
+    model = Ridge(alpha=float(alpha)).fit(
+        normalizer.transform(split.train), [row.target_reward for row in split.train]
+    )
+    coefficients = tuple(float(value) for value in model.coef_)
+    intercept = float(model.intercept_)
+    predictions = _linear_predictions(split.test, normalizer, coefficients, intercept)
+    metrics = _evaluation_metrics(split.test, predictions)
+    deployment_eligible = _quality_eligible(dataset.scope, dataset.rows, metrics)
+    metrics.update(
+        {
+            "quality_eligible": float(deployment_eligible),
+            "deployment_eligible": float(deployment_eligible),
+        }
+    )
+    artifact = PartitionRankerModelArtifact(
+        schema_version=MODEL_ARTIFACT_SCHEMA_VERSION,
+        model_type="ridge_reward_regressor",
+        model_version=model_version,
+        feature_schema_version=FEATURE_SCHEMA_VERSION,
+        trained_at=datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        training_dataset_hash=dataset.dataset_hash,
+        training_scope=dataset.scope,
+        sample_count=len(dataset.rows),
+        group_count=len({group_key(row) for row in dataset.rows}),
+        feature_order=FEATURE_ORDER,
+        feature_mean=normalizer.mean,
+        feature_scale=normalizer.scale,
+        coefficients=coefficients,
+        intercept=intercept,
+        training_feature_ranges=normalizer.ranges,
+        validation_metrics=metrics,
+        confidence_policy={"base_confidence": 0.95 if deployment_eligible else 0.0},
+        artifact_hash="",
+    ).with_computed_hash()
+    artifact_path = PartitionRankerRepository(registry_root).save(artifact)
+    return PartitionRankerTrainingSummary(
+        model_version=artifact.model_version,
+        artifact_path=artifact_path,
+        artifact=artifact,
+        validation_metrics=metrics,
+        deployment_eligible=deployment_eligible,
+    )
+
+
+def evaluate_partition_ranker(
+    dataset_path: str | Path, artifact: PartitionRankerModelArtifact
+) -> PartitionRankerEvaluation:
+    """Evaluate one dataset scope with pure-Python inference; scopes are never aggregated."""
+    artifact.verify_hash()
+    if artifact.model_type != "ridge_reward_regressor":
+        raise PartitionContractError("invalid_model_artifact", "artifact must be a ridge reward regressor")
+    dataset = load_partition_ranking_dataset(dataset_path)
+    ranker = LearnedRewardRanker(artifact)
+    predictions = [ranker.predict(row.features)[0] for row in dataset.rows]
+    metrics = _evaluation_metrics(dataset.rows, predictions)
+    deployment_eligible = (
+        dataset.scope == "observed"
+        and artifact.training_scope == "observed"
+        and artifact.validation_metrics.get("deployment_eligible") == 1.0
+    )
+    metrics["deployment_eligible"] = float(deployment_eligible)
+    return PartitionRankerEvaluation(
+        scope=dataset.scope,
+        sample_count=len(dataset.rows),
+        group_count=len({group_key(row) for row in dataset.rows}),
+        metrics=metrics,
+        deployment_eligible=deployment_eligible,
+    )
+
+
+def load_partition_ranking_dataset(dataset_path: str | Path) -> PartitionRankingDataset:
+    path = Path(dataset_path).expanduser().resolve()
+    manifest_path = Path(f"{path}.manifest.json")
+    try:
+        payload = path.read_bytes()
+        manifest = _read_json(manifest_path)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        raise PartitionContractError(
+            "invalid_dataset_manifest", "dataset and manifest must be readable JSON artifacts"
+        ) from exc
+    digest = hashlib.sha256(payload).hexdigest()
+    _validate_dataset_manifest(manifest, digest)
+    try:
+        rows = tuple(
+            _training_row_from_dict(json.loads(line), index)
+            for index, line in enumerate(payload.decode("utf-8").splitlines(), start=1)
+            if line.strip()
+        )
+    except PartitionContractError:
+        raise
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise PartitionContractError(
+            "invalid_dataset_row", "dataset JSONL contains an invalid training row"
+        ) from exc
+    if not rows:
+        raise PartitionContractError("insufficient_training_data", "dataset must contain training rows")
+    _validate_dataset_rows(rows, manifest)
+    return PartitionRankingDataset(
+        rows=rows,
+        path=path,
+        manifest_path=manifest_path,
+        dataset_hash=digest,
+        scope=str(manifest["scope"]),
+    )
+
+
+def fit_feature_normalizer(rows: Sequence[PartitionRankingTrainingRow]) -> _FeatureNormalizer:
+    if not rows:
+        raise PartitionContractError("insufficient_training_data", "training split must not be empty")
+    means: list[float] = []
+    scales: list[float] = []
+    ranges: dict[str, tuple[float, float]] = {}
+    for name in FEATURE_ORDER:
+        values = [row.features[name] for row in rows]
+        mean = sum(values) / len(values)
+        variance = sum((value - mean) ** 2 for value in values) / len(values)
+        means.append(mean)
+        scales.append(sqrt(variance) if variance > 0.0 else 1.0)
+        ranges[name] = (min(values), max(values))
+    return _FeatureNormalizer(tuple(means), tuple(scales), ranges)
+
+
+def _validate_dataset_manifest(manifest: Mapping[str, Any], digest: str) -> None:
+    if manifest.get("schema_version") != DATASET_SCHEMA_VERSION:
+        raise PartitionContractError("dataset_schema_mismatch", "dataset manifest schema is unsupported")
+    scope = manifest.get("scope")
+    if scope not in {"observed", "predicted", "synthetic"}:
+        raise PartitionContractError("dataset_scope_mismatch", "dataset scope is unsupported")
+    if manifest.get("dataset_sha256") != digest:
+        raise PartitionContractError("dataset_hash_mismatch", "dataset hash does not match manifest")
+    if manifest.get("selected_candidates_only") is not True:
+        raise PartitionContractError(
+            "invalid_dataset_manifest", "dataset must contain selected candidates only"
+        )
+    if manifest.get("eligible_for_real_claims") is not (scope == "observed"):
+        raise PartitionContractError(
+            "dataset_scope_mismatch", "real-claim eligibility must match dataset scope"
+        )
+
+
+def _training_row_from_dict(payload: object, index: int) -> PartitionRankingTrainingRow:
+    fields = _mapping(payload, f"dataset row {index}")
+    try:
+        features = _finite_mapping(fields.get("features"), f"dataset row {index}.features")
+    except (TypeError, ValueError) as exc:
+        raise PartitionContractError(
+            "nonfinite_features", "dataset feature values must be finite"
+        ) from exc
+    return PartitionRankingTrainingRow(
+        row_id=_text(fields.get("row_id"), "row_id"),
+        job_id=_text(fields.get("job_id"), "job_id"),
+        plan_id=_text(fields.get("plan_id"), "plan_id"),
+        plan_version=_positive_int(fields.get("plan_version"), "plan_version"),
+        candidate_key=_text(fields.get("candidate_key"), "candidate_key"),
+        input_snapshot_hash=_text(fields.get("input_snapshot_hash"), "input_snapshot_hash"),
+        policy_version=_text(fields.get("policy_version"), "policy_version"),
+        strategy_version=_text(fields.get("strategy_version"), "strategy_version"),
+        feature_schema_version=_text(fields.get("feature_schema_version"), "feature_schema_version"),
+        features=features,
+        target_reward=_finite_number(fields.get("target_reward"), "target_reward"),
+        reward_components=_finite_mapping(fields.get("reward_components"), "reward_components"),
+        evidence_level=_text(fields.get("evidence_level"), "evidence_level"),
+        evidence_source=_text(fields.get("evidence_source"), "evidence_source"),
+        observed_at=str(fields.get("observed_at") or ""),
+        selected_by=_text(fields.get("selected_by"), "selected_by"),
+        selection_probability=(
+            None
+            if fields.get("selection_probability") is None
+            else _finite_number(fields.get("selection_probability"), "selection_probability")
+        ),
+        runtime_outcome_ref=_text(fields.get("runtime_outcome_ref"), "runtime_outcome_ref"),
+    )
+
+
+def _validate_dataset_rows(
+    rows: Sequence[PartitionRankingTrainingRow], manifest: Mapping[str, Any]
+) -> None:
+    expected_row_count = manifest.get("row_count")
+    if expected_row_count != len(rows):
+        raise PartitionContractError("invalid_dataset_manifest", "manifest row count does not match JSONL")
+    scope = str(manifest["scope"])
+    for row in rows:
+        if row.feature_schema_version != FEATURE_SCHEMA_VERSION or set(row.features) != set(FEATURE_ORDER):
+            raise PartitionContractError(
+                "feature_schema_mismatch", "dataset row features do not match partition-feature-v1"
+            )
+        if not -1.0 <= row.target_reward <= 1.0:
+            raise PartitionContractError("invalid_dataset_row", "target reward must be between -1 and 1")
+        if scope == "observed":
+            if (
+                row.evidence_level != "observed"
+                or not row.observed_at.strip()
+                or _non_runtime_source(row.evidence_source)
+            ):
+                raise PartitionContractError(
+                    "dataset_scope_mismatch", "observed dataset requires runtime observed evidence"
+                )
+        elif row.evidence_level == "observed":
+            raise PartitionContractError(
+                "dataset_scope_mismatch", "non-observed datasets must not contain observed rows"
+            )
+    counts = {
+        "unique_job_count": len({row.job_id for row in rows}),
+        "unique_snapshot_count": len({row.input_snapshot_hash for row in rows}),
+        "lineage_group_count": len({group_key(row) for row in rows}),
+    }
+    for name, actual in counts.items():
+        if manifest.get(name) != actual:
+            raise PartitionContractError(
+                "invalid_dataset_manifest", f"manifest {name} does not match JSONL"
+            )
+
+
+def _linear_predictions(
+    rows: Sequence[PartitionRankingTrainingRow],
+    normalizer: _FeatureNormalizer,
+    coefficients: Sequence[float],
+    intercept: float,
+) -> list[float]:
+    return [
+        max(-1.0, min(1.0, intercept + sum(
+            coefficient * value
+            for coefficient, value in zip(coefficients, vector, strict=True)
+        )))
+        for vector in normalizer.transform(rows)
+    ]
+
+
+def _evaluation_metrics(
+    rows: Sequence[PartitionRankingTrainingRow], predictions: Sequence[float]
+) -> dict[str, float]:
+    if len(rows) != len(predictions) or not rows:
+        raise PartitionContractError("invalid_evaluation", "evaluation requires one finite prediction per row")
+    actual = [row.target_reward for row in rows]
+    predicted = [float(value) for value in predictions]
+    if not all(isfinite(value) for value in predicted):
+        raise PartitionContractError("invalid_evaluation", "evaluation predictions must be finite")
+    errors = [abs(expected - value) for expected, value in zip(actual, predicted, strict=True)]
+    selection = _candidate_selection_metrics(rows, predicted)
+    return {
+        "holdout_mae": sum(errors) / len(errors),
+        "mae": sum(errors) / len(errors),
+        "rmse": sqrt(sum(error * error for error in errors) / len(errors)),
+        "spearman_correlation": _spearman(actual, predicted),
+        **selection,
+    }
+
+
+def _candidate_selection_metrics(
+    rows: Sequence[PartitionRankingTrainingRow], predictions: Sequence[float]
+) -> dict[str, float]:
+    groups: dict[str, list[tuple[PartitionRankingTrainingRow, float]]] = {}
+    for row, prediction in zip(rows, predictions, strict=True):
+        groups.setdefault(group_key(row), []).append((row, prediction))
+    comparable = [group for group in groups.values() if len(group) >= 2]
+    if not comparable:
+        return {
+            "candidate_selection_agreement": 0.0,
+            "candidate_selection_agreement_available": 0.0,
+            "baseline_regret": 0.0,
+            "baseline_regret_available": 0.0,
+            "ranking_group_count": 0.0,
+        }
+    agreement = 0
+    regrets: list[float] = []
+    for group in comparable:
+        learned = max(group, key=lambda item: (item[1], item[0].candidate_key))[0]
+        baseline = min(
+            group,
+            key=lambda item: (item[0].features["baseline_score"], item[0].candidate_key),
+        )[0]
+        agreement += learned.candidate_key == baseline.candidate_key
+        regrets.append(max(item[0].target_reward for item in group) - baseline.target_reward)
+    return {
+        "candidate_selection_agreement": agreement / len(comparable),
+        "candidate_selection_agreement_available": 1.0,
+        "baseline_regret": sum(regrets) / len(regrets),
+        "baseline_regret_available": 1.0,
+        "ranking_group_count": float(len(comparable)),
+    }
+
+
+def _spearman(left: Sequence[float], right: Sequence[float]) -> float:
+    if len(left) < 2:
+        return 0.0
+    left_ranks = _average_ranks(left)
+    right_ranks = _average_ranks(right)
+    left_mean = sum(left_ranks) / len(left_ranks)
+    right_mean = sum(right_ranks) / len(right_ranks)
+    covariance = sum(
+        (first - left_mean) * (second - right_mean)
+        for first, second in zip(left_ranks, right_ranks, strict=True)
+    )
+    left_variance = sum((value - left_mean) ** 2 for value in left_ranks)
+    right_variance = sum((value - right_mean) ** 2 for value in right_ranks)
+    if left_variance == 0.0 or right_variance == 0.0:
+        return 0.0
+    return covariance / sqrt(left_variance * right_variance)
+
+
+def _average_ranks(values: Sequence[float]) -> list[float]:
+    ranked = sorted(enumerate(values), key=lambda item: item[1])
+    result = [0.0] * len(values)
+    start = 0
+    while start < len(ranked):
+        end = start + 1
+        while end < len(ranked) and ranked[end][1] == ranked[start][1]:
+            end += 1
+        rank = (start + 1 + end) / 2.0
+        for index, _ in ranked[start:end]:
+            result[index] = rank
+        start = end
+    return result
+
+
+def _quality_eligible(
+    scope: str, rows: Sequence[PartitionRankingTrainingRow], metrics: Mapping[str, float]
+) -> bool:
+    policy = DEFAULT_LEARNED_RANKER_GUARD_POLICY
+    return (
+        scope == "observed"
+        and len(rows) >= policy.minimum_observed_samples
+        and len({group_key(row) for row in rows}) >= policy.minimum_independent_groups
+        and metrics["holdout_mae"] <= policy.maximum_holdout_mae
+        and metrics["spearman_correlation"] >= policy.minimum_spearman_correlation
     )
 
 
