@@ -315,6 +315,7 @@ class ModelPartitionOrchestrationAgent:
             request=normalized,
             intent=partition_intent,
             strategy_version=partition_intent.strategy_version,
+            workload_forecast=normalized.workload_forecast,
         )
         selection = self._candidate_selector.select(context, candidates)
         candidates_by_key = {

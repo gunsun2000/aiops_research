@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import asdict, dataclass
 
-from aiops_k8s_agents.partition_context import canonical_json
+from aiops_k8s_agents.partition_context import WorkloadForecast, canonical_json
 from aiops_k8s_agents.partition_coordination import PartitionPlanningRequest
 from aiops_k8s_agents.partition_models import (
     ApprovedExecutionMode,
@@ -32,6 +32,7 @@ class NormalizedPartitionRequest:
     input_signature: str
     legacy_input: bool
     workload_forecast_available: bool = False
+    workload_forecast: WorkloadForecast | None = None
 
 
 class PartitionCommonProcessor:
@@ -114,6 +115,7 @@ class PartitionCommonProcessor:
             ).hexdigest(),
             legacy_input=request.legacy_input,
             workload_forecast_available=context.workload_forecast is not None,
+            workload_forecast=context.workload_forecast,
         )
 
     @staticmethod

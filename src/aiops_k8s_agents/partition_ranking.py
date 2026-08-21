@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass, replace
 from typing import Protocol, Sequence
 
 from aiops_k8s_agents.partition_common import NormalizedPartitionRequest
-from aiops_k8s_agents.partition_context import canonical_json
+from aiops_k8s_agents.partition_context import WorkloadForecast
+from aiops_k8s_agents.partition_features import candidate_key
 from aiops_k8s_agents.partition_models import PartitionCandidate
 from aiops_k8s_agents.partition_ranking_models import (
     CandidateRankingEntry,
@@ -20,6 +20,7 @@ class RankingContext:
     request: NormalizedPartitionRequest
     intent: PartitionIntent
     strategy_version: str
+    workload_forecast: WorkloadForecast | None = None
 
 
 class CandidateRanker(Protocol):
@@ -81,15 +82,6 @@ class GuardedCandidateSelector:
             fallback_used=True,
             fallback_reason="final_selection_not_rank_eligible",
         )
-
-
-def candidate_key(candidate: PartitionCandidate, strategy_version: str) -> str:
-    payload = {
-        "candidate": candidate.to_dict(),
-        "strategy_version": strategy_version,
-    }
-    digest = hashlib.sha256(canonical_json(payload).encode("utf-8")).hexdigest()
-    return f"partition-candidate-v1:{digest}"
 
 
 def selection_from_deterministic_order(

@@ -1,0 +1,102 @@
+from __future__ import annotations
+
+import json
+from dataclasses import replace
+
+import pytest
+
+from aiops_k8s_agents.partition_features import FEATURE_ORDER, FEATURE_SCHEMA_VERSION
+from aiops_k8s_agents.partition_models import PartitionContractError
+from aiops_k8s_agents.partition_ranker_repository import (
+    PartitionRankerModelArtifact,
+    PartitionRankerRepository,
+)
+
+
+@pytest.fixture
+def model_artifact() -> PartitionRankerModelArtifact:
+    return PartitionRankerModelArtifact(
+        schema_version="partition-ranker-model-v1",
+        model_type="linear-regression",
+        model_version="ranker-2026-08-21",
+        feature_schema_version=FEATURE_SCHEMA_VERSION,
+        trained_at="2026-08-21T00:00:00Z",
+        training_dataset_hash="a" * 64,
+        training_scope="offline-evaluation",
+        sample_count=12,
+        group_count=3,
+        feature_order=FEATURE_ORDER,
+        feature_mean=tuple(float(index) for index, _ in enumerate(FEATURE_ORDER)),
+        feature_scale=tuple(1.0 for _ in FEATURE_ORDER),
+        coefficients=tuple(0.1 for _ in FEATURE_ORDER),
+        intercept=0.25,
+        training_feature_ranges={name: (0.0, 100.0) for name in FEATURE_ORDER},
+        validation_metrics={"mae": 0.1},
+        confidence_policy={"minimum_confidence": 0.8},
+        artifact_hash="",
+    )
+
+
+def test_repository_saves_and_loads_a_verified_model_artifact(tmp_path, model_artifact):
+    repository = PartitionRankerRepository(tmp_path)
+
+    path = repository.save(model_artifact)
+    loaded = repository.get(model_artifact.model_version)
+
+    assert path == tmp_path / model_artifact.model_version / "model.json"
+    assert loaded.model_version == model_artifact.model_version
+    assert loaded.feature_order == FEATURE_ORDER
+    assert len(loaded.artifact_hash) == 64
+    loaded.verify_hash()
+
+
+def test_repository_rejects_tampered_model_artifact(tmp_path, model_artifact):
+    repository = PartitionRankerRepository(tmp_path)
+    path = repository.save(model_artifact)
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload["intercept"] = payload["intercept"] + 0.5
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    with pytest.raises(PartitionContractError, match="artifact hash"):
+        repository.get(model_artifact.model_version)
+
+
+def test_artifact_rejects_a_feature_order_that_does_not_match_the_schema(model_artifact):
+    with pytest.raises(PartitionContractError, match="feature order"):
+        replace(model_artifact, feature_order=tuple(reversed(FEATURE_ORDER))).with_computed_hash()
+
+
+def test_artifact_rejects_non_finite_parameters(model_artifact):
+    with pytest.raises(PartitionContractError, match="finite"):
+        replace(model_artifact, intercept=float("nan")).with_computed_hash()
+
+
+def test_artifact_canonicalizes_feature_range_object_order(model_artifact):
+    reversed_ranges = {
+        name: model_artifact.training_feature_ranges[name]
+        for name in reversed(FEATURE_ORDER)
+    }
+
+    artifact = replace(model_artifact, training_feature_ranges=reversed_ranges)
+
+    assert artifact.with_computed_hash().to_dict()["training_feature_ranges"] == {
+        name: [0.0, 100.0] for name in FEATURE_ORDER
+    }
+
+
+def test_repository_rejects_path_traversal_in_model_version(tmp_path, model_artifact):
+    repository = PartitionRankerRepository(tmp_path)
+
+    with pytest.raises(PartitionContractError, match="model_version"):
+        repository.save(replace(model_artifact, model_version="../outside"))
+
+
+def test_repository_lists_verified_artifacts_in_version_order(tmp_path, model_artifact):
+    repository = PartitionRankerRepository(tmp_path)
+    repository.save(replace(model_artifact, model_version="ranker-b"))
+    repository.save(replace(model_artifact, model_version="ranker-a"))
+
+    assert [artifact.model_version for artifact in repository.list()] == [
+        "ranker-a",
+        "ranker-b",
+    ]
