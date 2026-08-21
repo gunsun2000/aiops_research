@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass, replace
 from itertools import combinations
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Callable, Iterable, Mapping
 from uuid import uuid4
 
 from aiops_k8s_agents.partition_common import (
@@ -32,9 +32,11 @@ from aiops_k8s_agents.partition_ranking import (
     CandidateRanker,
     DeterministicPolicyRanker,
     GuardedCandidateSelector,
+    LearnedRankerGuardPolicy,
     RankingContext,
     candidate_key,
 )
+from aiops_k8s_agents.partition_ranking_models import SelectionMode
 from aiops_k8s_agents.partition_strategies import (
     PartitionIntent,
     PartitionStrategyRegistry,
@@ -50,6 +52,7 @@ class ModelPartitionPolicy:
     latency_reference_ms: float
     transfer_reference_bytes: int
     max_replan_attempts: int
+    learned_ranker_guard: LearnedRankerGuardPolicy
 
     @classmethod
     def from_path(cls, path: str | Path) -> ModelPartitionPolicy:
@@ -60,6 +63,11 @@ class ModelPartitionPolicy:
     def from_dict(cls, payload: dict) -> ModelPartitionPolicy:
         weights = payload.get("weights", {})
         normalization = payload.get("normalization", {})
+        guard_payload = payload.get("learned_ranker_guard", {})
+        if not isinstance(guard_payload, Mapping):
+            raise PartitionContractError(
+                "invalid_partition_policy", "learned_ranker_guard must be an object"
+            )
         policy = cls(
             version=str(payload.get("version") or "").strip(),
             latency_weight=float(weights.get("latency", -1)),
@@ -72,6 +80,24 @@ class ModelPartitionPolicy:
                 normalization.get("transfer_reference_bytes", 0)
             ),
             max_replan_attempts=int(payload.get("max_replan_attempts", 0)),
+            learned_ranker_guard=LearnedRankerGuardPolicy(
+                minimum_observed_samples=guard_payload.get(
+                    "minimum_observed_samples", 30
+                ),
+                minimum_independent_groups=guard_payload.get(
+                    "minimum_independent_groups", 5
+                ),
+                maximum_holdout_mae=guard_payload.get("maximum_holdout_mae", 0.25),
+                minimum_spearman_correlation=guard_payload.get(
+                    "minimum_spearman_correlation", 0.30
+                ),
+                minimum_selection_confidence=guard_payload.get(
+                    "minimum_selection_confidence", 0.70
+                ),
+                maximum_ood_feature_ratio=guard_payload.get(
+                    "maximum_ood_feature_ratio", 0.20
+                ),
+            ),
         )
         if not policy.version:
             raise PartitionContractError("invalid_partition_policy", "version is required")
@@ -105,6 +131,9 @@ class ModelPartitionOrchestrationAgent:
         strategy_registry: PartitionStrategyRegistry | None = None,
         legacy_adapter: LegacyFederatedRoundPlanAdapter | None = None,
         ranker: CandidateRanker | None = None,
+        selector: GuardedCandidateSelector | None = None,
+        selection_mode: SelectionMode | str = SelectionMode.DETERMINISTIC,
+        ranker_model_version: str | None = None,
     ) -> None:
         self.policy = policy
         self._plan_id_factory = plan_id_factory or (
@@ -113,9 +142,17 @@ class ModelPartitionOrchestrationAgent:
         self._common_processor = common_processor or PartitionCommonProcessor()
         self._strategy_registry = strategy_registry or PartitionStrategyRegistry.default()
         self._legacy_adapter = legacy_adapter or LegacyFederatedRoundPlanAdapter()
-        self._candidate_selector = GuardedCandidateSelector(
-            ranker or DeterministicPolicyRanker()
+        self._candidate_selector = selector or GuardedCandidateSelector(
+            deterministic=ranker or DeterministicPolicyRanker(),
+            guard_policy=policy.learned_ranker_guard,
         )
+        try:
+            self._selection_mode = SelectionMode(selection_mode)
+        except ValueError as exc:
+            raise PartitionContractError(
+                "invalid_partition_policy", "selection_mode is unsupported"
+            ) from exc
+        self._ranker_model_version = ranker_model_version
 
     def plan(self, round_plan: FederatedRoundPlan) -> PartitionExecutionPlan:
         return self.plan_request(self._legacy_adapter.adapt(round_plan))
@@ -317,7 +354,12 @@ class ModelPartitionOrchestrationAgent:
             strategy_version=partition_intent.strategy_version,
             workload_forecast=normalized.workload_forecast,
         )
-        selection = self._candidate_selector.select(context, candidates)
+        selection = self._candidate_selector.select(
+            context,
+            candidates,
+            self._selection_mode,
+            self._ranker_model_version,
+        )
         candidates_by_key = {
             candidate_key(candidate, context.strategy_version): candidate
             for candidate in candidates

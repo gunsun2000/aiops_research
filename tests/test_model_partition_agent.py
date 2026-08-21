@@ -14,6 +14,8 @@ from aiops_k8s_agents.partition_models import (
     FederatedRoundPlan,
     PartitionFailure,
 )
+from aiops_k8s_agents.partition_ranking import GuardedCandidateSelector
+from aiops_k8s_agents.partition_ranking_models import SelectionMode
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -101,6 +103,32 @@ def test_default_agent_plan_keeps_legacy_deterministic_selection(policy_path):
     assert plan.selected_candidate.split_points == (3,)
     assert plan.selection is not None
     assert plan.selection.mode == "deterministic"
+
+
+def test_agent_passes_shadow_mode_to_the_configured_selector(policy_path):
+    selector = _ModeCapturingSelector()
+    plan = ModelPartitionOrchestrationAgent(
+        ModelPartitionPolicy.from_path(policy_path),
+        selector=selector,
+        selection_mode=SelectionMode.SHADOW,
+        ranker_model_version="ranker-observed-v1",
+    ).plan(example_round_plan())
+
+    assert plan.selection is not None
+    assert selector.mode is SelectionMode.SHADOW
+    assert selector.model_version == "ranker-observed-v1"
+
+
+class _ModeCapturingSelector(GuardedCandidateSelector):
+    def __init__(self) -> None:
+        super().__init__()
+        self.mode: SelectionMode | None = None
+        self.model_version: str | None = None
+
+    def select(self, context, candidates, mode=SelectionMode.DETERMINISTIC, model_version=None):
+        self.mode = mode
+        self.model_version = model_version
+        return super().select(context, candidates, mode, model_version)
 
 
 def test_planner_selects_lowest_scored_feasible_split():
