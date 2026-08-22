@@ -488,3 +488,14 @@ def test_reference_ui_script_builds_catalog_cards_donut_and_detail_actions():
     assert "dashboard-donut" in script
     assert "detail-download-button" in script
     assert "detail-rerun-button" in script
+
+
+def test_partition_mobile_actions_keep_labels_readable():
+    css = _compact(_source(STYLES_CSS))
+
+    assert (
+        ".partition-heading-actions{display:grid;grid-template-columns:1fr1fr}"
+        in css
+    )
+    assert ".partition-heading-actions.status-badge{grid-column:1/-1}" in css
+    assert ".partition-heading-actions.primary-action{grid-column:1/-1" in css
