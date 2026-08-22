@@ -27,8 +27,8 @@ def test_console_has_five_primary_research_views():
     assert "AI Workload Orchestration" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=38" in html
-    assert "app.js?v=38" in html
+    assert "styles.css?v=39" in html
+    assert "app.js?v=39" in html
 
 
 def test_model_partition_workspace_preserves_upstream_approval_boundary():
@@ -57,6 +57,58 @@ def test_model_partition_workspace_preserves_upstream_approval_boundary():
     assert "/api/model-partition/strategies" in script
     assert "/feedback" in script
     assert "Estimated reward" in script
+
+
+def test_model_partition_workspace_exposes_guarded_ranker_controls():
+    html = _source(INDEX_HTML)
+    script = _source(APP_JS)
+
+    for element_id in (
+        "partition-selection-mode",
+        "partition-ranker-model",
+        "partition-ranker-status",
+    ):
+        assert f'id="{element_id}"' in html
+    for label in ("Deterministic", "Shadow", "Learned Guarded"):
+        assert label in html
+    assert "/api/model-partition/rankers" in script
+    assert 'selection_mode:state.partitionSelectionMode' in script
+    assert "ranker_model_version" in script
+    assert "artifact_signing_key" not in html + script
+
+
+def test_model_partition_workspace_explains_ai_selection_without_hiding_baseline():
+    html = _source(INDEX_HTML)
+    script = _source(APP_JS)
+
+    for label in (
+        "Baseline 선택",
+        "AI 추천",
+        "최종 선택",
+        "주요 Feature 기여도",
+        "Shadow 추천은 실행 후보를 변경하지 않습니다",
+    ):
+        assert label in html + script
+    assert "Hard Constraint 제외" in script
+    assert "baseline_selected_candidate_key" in script
+    assert "learned_selected_candidate_key" in script
+    assert "final_selected_candidate_key" in script
+    assert "predicted_reward" in script
+    assert "feature_contributions" in script
+
+
+def test_model_partition_handoff_records_ranker_and_research_provenance():
+    script = _source(APP_JS)
+
+    for field in (
+        "fallback_reason",
+        "model_version",
+        "model_artifact_hash",
+        "independent validator",
+        "observed reward",
+        "dataset inclusion",
+    ):
+        assert field in script
 
 
 def test_orchestration_workspace_has_four_research_stages():

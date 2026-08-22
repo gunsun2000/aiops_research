@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="안전 제어형 4-Agent AIOps 연구 운영 플랫폼" />
   <title>4-Agent AIOps Research Platform</title>
-  <link rel="stylesheet" href="/static/styles.css?v=38" />
-  <script defer src="/static/app.js?v=38"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=39" />
+  <script defer src="/static/app.js?v=39"></script>
   <script defer src="/static/reference-ui.js?v=4"></script>
   <script defer src="/static/bulk-delete-ui.js?v=3"></script>
 </head>
@@ -109,6 +109,13 @@
         </section>
         <section id="partition-stage-strategy" class="partition-stage-panel" data-partition-stage-panel="strategy" role="tabpanel" hidden>
           <div class="partition-stage-heading"><div><span>02</span><h3>분할 기준 결정</h3></div><p>지연시간·메모리·통신 비용 중 어떤 항목을 우선해 분할안을 고를지 확인합니다.</p></div>
+          <section class="partition-ranker-controls" aria-labelledby="partition-ranker-heading">
+            <div><h4 id="partition-ranker-heading">후보 선택 정책</h4><p>같은 Hard Constraint 통과 후보를 규칙 점수 또는 등록된 Reward Ranker로 비교합니다.</p></div>
+            <label>선택 모드<select id="partition-selection-mode"><option value="deterministic">Deterministic</option><option value="shadow">Shadow</option><option value="learned_guarded">Learned Guarded</option></select></label>
+            <label>등록 Reward Ranker<select id="partition-ranker-model" disabled><option value="">등록 모델 없음</option></select></label>
+            <div id="partition-ranker-status" class="partition-ranker-status" aria-live="polite"><strong>Deterministic 기준안</strong><span>AI 모델 없이 정책 점수로 최종 후보를 선택합니다.</span></div>
+          </section>
+          <p id="partition-shadow-note" class="partition-shadow-note" hidden>Shadow 추천은 실행 후보를 변경하지 않습니다. Baseline 선택은 유지하고 AI 추천만 비교 기록합니다.</p>
           <dl id="partition-strategy-details" class="partition-detail-grid"><div><dt>상태</dt><dd>유효한 plan intake가 필요합니다.</dd></div></dl>
           <div id="partition-priority-bars" class="partition-priority-bars"><p class="empty-state">판단 우선순위 대기</p></div>
           <details id="partition-strategy-research-details" class="partition-research-details"><summary>연구 재현용 기술 정보</summary><dl id="partition-strategy-research-content" class="partition-detail-grid"></dl><div id="partition-strategy-catalog" class="partition-catalog"><p class="empty-state">Strategy catalog 대기</p></div></details>
@@ -116,6 +123,7 @@
         </section>
         <section id="partition-stage-candidates" class="partition-stage-panel" data-partition-stage-panel="candidates" role="tabpanel" hidden>
           <div class="partition-stage-heading"><div><span>03</span><h3>최종 분할안 확인</h3></div><p>선택된 모델 분할 위치, 장치별 실행 구간, 예상 성능을 확인합니다.</p></div>
+          <div id="partition-selection-comparison" class="partition-selection-comparison"><p class="empty-state">계획 생성 후 Baseline 선택, AI 추천, 최종 선택을 비교합니다.</p></div>
           <div id="partition-selected-plan" class="partition-selected-plan"><p class="empty-state">선택된 계획이 없습니다.</p></div>
           <div id="partition-execution-graph" class="partition-execution-graph" aria-label="예측 모델 분할 그래프"><p class="empty-state">실행 그래프 대기</p></div>
           <details id="partition-alternative-candidates" class="partition-research-details"><summary>선택되지 않은 대안 분할안 보기</summary><div id="partition-candidates" class="partition-candidates"><p class="empty-state">계획 생성 후 대안 후보를 표시합니다.</p></div></details>
