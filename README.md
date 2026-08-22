@@ -254,18 +254,24 @@ bash scripts/server_aiopslab_summarize_runs.sh
 
 ### Model Partition Orchestration
 
-`AI Workload Orchestration`은 Recovery Profile과 분리된 결정론적 planning workspace입니다.
+`AI Workload Orchestration`은 Recovery Profile과 분리된 planning workspace입니다.
 
 ```text
 Approved Coordination Plan
   -> Common Processing Core
   -> Training / Inference Partition Strategy
-  -> Deterministic Candidate Planning
+  -> Deterministic Candidate Generation + Hard Feasibility Filter
+  -> Candidate Ranking (Deterministic / Shadow / Learned Guarded)
   -> Independent Validation
   -> Versioned PartitionExecutionPlan
   -> Scheduling Handoff
   -> Bounded Feedback Repartition
 ```
+
+후보 생성과 Hard Constraint 판정은 항상 결정론적 코어가 담당합니다. AI Ranker는
+feasible 후보만 순위화하며, `shadow`는 최종 선택을 바꾸지 않고 `learned_guarded`는
+등록 모델과 안전 Guard를 모두 통과한 경우에만 선택에 관여합니다. 실패하면 Baseline으로
+폴백하고, 최종 계획은 독립 `PartitionPlanValidator`가 다시 검증합니다.
 
 Orchestrator는 상위 계층이 승인한 실행 모드를 소비할 뿐 FL, SL, 또는 추론 모드를
 선택하지 않습니다. `Scheduling Handoff`는 외부 Scheduling Agent에 전달할 계약과
@@ -283,9 +289,10 @@ aiops-k8s-agents plan-model-partition-v2 \
   --artifact-root runs/model-partition
 ```
 
-Inference/Training, legacy compatibility, feedback, API, and history commands are in
-[실행 코드 가이드](docs/submission/execution_code_guide.md); the reproducibility and
-feedback experiment matrix is in [시험 가이드](docs/submission/test_guide.md).
+상세 구조는 [Orchestrator Agent 설계](docs/design/model_partition_orchestrator_agent_design.md),
+학습·비교 절차는 [Reward Ranker 실험 가이드](docs/experiments/partition_ranker_experiment_guide.md),
+전체 명령은 [실행 코드 가이드](docs/submission/execution_code_guide.md), 재현성 기준은
+[시험 가이드](docs/submission/test_guide.md)에서 확인합니다.
 
 ## 코드 검증
 

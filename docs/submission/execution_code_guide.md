@@ -271,6 +271,67 @@ aiops-k8s-agents plan-model-partition-v2 \
 `scheduling_handoff`가 포함됩니다. `scheduler_ref: null`은 외부 Scheduler가 아직
 연결되지 않았음을 뜻하며 Scheduling 성공을 의미하지 않습니다.
 
+### Reward Ranker Dataset, 학습, 평가
+
+학습 기능을 사용할 때만 ML extra를 설치합니다. HMAC 키는 저장소 밖의 파일로 관리하고
+실제 키 내용을 명령 출력, 문서, 브라우저 또는 Git에 노출하지 않습니다.
+
+```bash
+python -m pip install -e ".[ml]"
+
+export PARTITION_ARTIFACT_ROOT="$PWD/runs/model-partition"
+export PARTITION_DATASET="$PWD/runs/model-partition-learning/observed-dataset.jsonl"
+export PARTITION_RANKER_REGISTRY="$PWD/runs/model-partition-rankers"
+export PARTITION_SIGNING_KEY_FILE="$HOME/.config/aiops/partition-artifact.hmac"
+```
+
+서명된 observed Runtime outcome에서 Dataset을 만들고 Ridge Ranker를 학습·평가합니다.
+predicted, synthetic, mock, dry-run 결과는 기본 Real Dataset에 포함하지 않습니다.
+
+```bash
+aiops-k8s-agents build-partition-ranking-dataset \
+  --artifact-root "$PARTITION_ARTIFACT_ROOT" \
+  --output "$PARTITION_DATASET" \
+  --scope observed \
+  --artifact-signing-key-file "$PARTITION_SIGNING_KEY_FILE"
+
+aiops-k8s-agents train-partition-ranker \
+  --dataset "$PARTITION_DATASET" \
+  --ranker-registry "$PARTITION_RANKER_REGISTRY" \
+  --model-version partition-ridge-observed-v1 \
+  --seed 17 \
+  --artifact-signing-key-file "$PARTITION_SIGNING_KEY_FILE"
+
+aiops-k8s-agents evaluate-partition-ranker \
+  --dataset "$PARTITION_DATASET" \
+  --ranker-registry "$PARTITION_RANKER_REGISTRY" \
+  --model-version partition-ridge-observed-v1 \
+  --artifact-signing-key-file "$PARTITION_SIGNING_KEY_FILE"
+```
+
+먼저 Shadow로 AI 추천만 기록하고 Baseline 선택을 유지합니다. 평가 결과가
+`guarded_eligible=true`일 때만 Learned Guarded 비교를 수행합니다.
+
+```bash
+aiops-k8s-agents plan-model-partition-v2 \
+  --input config/examples/model_partition_training_v2.json \
+  --selection-mode shadow \
+  --ranker-registry "$PARTITION_RANKER_REGISTRY" \
+  --ranker-model-version partition-ridge-observed-v1 \
+  --artifact-root "$PARTITION_ARTIFACT_ROOT"
+
+aiops-k8s-agents plan-model-partition-v2 \
+  --input config/examples/model_partition_training_v2.json \
+  --selection-mode learned_guarded \
+  --ranker-registry "$PARTITION_RANKER_REGISTRY" \
+  --ranker-model-version partition-ridge-observed-v1 \
+  --artifact-root "$PARTITION_ARTIFACT_ROOT"
+```
+
+두 결과에서 Baseline 선택, AI 추천, 최종 선택, predicted reward, model version/hash,
+Guard 상태와 fallback reason을 비교합니다. Runtime 이후 observed Evaluator reward는
+별도 evidence이며 predicted reward와 같은 값으로 해석하지 않습니다.
+
 ### Bounded feedback 재계획
 
 feedback은 persisted plan의 ID/version을 참조해야 합니다. 아래는 committed failure
