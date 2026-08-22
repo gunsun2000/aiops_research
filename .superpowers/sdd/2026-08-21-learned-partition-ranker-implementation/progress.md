@@ -72,3 +72,7 @@ Task 7 review loop: separated invalid tokens from corrupted registered artifacts
 | 8. Platform UI Baseline vs learned comparison | `7930ff8` | approved at `b8167a8` | Codex local implementation | `task-8-report.md` |
 
 Task 8 retained the four-stage orchestration workspace, added registered ranker mode/model controls, disabled ineligible guarded selection, and exposed Baseline, AI recommendation, final selection, Feature contribution, fallback, and provenance evidence without moving inference into the browser. Focused UI/API verification passed 105 tests with one pre-existing deprecation warning.
+
+| 9. Research documentation and verification | `b8167a8` | implemented across `4884550` and `3cbb910` | Codex local implementation | `task-9-report.md` |
+
+Task 9 documented authority, evidence, and external Scheduler boundaries; added exact observed Dataset/train/evaluate/Shadow/Guarded commands; and completed desktop/mobile browser QA. Final verification passed 966 Python tests and the Go Guard suite, with one pre-existing TestClient deprecation warning.
