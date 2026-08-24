@@ -448,3 +448,56 @@ class FederatedCoordinationV04Adapter:
             max_transfer_bytes=None,
             minimum_memory_headroom_ratio=0.1,
         )
+
+
+def partition_planning_request_to_dict(
+    request: PartitionPlanningRequest,
+) -> dict[str, Any]:
+    plan = request.plan
+    if isinstance(plan, TrainingCoordinationPlan):
+        plan_payload: dict[str, Any] = {
+            "model_id": plan.model_id,
+            "approved_model_version": plan.approved_model_version,
+            "coordination_mode": plan.coordination_mode,
+            "participants": list(plan.participants),
+            "round_policy": dict(plan.round_policy),
+            "aggregation_policy": dict(plan.aggregation_policy),
+            "synchronization_policy": dict(plan.synchronization_policy),
+            "training_objective": plan.training_objective,
+            "resource_budget": dict(plan.resource_budget),
+            "constraints": plan.constraints.to_dict(),
+        }
+    else:
+        plan_payload = {
+            "model_id": plan.model_id,
+            "approved_model_version": plan.approved_model_version,
+            "service_objective": plan.service_objective,
+            "latency_slo_ms": plan.latency_slo_ms,
+            "minimum_throughput_rps": plan.minimum_throughput_rps,
+            "availability_target": plan.availability_target,
+            "traffic_policy": dict(plan.traffic_policy),
+            "concurrency_policy": dict(plan.concurrency_policy),
+            "participants": list(plan.participants),
+            "resource_budget": dict(plan.resource_budget),
+            "constraints": plan.constraints.to_dict(),
+        }
+    mode = request.approved_execution_mode
+    if mode is None:
+        raise PartitionContractError(
+            "approved_mode_required", "approved execution mode is required"
+        )
+    return {
+        "coordination_plan": {
+            "plan_type": request.envelope.plan_type,
+            "plan_id": request.envelope.plan_id,
+            "job_id": request.envelope.job_id,
+            "approved": True,
+            "approved_by": request.envelope.approved_by,
+            "approval_ref": request.envelope.approval_ref,
+            "approved_at": request.envelope.approved_at,
+            "schema_version": request.envelope.schema_version,
+            "payload": plan_payload,
+        },
+        "system_context": request.context.to_dict(),
+        "approved_execution_mode": mode.to_dict(),
+    }

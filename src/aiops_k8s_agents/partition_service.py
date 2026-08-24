@@ -4,6 +4,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
+from aiops_k8s_agents.federated_coordination_adapter import (
+    FederatedCoordinationPlanV04,
+    FederatedCoordinationV04Adapter,
+    ModelContextProvider,
+    ParticipantContextProvider,
+    partition_planning_request_to_dict,
+)
 from aiops_k8s_agents.model_partition_agent import (
     ModelPartitionOrchestrationAgent,
     ModelPartitionPolicy,
@@ -59,6 +66,7 @@ def run_partition_planning(
     ranker_model_version: str | None = None,
     artifact_signing_key: str | bytes | None = None,
     artifact_signing_key_file: str | Path | None = None,
+    report_extensions: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     policy = ModelPartitionPolicy.from_path(policy_path)
     strategy_registry = PartitionStrategyRegistry.default(Path(policy_path))
@@ -150,6 +158,13 @@ def run_partition_planning(
         "evaluation": evaluation.to_dict(),
         "replanning": replanning,
     }
+    if report_extensions:
+        protected = set(report).intersection(report_extensions)
+        if protected:
+            raise ValueError(
+                f"report extensions cannot replace core keys: {sorted(protected)}"
+            )
+        report.update(dict(report_extensions))
     if report["status"] == "blocked":
         report["scheduling_handoff"] = SchedulingHandoff.create(
             plan,
@@ -168,6 +183,72 @@ def run_partition_planning(
         artifact_signing_key_file=artifact_signing_key_file,
     )
     return {**report, "artifact_path": str(artifact_path)}
+
+
+def run_federated_coordination_planning(
+    payload: Mapping[str, Any],
+    *,
+    participant_provider: ParticipantContextProvider,
+    model_provider: ModelContextProvider,
+    policy_path: str | Path,
+    artifact_root: str | Path,
+    observed: Mapping[str, Any] | None = None,
+    plan_id_factory: Callable[[], str] | None = None,
+    selection_mode: str = "deterministic",
+    ranker_registry_root: str | Path | None = None,
+    ranker_model_version: str | None = None,
+    artifact_signing_key: str | bytes | None = None,
+    artifact_signing_key_file: str | Path | None = None,
+) -> dict[str, Any]:
+    parsed = FederatedCoordinationPlanV04.from_dict(payload)
+    try:
+        participant_context = participant_provider.resolve(parsed.participant_ids)
+        model_context = model_provider.resolve(parsed.model_id, parsed.model_version)
+        request = FederatedCoordinationV04Adapter().adapt(
+            parsed, participant_context, model_context
+        )
+    except PartitionContractError as exc:
+        return {
+            "schema_version": "1.0",
+            "kind": "model_partition_orchestration",
+            "status": "blocked",
+            "upstream_coordination": parsed.to_dict(),
+            "context_enrichment": {
+                "status": "blocked",
+                "participant_ids": list(parsed.participant_ids),
+            },
+            "error": {"code": exc.code, "message": exc.message},
+        }
+    enrichment = {
+        "status": "complete",
+        "participant_source": participant_context.source,
+        "model_source": model_context.source,
+        "snapshot_id": participant_context.snapshot_id,
+        "snapshot_version": participant_context.snapshot_version,
+        "participant_ids": list(parsed.participant_ids),
+        "device_count": len(participant_context.devices),
+        "network_link_count": len(participant_context.network_links),
+        "model_id": parsed.model_id,
+        "model_version": parsed.model_version,
+        "profile_id": model_context.profile.profile_id,
+    }
+    return run_partition_planning(
+        partition_planning_request_to_dict(request),
+        policy_path=policy_path,
+        artifact_root=artifact_root,
+        observed=observed,
+        plan_id_factory=plan_id_factory,
+        v2_request=True,
+        selection_mode=selection_mode,
+        ranker_registry_root=ranker_registry_root,
+        ranker_model_version=ranker_model_version,
+        artifact_signing_key=artifact_signing_key,
+        artifact_signing_key_file=artifact_signing_key_file,
+        report_extensions={
+            "upstream_coordination": parsed.to_dict(),
+            "context_enrichment": enrichment,
+        },
+    )
 
 
 def build_candidate_selector(
