@@ -238,6 +238,88 @@ class TrainingPartitionStrategy:
 
 
 @dataclass(frozen=True)
+class FederatedFullModelStrategy:
+    strategy_id: str
+    strategy_version: str
+    policy_version: str
+    objective_weights: tuple[tuple[str, float], ...]
+    base_confidence: float
+    missing_forecast_penalty: float
+
+    def catalog_contract(self) -> dict[str, Any]:
+        return {
+            "objective_weights": dict(self.objective_weights),
+            "optimization_objectives": [
+                f"predicted_{name}:{weight:g}" for name, weight in self.objective_weights
+            ],
+            "allowed_split_boundary_rule": "full_model_replica_per_participant",
+            "forbidden_split_boundaries": ["all_layer_split_boundaries"],
+            "graph_requirements": [
+                "full_model_replica_per_participant",
+                "participant_to_aggregator_edges",
+            ],
+            "memory_rules": [
+                "full_model_parameter_bytes_per_participant",
+                "full_model_working_memory_per_participant",
+                "full_model_peak_activation_per_participant",
+            ],
+            "communication_rules": [
+                "remote_model_update_transfer",
+                "aggregation_transfer",
+            ],
+        }
+
+    def build_partition_intent(
+        self, request: NormalizedPartitionRequest
+    ) -> PartitionIntent:
+        mode = request.approved_execution_mode.name
+        if request.plan_type != "training" or mode != "federated_learning":
+            raise PartitionContractError(
+                "strategy_not_supported",
+                f"strategy {self.strategy_id} does not support {request.plan_type}/{mode}",
+            )
+        confidence = self.base_confidence
+        warnings: list[str] = []
+        if not request.workload_forecast_available:
+            confidence -= self.missing_forecast_penalty
+            warnings.append("workload_forecast_missing: confidence reduced")
+        return PartitionIntent(
+            strategy_id=self.strategy_id,
+            strategy_version=self.strategy_version,
+            allowed_partition_methods=(mode,),
+            allowed_split_boundaries=(),
+            forbidden_split_boundaries=tuple(range(0, len(request.layers) + 1)),
+            graph_requirements=(
+                "full_model_replica_per_participant",
+                "participant_to_aggregator_edges",
+            ),
+            memory_rules=(
+                "full_model_parameter_bytes_per_participant",
+                "full_model_working_memory_per_participant",
+                "full_model_peak_activation_per_participant",
+            ),
+            communication_rules=(
+                "remote_model_update_transfer",
+                "aggregation_transfer",
+            ),
+            optimization_objectives=tuple(
+                f"predicted_{name}:{weight:g}" for name, weight in self.objective_weights
+            ),
+            assumptions=(
+                f"approved_execution_mode:{mode}",
+                f"approved_model_version:{request.approved_model_version}",
+                f"context_snapshot_id:{request.context_snapshot_id}",
+                f"context_snapshot_hash:{request.context_snapshot_hash}",
+                f"input_signature:{request.input_signature}",
+                f"policy_version:{self.policy_version}",
+                f"planning_confidence:{max(confidence, 0.0):g}",
+            ),
+            warnings=tuple(warnings),
+            objective_weights=self.objective_weights,
+        )
+
+
+@dataclass(frozen=True)
 class PartitionStrategyRegistry:
     entries: tuple[tuple[str, str, PartitionStrategy], ...]
 
@@ -294,15 +376,30 @@ class PartitionStrategyRegistry:
             if training_payload is not None
             else None
         )
-        return cls(
-            entries=(
-                *( ("inference", mode, strategy) for mode in strategy.supported_modes ),
-                *(
-                    ("training", mode, training_strategy)
-                    for mode in (training_strategy.supported_modes if training_strategy else ())
+        federated_payload = strategy_policies.get("federated-full-model-v1")
+        federated_strategy = (
+            cls._federated_strategy(
+                _mapping(
+                    federated_payload,
+                    "strategy_policies.federated-full-model-v1",
                 ),
+                policy_version,
+                confidence_payload,
             )
+            if federated_payload is not None
+            else None
         )
+        entries: list[tuple[str, str, PartitionStrategy]] = [
+            ("inference", mode, strategy) for mode in strategy.supported_modes
+        ]
+        if training_strategy is not None:
+            entries.extend(
+                ("training", mode, training_strategy)
+                for mode in training_strategy.supported_modes
+            )
+        if federated_strategy is not None:
+            entries.append(("training", "federated_learning", federated_strategy))
+        return cls(entries=tuple(entries))
 
     @staticmethod
     def _training_strategy(
@@ -335,6 +432,28 @@ class PartitionStrategyRegistry:
             legacy_input_penalty=_fraction(
                 confidence_payload.get("legacy_input_penalty"),
                 "confidence.legacy_input_penalty",
+            ),
+        )
+
+    @staticmethod
+    def _federated_strategy(
+        payload: Mapping[str, Any],
+        policy_version: str,
+        confidence_payload: Mapping[str, Any],
+    ) -> FederatedFullModelStrategy:
+        return FederatedFullModelStrategy(
+            strategy_id="federated-full-model-v1",
+            strategy_version=f"federated-full-model-v1:{policy_version}",
+            policy_version=policy_version,
+            objective_weights=_objective_weights(
+                payload.get("objectives"),
+                ("step_time", "load_balance", "memory_pressure", "communication", "resilience"),
+                "strategy_policies.federated-full-model-v1.objectives",
+            ),
+            base_confidence=_fraction(confidence_payload.get("base"), "confidence.base"),
+            missing_forecast_penalty=_fraction(
+                confidence_payload.get("missing_forecast_penalty"),
+                "confidence.missing_forecast_penalty",
             ),
         )
 

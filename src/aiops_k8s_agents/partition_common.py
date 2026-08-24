@@ -157,10 +157,20 @@ class PartitionCommonProcessor:
     ) -> None:
         participants = request.plan.participants
         device_ids = {device.device_id for device in request.context.devices}
-        if len(participants) < 2 or len(layers) < len(participants):
+        is_federated_learning = (
+            request.approved_execution_mode is not None
+            and request.approved_execution_mode.name == "federated_learning"
+        )
+        if len(participants) < 2 or not layers or (
+            not is_federated_learning and len(layers) < len(participants)
+        ):
             raise PartitionContractError(
                 "early_feasibility_failed",
-                "each participant requires a non-empty model partition",
+                (
+                    "federated learning requires a full model and at least two participants"
+                    if is_federated_learning
+                    else "each participant requires a non-empty model partition"
+                ),
             )
         if any(participant not in device_ids for participant in participants):
             raise PartitionContractError(
@@ -171,8 +181,13 @@ class PartitionCommonProcessor:
             (link.source_device, link.target_device)
             for link in request.context.network_links
         }
-        if any(pair not in links for pair in zip(participants, participants[1:])):
+        required_pairs = (
+            tuple((participant, participants[0]) for participant in participants[1:])
+            if is_federated_learning
+            else tuple(zip(participants, participants[1:]))
+        )
+        if any(pair not in links for pair in required_pairs):
             raise PartitionContractError(
                 "early_feasibility_failed",
-                "each adjacent participant pair requires a network link",
+                "required participant network evidence is unavailable",
             )

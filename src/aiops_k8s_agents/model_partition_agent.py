@@ -315,6 +315,15 @@ class ModelPartitionOrchestrationAgent:
             for participant in round_plan.participants
             if participant not in excluded_devices
         )
+        if partition_intent.strategy_id == "federated-full-model-v1":
+            return self._plan_federated_full_model(
+                round_plan,
+                participants,
+                excluded_links=excluded_links,
+                memory_limits=memory_limits,
+                normalized=normalized,
+                partition_intent=partition_intent,
+            )
         if len(participants) < 2 or len(round_plan.layers) < len(participants):
             return self._safe_failure(
                 round_plan, ("insufficient_participants_after_failure",)
@@ -389,6 +398,64 @@ class ModelPartitionOrchestrationAgent:
             rationale=(
                 "Selected the feasible candidate with the lowest versioned "
                 "latency, memory-pressure, and communication score."
+            ),
+            valid=True,
+            human_review_required=False,
+            errors=(),
+            selection=selection,
+        )
+
+    def _plan_federated_full_model(
+        self,
+        round_plan: FederatedRoundPlan,
+        participants: tuple[str, ...],
+        *,
+        excluded_links: set[tuple[str, str]],
+        memory_limits: dict[str, int],
+        normalized: NormalizedPartitionRequest,
+        partition_intent: PartitionIntent,
+    ) -> PartitionExecutionPlan:
+        if len(participants) < 2 or not round_plan.layers:
+            return self._safe_failure(
+                round_plan, ("insufficient_participants_after_failure",)
+            )
+        candidate = self._build_federated_full_model_candidate(
+            round_plan,
+            participants,
+            excluded_links=excluded_links,
+            memory_limits=memory_limits,
+            partition_intent=partition_intent,
+        )
+        context = RankingContext(
+            request=normalized,
+            intent=partition_intent,
+            strategy_version=partition_intent.strategy_version,
+            workload_forecast=normalized.workload_forecast,
+        )
+        selection = self._candidate_selector.select(
+            context,
+            (candidate,),
+            self._selection_mode,
+            self._ranker_model_version,
+        )
+        if selection.final_selected_candidate_key is None:
+            return self._safe_failure(
+                round_plan,
+                ("no_feasible_partition",),
+                alternative_candidates=(candidate,),
+                selection=selection,
+            )
+        return PartitionExecutionPlan(
+            plan_id=self._plan_id_factory(),
+            job_id=round_plan.job_id,
+            model_id=round_plan.model_id,
+            approved_execution_mode=round_plan.execution_mode.name,
+            policy_version=self.policy.version,
+            selected_candidate=candidate,
+            alternative_candidates=(),
+            rationale=(
+                "Selected one approved full-model replica per participant with "
+                "remote updates directed to the coordination aggregator."
             ),
             valid=True,
             human_review_required=False,
@@ -667,6 +734,143 @@ class ModelPartitionOrchestrationAgent:
             gradient_transfer_bytes=gradient_transfer_bytes,
             maximum_load_imbalance=round(maximum_load_imbalance, 6),
             predicted_resilience_risk=round(predicted_resilience_risk, 6),
+        )
+
+    def _build_federated_full_model_candidate(
+        self,
+        round_plan: FederatedRoundPlan,
+        participants: tuple[str, ...],
+        *,
+        excluded_links: set[tuple[str, str]],
+        memory_limits: dict[str, int],
+        partition_intent: PartitionIntent,
+    ) -> PartitionCandidate:
+        devices = {device.device_id: device for device in round_plan.devices}
+        links = {
+            (link.source_device, link.target_device): link
+            for link in round_plan.network_links
+        }
+        layer_names = tuple(layer.name for layer in round_plan.layers)
+        compute_units = sum(layer.compute_units for layer in round_plan.layers)
+        parameter_bytes = sum(layer.parameter_bytes for layer in round_plan.layers)
+        memory_demand = (
+            parameter_bytes
+            + sum(layer.working_memory_bytes for layer in round_plan.layers)
+            + max(layer.activation_bytes for layer in round_plan.layers)
+        )
+        partitions: list[LogicalPartition] = []
+        compute_times: list[float] = []
+        memory_pressures: list[float] = []
+        rejection_reasons: list[str] = []
+        for index, device_id in enumerate(participants):
+            device = devices[device_id]
+            partition = LogicalPartition(
+                partition_id=f"partition-{index + 1}",
+                device_id=device_id,
+                layer_names=layer_names,
+                compute_units=compute_units,
+                memory_demand_bytes=memory_demand,
+            )
+            partitions.append(partition)
+            compute_times.append(compute_units / device.compute_units_per_second * 1000.0)
+            memory_pressures.append(memory_demand / max(1, device.memory_available_bytes))
+            allowed_memory = int(
+                device.memory_available_bytes
+                * (1.0 - round_plan.constraints.minimum_memory_headroom_ratio)
+            )
+            if memory_demand > allowed_memory:
+                rejection_reasons.append(f"memory_capacity_exceeded:{device_id}")
+            if device_id in memory_limits and memory_demand > memory_limits[device_id]:
+                rejection_reasons.append(f"memory_replan_not_improved:{device_id}")
+
+        aggregator = partitions[0]
+        graph_nodes = tuple(
+            [
+                *(ExecutionGraphNode(partition.partition_id, partition.device_id) for partition in partitions),
+                ExecutionGraphNode("aggregation", aggregator.device_id),
+            ]
+        )
+        graph_edges: list[ExecutionGraphEdge] = []
+        transfer_times: list[float] = []
+        total_transfer_bytes = 0
+        for partition in partitions[1:]:
+            pair = (partition.device_id, aggregator.device_id)
+            if pair in excluded_links:
+                rejection_reasons.append(
+                    f"failed_network_link:{partition.device_id}->{aggregator.device_id}"
+                )
+                continue
+            link = links.get(pair)
+            if link is None:
+                rejection_reasons.append(
+                    f"missing_network_link:{partition.device_id}->{aggregator.device_id}"
+                )
+                continue
+            transfer_ms = (
+                link.latency_ms
+                + parameter_bytes / link.bandwidth_bytes_per_second * 1000.0
+            )
+            transfer_times.append(transfer_ms)
+            total_transfer_bytes += parameter_bytes
+            graph_edges.append(
+                ExecutionGraphEdge(
+                    source_partition=partition.partition_id,
+                    target_partition="aggregation",
+                    transfer_bytes=parameter_bytes,
+                    estimated_transfer_ms=round(transfer_ms, 6),
+                    edge_type="aggregation",
+                )
+            )
+
+        maximum_compute = max(compute_times, default=0.0)
+        minimum_compute = min(compute_times, default=0.0)
+        load_imbalance = (
+            0.0
+            if maximum_compute == 0.0
+            else (maximum_compute - minimum_compute) / maximum_compute
+        )
+        estimated_transfer_ms = max(transfer_times, default=0.0)
+        estimated_step_time_ms = maximum_compute + estimated_transfer_ms
+        maximum_pressure = max(memory_pressures, default=0.0)
+        resilience_risk = self._predicted_resilience_risk(
+            tuple(compute_times), len(participants)
+        )
+        if (
+            round_plan.constraints.max_transfer_bytes is not None
+            and total_transfer_bytes > round_plan.constraints.max_transfer_bytes
+        ):
+            rejection_reasons.append("max_transfer_bytes_exceeded")
+        if (
+            round_plan.constraints.max_end_to_end_latency_ms is not None
+            and estimated_step_time_ms
+            > round_plan.constraints.max_end_to_end_latency_ms
+        ):
+            rejection_reasons.append("latency_slo_exceeded")
+        score = self._score_training(
+            estimated_step_time_ms,
+            load_imbalance,
+            maximum_pressure,
+            total_transfer_bytes,
+            resilience_risk,
+            partition_intent,
+        )
+        return PartitionCandidate(
+            split_points=(),
+            partitions=tuple(partitions),
+            graph_nodes=graph_nodes,
+            graph_edges=tuple(graph_edges),
+            estimated_compute_ms=round(maximum_compute, 6),
+            estimated_transfer_ms=round(estimated_transfer_ms, 6),
+            estimated_total_latency_ms=round(estimated_step_time_ms, 6),
+            total_transfer_bytes=total_transfer_bytes,
+            maximum_memory_pressure=round(maximum_pressure, 6),
+            valid=not rejection_reasons,
+            rejection_reasons=tuple(rejection_reasons),
+            score=score,
+            estimated_step_time_ms=round(estimated_step_time_ms, 6),
+            gradient_transfer_bytes=total_transfer_bytes,
+            maximum_load_imbalance=round(load_imbalance, 6),
+            predicted_resilience_risk=round(resilience_risk, 6),
         )
 
     @staticmethod

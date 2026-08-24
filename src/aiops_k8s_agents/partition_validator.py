@@ -107,6 +107,7 @@ class PartitionValidationResult:
 
 class PartitionPlanValidator:
     TRAINING_GRAPH_MODES = {
+        "federated_learning",
         "pipeline_parallel",
         "split_learning",
         "hybrid_partition",
@@ -181,7 +182,19 @@ class PartitionPlanValidator:
             for partition in selected.partitions
             for layer_name in partition.layer_names
         )
-        if actual_layer_names != expected_layer_names:
+        is_federated_learning = (
+            plan.plan_type == "training"
+            and plan.approved_execution_mode == "federated_learning"
+        )
+        full_model_replicas_valid = (
+            is_federated_learning
+            and len(selected.partitions) == len(round_plan.participants)
+            and all(
+                partition.layer_names == expected_layer_names
+                for partition in selected.partitions
+            )
+        )
+        if not full_model_replicas_valid and actual_layer_names != expected_layer_names:
             errors.append("layer_coverage_mismatch")
 
         layers = {layer.name: layer for layer in round_plan.layers}
@@ -218,7 +231,9 @@ class PartitionPlanValidator:
 
         is_training_plan = plan.plan_type == "training"
         node_partitions = self._graph_node_partitions(
-            selected.partitions, is_training_plan
+            selected.partitions,
+            is_training_plan,
+            plan.approved_execution_mode,
         )
         expected_nodes = {
             (node_id, partition.device_id)
@@ -428,12 +443,17 @@ class PartitionPlanValidator:
 
     @staticmethod
     def _graph_node_partitions(
-        partitions: tuple[Any, ...], is_training_plan: bool
+        partitions: tuple[Any, ...], is_training_plan: bool, approved_mode: str
     ) -> dict[str, Any]:
         if not is_training_plan:
             return {partition.partition_id: partition for partition in partitions}
         if not partitions:
             return {}
+        if approved_mode == "federated_learning":
+            return {
+                **{partition.partition_id: partition for partition in partitions},
+                "aggregation": partitions[0],
+            }
         phase_nodes = {
             f"{partition.partition_id}:{phase}": partition
             for partition in partitions
@@ -468,6 +488,18 @@ class PartitionPlanValidator:
     ) -> None:
         if approved_mode not in self.TRAINING_GRAPH_MODES:
             errors.append("training_graph_mode_not_supported")
+            return
+        if approved_mode == "federated_learning":
+            expected_edges = {
+                (partition.partition_id, "aggregation", "aggregation")
+                for partition in partitions[1:]
+            }
+            actual_edges = {
+                (edge.source_partition, edge.target_partition, edge.edge_type)
+                for edge in graph_edges
+            }
+            if actual_edges != expected_edges:
+                errors.append("federated_aggregation_graph_contract_mismatch")
             return
         expected_edges = {
             *(

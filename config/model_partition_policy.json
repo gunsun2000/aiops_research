@@ -37,6 +37,16 @@
         "communication": 0.15,
         "resilience": 0.10
       }
+    },
+    "federated-full-model-v1": {
+      "supported_modes": ["federated_learning"],
+      "objectives": {
+        "step_time": 0.35,
+        "load_balance": 0.20,
+        "memory_pressure": 0.20,
+        "communication": 0.15,
+        "resilience": 0.10
+      }
     }
   },
   "confidence": {
