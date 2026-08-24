@@ -1,0 +1,450 @@
+from __future__ import annotations
+
+from copy import deepcopy
+from dataclasses import dataclass
+from math import isfinite
+from typing import Any, Mapping, Protocol, Sequence
+
+from aiops_k8s_agents.partition_context import (
+    ModelRegistryContext,
+    ModelStructureProfile,
+    PartitionSystemContext,
+    WorkloadForecast,
+)
+from aiops_k8s_agents.partition_coordination import (
+    CoordinationPlanEnvelope,
+    InferenceCoordinationPlan,
+    PartitionPlanningRequest,
+    TrainingCoordinationPlan,
+)
+from aiops_k8s_agents.partition_models import (
+    ApprovedExecutionMode,
+    NetworkLink,
+    PartitionConstraints,
+    PartitionContractError,
+    ResourceDevice,
+)
+
+
+SUPPORTED_SCHEMA_VERSION = "0.4"
+MODE_MAPPING = {
+    ("federated_training", "FL"): ("training", "federated_learning"),
+    ("federated_training", "SL"): ("training", "split_learning"),
+    ("distributed_inference", "PARTITIONED"): ("inference", "split_inference"),
+}
+
+
+def _mapping(value: Any, field: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise PartitionContractError(
+            "invalid_federated_coordination_plan", f"{field} must be an object"
+        )
+    return value
+
+
+def _sequence(value: Any, field: str) -> Sequence[Any]:
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise PartitionContractError(
+            "invalid_federated_coordination_plan", f"{field} must be an array"
+        )
+    return value
+
+
+def _text(value: Any, field: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise PartitionContractError(
+            "invalid_federated_coordination_plan", f"{field} is required"
+        )
+    return text
+
+
+def _version(value: Any, field: str) -> str:
+    if isinstance(value, bool):
+        raise PartitionContractError(
+            "invalid_federated_coordination_plan", f"{field} is invalid"
+        )
+    return _text(value, field)
+
+
+def _integer(value: Any, field: str, *, minimum: int = 0) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
+        raise PartitionContractError(
+            "invalid_federated_coordination_plan",
+            f"{field} must be an integer of at least {minimum}",
+        )
+    return value
+
+
+def _number(value: Any, field: str, *, minimum: float = 0.0) -> float:
+    if isinstance(value, bool):
+        raise PartitionContractError(
+            "invalid_federated_coordination_plan", f"{field} must be numeric"
+        )
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise PartitionContractError(
+            "invalid_federated_coordination_plan", f"{field} must be numeric"
+        ) from exc
+    if not isfinite(number) or number < minimum:
+        raise PartitionContractError(
+            "invalid_federated_coordination_plan",
+            f"{field} must be at least {minimum}",
+        )
+    return number
+
+
+@dataclass(frozen=True)
+class FederatedParticipantV04:
+    client_id: str
+    priority: int
+
+
+@dataclass(frozen=True)
+class FederatedCoordinationPlanV04:
+    schema_version: str
+    task_type: str
+    plan_id: str
+    job_id: str
+    session_id: str
+    model_id: str
+    model_version: str
+    selected_mode: str
+    fallback_order: tuple[str, ...]
+    participants: tuple[FederatedParticipantV04, ...]
+    coordination_mode: Mapping[str, Any]
+    federated_strategy: Mapping[str, Any]
+    participation_policy: Mapping[str, Any]
+    serving_policy: Mapping[str, Any]
+    original_payload: Mapping[str, Any]
+
+    @classmethod
+    def from_dict(cls, payload: Mapping[str, Any]) -> FederatedCoordinationPlanV04:
+        payload = _mapping(payload, "coordination_plan")
+        schema_version = _text(payload.get("schema_version"), "schema_version")
+        if schema_version != SUPPORTED_SCHEMA_VERSION:
+            raise PartitionContractError(
+                "unsupported_coordination_schema",
+                f"schema_version must be {SUPPORTED_SCHEMA_VERSION}",
+            )
+        task_type = _text(payload.get("task_type"), "task_type")
+        mode_field = (
+            "learning_mode" if task_type == "federated_training" else "inference_mode"
+        )
+        if task_type not in {"federated_training", "distributed_inference"}:
+            raise PartitionContractError(
+                "unsupported_coordination_task",
+                f"unsupported task_type: {task_type}",
+            )
+        mode_payload = _mapping(payload.get(mode_field), mode_field)
+        selected_mode = _text(mode_payload.get("selected"), f"{mode_field}.selected").upper()
+        if (task_type, selected_mode) not in MODE_MAPPING:
+            raise PartitionContractError(
+                "unsupported_coordination_mode",
+                f"unsupported selected mode: {task_type}/{selected_mode}",
+            )
+        fallback_order = tuple(
+            _text(item, f"{mode_field}.fallback_order[]").upper()
+            for item in _sequence(mode_payload.get("fallback_order", []), f"{mode_field}.fallback_order")
+        )
+
+        participant_payloads = _sequence(
+            payload.get("candidate_participants"), "candidate_participants"
+        )
+        participants = tuple(
+            FederatedParticipantV04(
+                client_id=_text(
+                    _mapping(item, "candidate_participants[]").get("client_id"),
+                    "candidate_participants[].client_id",
+                ),
+                priority=_integer(
+                    _mapping(item, "candidate_participants[]").get("priority"),
+                    "candidate_participants[].priority",
+                    minimum=1,
+                ),
+            )
+            for item in participant_payloads
+        )
+        if len(participants) < 2:
+            raise PartitionContractError(
+                "insufficient_participants",
+                "at least two candidate participants are required",
+            )
+        client_ids = [participant.client_id for participant in participants]
+        priorities = [participant.priority for participant in participants]
+        if len(set(client_ids)) != len(client_ids) or len(set(priorities)) != len(priorities):
+            raise PartitionContractError(
+                "invalid_federated_coordination_plan",
+                "candidate participant IDs and priorities must be unique",
+            )
+        participants = tuple(sorted(participants, key=lambda item: (item.priority, item.client_id)))
+
+        model_ref = _mapping(payload.get("model_ref"), "model_ref")
+        plan_id = _text(
+            payload.get("inference_plan_id") or payload.get("round_plan_id"),
+            "round_plan_id or inference_plan_id",
+        )
+        return cls(
+            schema_version=schema_version,
+            task_type=task_type,
+            plan_id=plan_id,
+            job_id=_text(payload.get("job_id"), "job_id"),
+            session_id=_text(payload.get("session_id"), "session_id"),
+            model_id=_text(model_ref.get("model_id"), "model_ref.model_id"),
+            model_version=_version(model_ref.get("version"), "model_ref.version"),
+            selected_mode=selected_mode,
+            fallback_order=fallback_order,
+            participants=participants,
+            coordination_mode=dict(
+                _mapping(payload.get("coordination_mode", {}), "coordination_mode")
+            ),
+            federated_strategy=dict(
+                _mapping(payload.get("federated_strategy", {}), "federated_strategy")
+            ),
+            participation_policy=dict(
+                _mapping(payload.get("participation_policy", {}), "participation_policy")
+            ),
+            serving_policy=dict(
+                _mapping(payload.get("serving_policy", {}), "serving_policy")
+            ),
+            original_payload=deepcopy(dict(payload)),
+        )
+
+    @property
+    def participant_ids(self) -> tuple[str, ...]:
+        return tuple(participant.client_id for participant in self.participants)
+
+    def to_dict(self) -> dict[str, Any]:
+        return deepcopy(dict(self.original_payload))
+
+
+@dataclass(frozen=True)
+class ParticipantContext:
+    snapshot_id: str
+    snapshot_version: str
+    collected_at: str
+    devices: tuple[ResourceDevice, ...]
+    network_links: tuple[NetworkLink, ...]
+    workload_forecast: WorkloadForecast | None
+    source: str
+
+
+@dataclass(frozen=True)
+class ModelContext:
+    profile: ModelStructureProfile
+    registry: ModelRegistryContext
+    source: str
+
+
+class ParticipantContextProvider(Protocol):
+    def resolve(self, participant_ids: tuple[str, ...]) -> ParticipantContext: ...
+
+
+class ModelContextProvider(Protocol):
+    def resolve(self, model_id: str, model_version: str) -> ModelContext: ...
+
+
+@dataclass(frozen=True)
+class MappingParticipantContextProvider:
+    context: ParticipantContext
+
+    def resolve(self, participant_ids: tuple[str, ...]) -> ParticipantContext:
+        requested = set(participant_ids)
+        devices = tuple(
+            device for device in self.context.devices if device.device_id in requested
+        )
+        if {device.device_id for device in devices} != requested:
+            raise PartitionContractError(
+                "participant_context_missing",
+                "resource context is missing for one or more candidate participants",
+            )
+        links = tuple(
+            link
+            for link in self.context.network_links
+            if link.source_device in requested and link.target_device in requested
+        )
+        return ParticipantContext(
+            snapshot_id=self.context.snapshot_id,
+            snapshot_version=self.context.snapshot_version,
+            collected_at=self.context.collected_at,
+            devices=devices,
+            network_links=links,
+            workload_forecast=self.context.workload_forecast,
+            source=self.context.source,
+        )
+
+
+@dataclass(frozen=True)
+class MappingModelContextProvider:
+    contexts: Mapping[tuple[str, str], ModelContext]
+
+    def resolve(self, model_id: str, model_version: str) -> ModelContext:
+        context = self.contexts.get((model_id, model_version))
+        if context is None:
+            raise PartitionContractError(
+                "model_context_missing",
+                f"model context is unavailable for {model_id}:{model_version}",
+            )
+        return context
+
+
+class FederatedCoordinationV04Adapter:
+    def adapt(
+        self,
+        plan: FederatedCoordinationPlanV04,
+        participant_context: ParticipantContext,
+        model_context: ModelContext,
+    ) -> PartitionPlanningRequest:
+        self._validate_model_context(plan, model_context)
+        self._validate_participant_context(plan, participant_context)
+        plan_type, execution_mode = MODE_MAPPING[(plan.task_type, plan.selected_mode)]
+        constraints = self._constraints(plan)
+        v2_plan = (
+            TrainingCoordinationPlan(
+                model_id=plan.model_id,
+                approved_model_version=plan.model_version,
+                coordination_mode=str(plan.coordination_mode.get("selected") or "SYNC"),
+                participants=plan.participant_ids,
+                round_policy=dict(plan.participation_policy),
+                aggregation_policy=dict(plan.federated_strategy),
+                synchronization_policy=dict(plan.coordination_mode),
+                training_objective=f"{plan.task_type}:{plan.selected_mode}",
+                resource_budget={},
+                constraints=constraints,
+            )
+            if plan_type == "training"
+            else InferenceCoordinationPlan(
+                model_id=plan.model_id,
+                approved_model_version=plan.model_version,
+                service_objective=f"distributed inference for {plan.model_id}",
+                latency_slo_ms=self._required_serving_number(
+                    plan, "target_latency_ms", minimum=0.000001
+                ),
+                minimum_throughput_rps=self._minimum_throughput(plan),
+                availability_target=_number(
+                    plan.serving_policy.get("availability_target", 0.0),
+                    "serving_policy.availability_target",
+                ),
+                traffic_policy=dict(plan.serving_policy),
+                concurrency_policy={
+                    **dict(plan.serving_policy),
+                    "max_requests": _integer(
+                        plan.serving_policy.get("max_concurrent_requests"),
+                        "serving_policy.max_concurrent_requests",
+                        minimum=1,
+                    ),
+                },
+                participants=plan.participant_ids,
+                resource_budget={},
+                constraints=constraints,
+            )
+        )
+        return PartitionPlanningRequest(
+            envelope=CoordinationPlanEnvelope(
+                plan_type=plan_type,
+                plan_id=plan.plan_id,
+                job_id=plan.job_id,
+                approved_by="FederatedCoordinationAgent",
+                approval_ref=plan.plan_id,
+                approved_at=participant_context.collected_at,
+                schema_version=plan.schema_version,
+            ),
+            plan=v2_plan,
+            context=PartitionSystemContext(
+                snapshot_id=participant_context.snapshot_id,
+                snapshot_version=participant_context.snapshot_version,
+                collected_at=participant_context.collected_at,
+                model_structure_profile=model_context.profile,
+                model_registry_context=model_context.registry,
+                devices=participant_context.devices,
+                network_links=participant_context.network_links,
+                workload_forecast=participant_context.workload_forecast,
+            ),
+            approved_execution_mode=ApprovedExecutionMode(
+                name=execution_mode,
+                approved=True,
+                approved_by="FederatedCoordinationAgent",
+                approval_ref=plan.plan_id,
+            ),
+        )
+
+    @staticmethod
+    def _validate_model_context(
+        plan: FederatedCoordinationPlanV04, context: ModelContext
+    ) -> None:
+        if (
+            context.profile.model_id != plan.model_id
+            or context.profile.model_version != plan.model_version
+            or context.registry.model_id != plan.model_id
+            or context.registry.approved_model_version != plan.model_version
+        ):
+            raise PartitionContractError(
+                "model_context_missing",
+                "model_ref does not match the approved model registry context",
+            )
+
+    @staticmethod
+    def _validate_participant_context(
+        plan: FederatedCoordinationPlanV04, context: ParticipantContext
+    ) -> None:
+        device_ids = {device.device_id for device in context.devices}
+        if any(participant not in device_ids for participant in plan.participant_ids):
+            raise PartitionContractError(
+                "participant_context_missing",
+                "resource context is missing for one or more candidate participants",
+            )
+        links = {
+            (link.source_device, link.target_device) for link in context.network_links
+        }
+        if plan.selected_mode == "FL":
+            aggregator = plan.participant_ids[0]
+            required_links = {
+                (participant, aggregator)
+                for participant in plan.participant_ids[1:]
+                if participant != aggregator
+            }
+        else:
+            required_links = set(zip(plan.participant_ids, plan.participant_ids[1:]))
+        if not required_links.issubset(links):
+            raise PartitionContractError(
+                "network_evidence_missing",
+                "required participant bandwidth evidence is unavailable",
+            )
+
+    @staticmethod
+    def _required_serving_number(
+        plan: FederatedCoordinationPlanV04, field: str, *, minimum: float
+    ) -> float:
+        return _number(
+            plan.serving_policy.get(field), f"serving_policy.{field}", minimum=minimum
+        )
+
+    def _minimum_throughput(self, plan: FederatedCoordinationPlanV04) -> float:
+        explicit = plan.serving_policy.get("minimum_throughput_rps")
+        if explicit is not None:
+            return _number(
+                explicit, "serving_policy.minimum_throughput_rps", minimum=0.000001
+            )
+        concurrency = _integer(
+            plan.serving_policy.get("max_concurrent_requests"),
+            "serving_policy.max_concurrent_requests",
+            minimum=1,
+        )
+        timeout = self._required_serving_number(
+            plan, "request_timeout_sec", minimum=0.000001
+        )
+        return concurrency / timeout
+
+    def _constraints(self, plan: FederatedCoordinationPlanV04) -> PartitionConstraints:
+        return PartitionConstraints(
+            max_end_to_end_latency_ms=(
+                self._required_serving_number(
+                    plan, "target_latency_ms", minimum=0.000001
+                )
+                if plan.task_type == "distributed_inference"
+                else None
+            ),
+            max_transfer_bytes=None,
+            minimum_memory_headroom_ratio=0.1,
+        )
