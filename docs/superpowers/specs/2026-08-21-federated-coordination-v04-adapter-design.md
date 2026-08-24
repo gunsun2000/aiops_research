@@ -94,8 +94,8 @@ Add three registered strategy mappings:
 | Upstream selection | Internal plan type | Strategy |
 | --- | --- | --- |
 | `FL` | `training` | `federated-full-model-v1` |
-| `SL` | `training` | `split-learning-v04` |
-| `PARTITIONED` | `inference` | `partitioned-inference-v04` |
+| `SL` | `training` | `training-partition-v1` |
+| `PARTITIONED` | `inference` | `inference-partition-v1` |
 
 FL requires a dedicated full-model candidate generator because it is replica
 coordination, not a layer split. SL and partitioned inference reuse the current
@@ -135,4 +135,3 @@ training and inference examples remain available.
 - API tests for successful and blocked enrichment.
 - UI contract tests for the new input source and enrichment status.
 - Full Python test suite and Go Guard test suite remain passing.
-

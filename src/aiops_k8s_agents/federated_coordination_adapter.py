@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+import json
 from math import isfinite
+from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
 from aiops_k8s_agents.partition_context import (
@@ -287,6 +289,93 @@ class MappingModelContextProvider:
                 f"model context is unavailable for {model_id}:{model_version}",
             )
         return context
+
+
+def load_mapping_context_providers(
+    path: str | Path,
+) -> tuple[MappingParticipantContextProvider, MappingModelContextProvider]:
+    config_path = Path(path).expanduser().resolve()
+    try:
+        payload = json.loads(config_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise PartitionContractError(
+            "invalid_context_provider_config",
+            f"failed to load federated context configuration: {config_path}",
+        ) from exc
+    root = _mapping(payload, "federated_context")
+    participant_payload = _mapping(
+        root.get("participant_context"), "participant_context"
+    )
+    forecast_payload = participant_payload.get("workload_forecast")
+    participant_context = ParticipantContext(
+        snapshot_id=_text(
+            participant_payload.get("snapshot_id"), "participant_context.snapshot_id"
+        ),
+        snapshot_version=_text(
+            participant_payload.get("snapshot_version"),
+            "participant_context.snapshot_version",
+        ),
+        collected_at=_text(
+            participant_payload.get("collected_at"),
+            "participant_context.collected_at",
+        ),
+        devices=tuple(
+            ResourceDevice.from_dict(_mapping(item, "participant_context.devices[]"))
+            for item in _sequence(
+                participant_payload.get("devices"), "participant_context.devices"
+            )
+        ),
+        network_links=tuple(
+            NetworkLink.from_dict(
+                _mapping(item, "participant_context.network_links[]")
+            )
+            for item in _sequence(
+                participant_payload.get("network_links", []),
+                "participant_context.network_links",
+            )
+        ),
+        workload_forecast=(
+            None
+            if forecast_payload is None
+            else WorkloadForecast.from_dict(
+                _mapping(forecast_payload, "participant_context.workload_forecast")
+            )
+        ),
+        source=_text(
+            participant_payload.get("source"), "participant_context.source"
+        ),
+    )
+    contexts: dict[tuple[str, str], ModelContext] = {}
+    for item in _sequence(root.get("model_contexts"), "model_contexts"):
+        model_payload = _mapping(item, "model_contexts[]")
+        model_id = _text(model_payload.get("model_id"), "model_contexts[].model_id")
+        model_version = _version(
+            model_payload.get("model_version"), "model_contexts[].model_version"
+        )
+        key = (model_id, model_version)
+        if key in contexts:
+            raise PartitionContractError(
+                "invalid_context_provider_config",
+                f"duplicate model context: {model_id}:{model_version}",
+            )
+        contexts[key] = ModelContext(
+            profile=ModelStructureProfile.from_dict(
+                _mapping(model_payload.get("profile"), "model_contexts[].profile")
+            ),
+            registry=ModelRegistryContext.from_dict(
+                _mapping(model_payload.get("registry"), "model_contexts[].registry")
+            ),
+            source=_text(model_payload.get("source"), "model_contexts[].source"),
+        )
+    if not participant_context.devices or not contexts:
+        raise PartitionContractError(
+            "invalid_context_provider_config",
+            "participant devices and model contexts are required",
+        )
+    return (
+        MappingParticipantContextProvider(participant_context),
+        MappingModelContextProvider(contexts),
+    )
 
 
 class FederatedCoordinationV04Adapter:

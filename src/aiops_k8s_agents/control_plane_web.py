@@ -56,6 +56,11 @@ from aiops_k8s_agents.prometheus_port_forward import (
     PrometheusPortForwardManager,
 )
 from aiops_k8s_agents.partition_models import PartitionContractError
+from aiops_k8s_agents.federated_coordination_adapter import (
+    ModelContextProvider,
+    ParticipantContextProvider,
+    load_mapping_context_providers,
+)
 from aiops_k8s_agents.partition_repository import PartitionPlanRepository
 from aiops_k8s_agents.partition_features import FEATURE_SCHEMA_VERSION
 from aiops_k8s_agents.partition_ranker_repository import (
@@ -64,6 +69,7 @@ from aiops_k8s_agents.partition_ranker_repository import (
 )
 from aiops_k8s_agents.model_partition_agent import ModelPartitionPolicy
 from aiops_k8s_agents.partition_service import (
+    run_federated_coordination_planning,
     run_partition_feedback,
     run_partition_planning,
 )
@@ -116,6 +122,8 @@ class RuntimeApiState:
     model_partition_artifact_root: Path
     model_partition_repository: PartitionPlanRepository
     model_partition_example_path: Path
+    federated_participant_provider: ParticipantContextProvider | None
+    federated_model_provider: ModelContextProvider | None
     ranker_registry_root: Path
     partition_artifact_signing_key: str | bytes | None
     partition_artifact_signing_key_file: Path | None
@@ -256,6 +264,17 @@ def api_model_partition_examples(request: Request) -> dict[str, object]:
                 project_root() / "config" / "examples" / "model_partition_training_v2.json"
             ).read_text(encoding="utf-8")
         )
+        coordination_examples = [
+            json.loads(
+                (
+                    project_root()
+                    / "config"
+                    / "examples"
+                    / f"federated_coordination_{kind}_v04.json"
+                ).read_text(encoding="utf-8")
+            )
+            for kind in ("fl", "sl", "inference")
+        ]
     except (OSError, json.JSONDecodeError) as exc:
         raise HTTPException(
             status_code=500,
@@ -293,6 +312,25 @@ def api_model_partition_examples(request: Request) -> dict[str, object]:
                     "produces": "PartitionExecutionPlan",
                 },
             },
+            *[
+                {
+                    "id": f"federated-coordination-{index + 1}-v04",
+                    "name": (
+                        "Federated Coordination v0.4 · "
+                        + (
+                            plan.get("learning_mode", {}).get("selected")
+                            or plan.get("inference_mode", {}).get("selected", "")
+                        )
+                    ),
+                    "coordination_plan": plan,
+                    "scope": {
+                        "selects_execution_mode": False,
+                        "requires_context_enrichment": True,
+                        "produces": "PartitionExecutionPlan",
+                    },
+                }
+                for index, plan in enumerate(coordination_examples)
+            ],
         ]
     }
 
@@ -361,6 +399,49 @@ def api_model_partition_plan(
         )
     except Exception:
         LOGGER.exception("Unexpected model partition planning failure")
+        return _partition_internal_error()
+
+
+@router.post("/api/model-partition/coordination-plan", response_model=None)
+def api_federated_coordination_plan(
+    body: dict[str, Any],
+    request: Request,
+) -> dict[str, Any] | JSONResponse:
+    state: RuntimeApiState = request.app.state.runtime_api
+    if (
+        state.federated_participant_provider is None
+        or state.federated_model_provider is None
+    ):
+        return JSONResponse(
+            status_code=422,
+            content={
+                "status": "blocked",
+                "error": {
+                    "code": "context_provider_unavailable",
+                    "message": (
+                        "participant and model context providers must be configured "
+                        "before federated coordination plans can be processed"
+                    ),
+                },
+            },
+        )
+    try:
+        report = run_federated_coordination_planning(
+            body,
+            participant_provider=state.federated_participant_provider,
+            model_provider=state.federated_model_provider,
+            policy_path=state.model_partition_policy_path,
+            artifact_root=state.model_partition_artifact_root,
+            artifact_signing_key=state.partition_artifact_signing_key,
+            artifact_signing_key_file=state.partition_artifact_signing_key_file,
+        )
+        if report.get("status") == "blocked":
+            return JSONResponse(status_code=422, content=report)
+        return report
+    except PartitionContractError as exc:
+        return _partition_error_response(exc)
+    except Exception:
+        LOGGER.exception("Unexpected federated coordination planning failure")
         return _partition_internal_error()
 
 
@@ -1785,6 +1866,9 @@ def create_app(
     model_partition_policy_path: str | Path | None = None,
     model_partition_artifact_root: str | Path | None = None,
     model_partition_example_path: str | Path | None = None,
+    federated_participant_provider: ParticipantContextProvider | None = None,
+    federated_model_provider: ModelContextProvider | None = None,
+    federated_context_path: str | Path | None = None,
     ranker_registry_root: str | Path | None = None,
     partition_artifact_signing_key: str | bytes | None = None,
     partition_artifact_signing_key_file: str | Path | None = None,
@@ -1916,6 +2000,21 @@ def create_app(
         model_partition_example_path
         or root / "config" / "examples" / "model_partition_job.json"
     ).expanduser().resolve()
+    effective_participant_provider = federated_participant_provider
+    effective_model_provider = federated_model_provider
+    context_snapshot_path = federated_context_path or os.environ.get(
+        "AIOPS_FEDERATED_CONTEXT_PATH"
+    )
+    if context_snapshot_path and (
+        effective_participant_provider is None or effective_model_provider is None
+    ):
+        configured_participant_provider, configured_model_provider = (
+            load_mapping_context_providers(context_snapshot_path)
+        )
+        effective_participant_provider = (
+            effective_participant_provider or configured_participant_provider
+        )
+        effective_model_provider = effective_model_provider or configured_model_provider
     probes = dict(
         connection_probes
         or _default_connection_probes(
@@ -1966,6 +2065,8 @@ def create_app(
         model_partition_artifact_root=partition_artifact_root,
         model_partition_repository=partition_repository,
         model_partition_example_path=partition_example_path,
+        federated_participant_provider=effective_participant_provider,
+        federated_model_provider=effective_model_provider,
         ranker_registry_root=configured_ranker_registry_root,
         partition_artifact_signing_key=partition_artifact_signing_key,
         partition_artifact_signing_key_file=configured_signing_key_file,

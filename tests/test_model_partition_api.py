@@ -7,7 +7,19 @@ from fastapi.testclient import TestClient
 from aiops_k8s_agents import control_plane_web
 from aiops_k8s_agents import partition_ranker_repository
 from aiops_k8s_agents.control_plane_web import create_app
+from aiops_k8s_agents.federated_coordination_adapter import (
+    MappingModelContextProvider,
+    MappingParticipantContextProvider,
+    ModelContext,
+    ParticipantContext,
+)
+from aiops_k8s_agents.partition_context import (
+    ModelBlock,
+    ModelRegistryContext,
+    ModelStructureProfile,
+)
 from aiops_k8s_agents.partition_features import FEATURE_ORDER
+from aiops_k8s_agents.partition_models import NetworkLink, ResourceDevice
 from aiops_k8s_agents.partition_ranker_repository import (
     VALIDATION_METRIC_KEYS,
     PartitionRankerModelArtifact,
@@ -32,6 +44,159 @@ def _inference_payload() -> dict:
         "max_end_to_end_latency_ms"
     ] = 500.0
     return payload
+
+
+def _federated_coordination_payload() -> dict:
+    return {
+        "schema_version": "0.4",
+        "task_type": "federated_training",
+        "round_plan_id": "round-plan-api-fl",
+        "job_id": "fl-training-api",
+        "session_id": "session-api",
+        "model_ref": {"model_id": "model-a", "version": 1},
+        "learning_mode": {"selected": "FL", "fallback_order": ["SL"]},
+        "coordination_mode": {"selected": "SYNC"},
+        "federated_strategy": {
+            "name": "FedAWARE",
+            "aggregation_operator": "adaptive_weighted_aggregation",
+            "parameter_ref": "fedaware-default-v1",
+        },
+        "candidate_participants": [
+            {"client_id": "node-a", "priority": 1},
+            {"client_id": "node-b", "priority": 2},
+        ],
+        "participation_policy": {
+            "type": "SYNC",
+            "candidate_pool_size": 2,
+            "target_active": 2,
+            "minimum_successful_participants": 1,
+        },
+    }
+
+
+def _federated_context_providers():
+    participant_provider = MappingParticipantContextProvider(
+        ParticipantContext(
+            snapshot_id="prometheus-snapshot-api",
+            snapshot_version="prometheus-v1",
+            collected_at="2026-08-24T12:00:00Z",
+            devices=(
+                ResourceDevice("node-a", "gpu", 200.0, 20_000, 18_000),
+                ResourceDevice("node-b", "gpu", 180.0, 20_000, 18_000),
+            ),
+            network_links=(
+                NetworkLink("node-a", "node-b", 1_000_000.0, 1.0),
+                NetworkLink("node-b", "node-a", 1_000_000.0, 1.0),
+            ),
+            workload_forecast=None,
+            source="prometheus",
+        )
+    )
+    model_provider = MappingModelContextProvider(
+        {
+            ("model-a", "1"): ModelContext(
+                profile=ModelStructureProfile(
+                    profile_id="model-a-profile-api",
+                    model_id="model-a",
+                    model_version="1",
+                    blocks=tuple(
+                        ModelBlock(
+                            f"block-{index}",
+                            (f"layer-{index}",),
+                            500,
+                            100,
+                            200,
+                        )
+                        for index in range(1, 5)
+                    ),
+                ),
+                registry=ModelRegistryContext(
+                    registry_id="registry-model-a",
+                    registry_version="registry-v1",
+                    model_id="model-a",
+                    approved_model_version="1",
+                ),
+                source="model-registry",
+            )
+        }
+    )
+    return participant_provider, model_provider
+
+
+def _write_federated_context_file(tmp_path: Path) -> Path:
+    path = tmp_path / "federated-context.json"
+    path.write_text(
+        json.dumps(
+            {
+                "participant_context": {
+                    "snapshot_id": "prometheus-snapshot-file",
+                    "snapshot_version": "prometheus-v1",
+                    "collected_at": "2026-08-24T12:00:00Z",
+                    "source": "prometheus",
+                    "devices": [
+                        {
+                            "device_id": "node-a",
+                            "device_type": "gpu",
+                            "compute_units_per_second": 200.0,
+                            "memory_capacity_bytes": 20000,
+                            "memory_available_bytes": 18000,
+                        },
+                        {
+                            "device_id": "node-b",
+                            "device_type": "gpu",
+                            "compute_units_per_second": 180.0,
+                            "memory_capacity_bytes": 20000,
+                            "memory_available_bytes": 18000,
+                        },
+                    ],
+                    "network_links": [
+                        {
+                            "source_device": "node-a",
+                            "target_device": "node-b",
+                            "bandwidth_bytes_per_second": 1000000.0,
+                            "latency_ms": 1.0,
+                        },
+                        {
+                            "source_device": "node-b",
+                            "target_device": "node-a",
+                            "bandwidth_bytes_per_second": 1000000.0,
+                            "latency_ms": 1.0,
+                        },
+                    ],
+                },
+                "model_contexts": [
+                    {
+                        "model_id": "model-a",
+                        "model_version": "1",
+                        "source": "model-registry",
+                        "profile": {
+                            "profile_id": "model-a-profile-file",
+                            "model_id": "model-a",
+                            "model_version": "1",
+                            "blocks": [
+                                {
+                                    "block_id": f"block-{index}",
+                                    "layer_names": [f"layer-{index}"],
+                                    "parameter_bytes": 500,
+                                    "activation_bytes": 100,
+                                    "working_memory_bytes": 200,
+                                }
+                                for index in range(1, 5)
+                            ],
+                        },
+                        "registry": {
+                            "registry_id": "registry-model-a",
+                            "registry_version": "registry-v1",
+                            "model_id": "model-a",
+                            "approved_model_version": "1",
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    return path
 
 
 def _latency_feedback(report: dict) -> dict:
@@ -461,6 +626,24 @@ def test_model_partition_examples_expose_v2_inference_and_training_contracts(tmp
     )
 
 
+def test_model_partition_examples_expose_federated_coordination_v04_inputs(tmp_path):
+    client = TestClient(
+        create_app(model_partition_artifact_root=tmp_path / "artifacts")
+    )
+
+    response = client.get("/api/model-partition/examples")
+
+    assert response.status_code == 200
+    coordination_examples = {
+        item["coordination_plan"]["learning_mode"]["selected"]
+        if "learning_mode" in item["coordination_plan"]
+        else item["coordination_plan"]["inference_mode"]["selected"]
+        for item in response.json()["examples"]
+        if "coordination_plan" in item
+    }
+    assert coordination_examples == {"FL", "SL", "PARTITIONED"}
+
+
 def test_model_partition_plan_api_runs_shared_validated_service(tmp_path):
     client = TestClient(
         create_app(model_partition_artifact_root=tmp_path / "artifacts")
@@ -479,6 +662,74 @@ def test_model_partition_plan_api_runs_shared_validated_service(tmp_path):
     assert report["evaluation"]["evidence_level"] == "predicted"
     assert report["evaluation"]["estimated"] is True
     assert Path(report["artifact_path"]).is_file()
+
+
+def test_federated_coordination_plan_api_accepts_v04_input(tmp_path):
+    participant_provider, model_provider = _federated_context_providers()
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            federated_participant_provider=participant_provider,
+            federated_model_provider=model_provider,
+        )
+    )
+
+    response = client.post(
+        "/api/model-partition/coordination-plan",
+        json=_federated_coordination_payload(),
+    )
+
+    assert response.status_code == 200
+    report = response.json()
+    assert report["status"] == "planned"
+    assert report["plan"]["strategy_id"] == "federated-full-model-v1"
+    assert report["upstream_coordination"]["schema_version"] == "0.4"
+    assert report["context_enrichment"]["participant_source"] == "prometheus"
+
+
+def test_federated_coordination_plan_api_fails_closed_without_context_providers(
+    tmp_path,
+):
+    client = TestClient(
+        create_app(model_partition_artifact_root=tmp_path / "artifacts")
+    )
+
+    response = client.post(
+        "/api/model-partition/coordination-plan",
+        json=_federated_coordination_payload(),
+    )
+
+    assert response.status_code == 422
+    assert response.json()["error"] == {
+        "code": "context_provider_unavailable",
+        "message": (
+            "participant and model context providers must be configured before "
+            "federated coordination plans can be processed"
+        ),
+    }
+
+
+def test_federated_coordination_plan_api_loads_context_snapshot_file(tmp_path):
+    client = TestClient(
+        create_app(
+            model_partition_artifact_root=tmp_path / "artifacts",
+            federated_context_path=_write_federated_context_file(tmp_path),
+        )
+    )
+
+    response = client.post(
+        "/api/model-partition/coordination-plan",
+        json=_federated_coordination_payload(),
+    )
+
+    assert response.status_code == 200
+    assert response.json()["context_enrichment"] == {
+        **response.json()["context_enrichment"],
+        "status": "complete",
+        "participant_source": "prometheus",
+        "model_source": "model-registry",
+        "snapshot_id": "prometheus-snapshot-file",
+    }
 
 
 def test_legacy_model_partition_invalid_round_plan_preserves_422_detail(tmp_path):

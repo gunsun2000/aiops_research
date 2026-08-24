@@ -271,6 +271,28 @@ aiops-k8s-agents plan-model-partition-v2 \
 `scheduling_handoff`가 포함됩니다. `scheduler_ref: null`은 외부 Scheduler가 아직
 연결되지 않았음을 뜻하며 Scheduling 성공을 의미하지 않습니다.
 
+### Federated Coordination Agent schema 0.4 입력
+
+FL, SL, PARTITIONED 계획은 participant/model context와 결합한 뒤 같은 planning core로
+처리합니다. 예제 context는 실제 Prometheus 측정값이 아닌 계약 재현용입니다.
+
+```bash
+export AIOPS_FEDERATED_CONTEXT_PATH="$PWD/config/examples/federated_coordination_context_v04.json"
+bash scripts/start_research_console.sh restart
+
+for plan in fl sl inference; do
+  curl -sS -X POST http://127.0.0.1:18180/api/model-partition/coordination-plan \
+    -H 'Content-Type: application/json' \
+    --data-binary "@config/examples/federated_coordination_${plan}_v04.json" \
+    > "$PARTITION_ROOT/federated-${plan}-v04.json"
+done
+```
+
+실제 환경에서는 upstream participant selector가 Prometheus에서 생성한 versioned
+snapshot과 Model Registry snapshot을 한 파일로 materialize하고 해당 경로를
+`AIOPS_FEDERATED_CONTEXT_PATH`에 지정합니다. SL/PARTITIONED에 network link가 없으면
+`context_enrichment.status=blocked`가 정상적인 안전 동작입니다.
+
 ### Reward Ranker Dataset, 학습, 평가
 
 학습 기능을 사용할 때만 ML extra를 설치합니다. HMAC 키는 저장소 밖의 파일로 관리하고

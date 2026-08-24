@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="description" content="안전 제어형 4-Agent AIOps 연구 운영 플랫폼" />
   <title>4-Agent AIOps Research Platform</title>
-  <link rel="stylesheet" href="/static/styles.css?v=39" />
-  <script defer src="/static/app.js?v=39"></script>
+  <link rel="stylesheet" href="/static/styles.css?v=42" />
+  <script defer src="/static/app.js?v=42"></script>
   <script defer src="/static/reference-ui.js?v=4"></script>
   <script defer src="/static/bulk-delete-ui.js?v=3"></script>
 </head>
@@ -87,7 +87,7 @@
       <section class="view-panel" data-view-panel="observability" hidden><div class="page-heading"><div><h2 id="observability-title">관측 데이터</h2><p>Incident Source와 Evidence Provider를 분리하여 확인합니다.</p></div></div><div class="evidence-layout"><section class="surface evidence-source-card"><dl><div><dt>Incident Source</dt><dd id="observed-incident-source">Chaos Mesh Simulation</dd></div><div><dt>Evidence Provider</dt><dd id="observed-provider">SyntheticEvidenceProvider</dd></div><div><dt>Scenario</dt><dd id="observed-scenario">CPU Saturation</dd></div><div><dt>Target</dt><dd id="observed-target">online-boutique/paymentservice</dd></div><div><dt>Metric</dt><dd id="observed-metric">cpu · threshold 80</dd></div><div><dt>Collection Time</dt><dd id="observed-collected-at">수집되지 않음</dd></div></dl></section><section class="surface evidence-values"><div id="observed-metrics"></div></section></div><section class="surface before-after"><h3>복구 전 / 후 Evidence</h3><table><tbody id="evidence-comparison-body"><tr><td>복구 전후 Evidence가 수집되지 않았습니다.</td></tr></tbody></table></section></section>
 
       <section class="view-panel partition-workspace" data-view-panel="orchestration" aria-labelledby="partition-title" hidden>
-        <header class="page-heading partition-heading"><div><h2 id="partition-title">모델 분할 오케스트레이션</h2><p>Model Partition Orchestrator Agent가 승인된 AI 작업의 분할 위치와 장치별 실행 구간을 결정합니다.</p></div><div class="partition-heading-actions"><span id="partition-status" class="status-badge neutral">입력 대기</span><button type="button" id="partition-load-inference" class="secondary-action">추론 입력 예제</button><button type="button" id="partition-load-training" class="secondary-action">학습 입력 예제</button><button type="button" id="partition-plan-run" class="primary-action" disabled>분할 계획 생성</button></div></header>
+        <header class="page-heading partition-heading"><div><h2 id="partition-title">모델 분할 오케스트레이션</h2><p>Federated Coordination Agent의 승인 계획을 받아 모델 분할과 장치별 실행 구간을 결정합니다.</p></div><div class="partition-heading-actions"><span id="partition-status" class="status-badge neutral">입력 대기</span><button type="button" id="partition-plan-run" class="primary-action" disabled>분할 계획 생성</button><button type="button" id="partition-load-inference" class="visually-hidden" tabindex="-1">추론 입력 예제</button><button type="button" id="partition-load-training" class="visually-hidden" tabindex="-1">학습 입력 예제</button></div></header>
         <section id="partition-purpose-flow" class="partition-purpose-flow" aria-label="Model Partition Orchestrator input and output flow">
           <article><span>INPUT</span><strong>승인된 Coordination Plan</strong><small>모델·SLA·실행 모드 + System Snapshot</small></article><i aria-hidden="true">→</i>
           <article class="is-agent"><span>AGENT</span><strong>Model Partition Orchestrator</strong><small>분할 위치·장치 배치·통신 비용 비교</small></article><i aria-hidden="true">→</i>
@@ -103,6 +103,12 @@
         </nav>
         <section id="partition-stage-intake" class="partition-stage-panel" data-partition-stage-panel="intake" role="tabpanel">
           <div class="partition-stage-heading"><div><span>01</span><h3>계획 입력 확인</h3></div><p>상위 Coordination Agent가 승인한 작업과 현재 시스템 상태를 확인합니다.</p></div>
+          <section class="partition-source-panel" aria-labelledby="partition-source-heading">
+            <div><h4 id="partition-source-heading">입력 형식</h4><p>팀원이 전달한 v0.4 JSON을 그대로 사용하거나 내부 V2 회귀 예제를 선택합니다.</p></div>
+            <label>계획 유형<select id="partition-source-select"><optgroup label="Federated Coordination v0.4"><option value="coordination-FL">FL 학습 계획</option><option value="coordination-SL">SL 학습 계획</option><option value="coordination-PARTITIONED">분산 추론 계획</option></optgroup><optgroup label="내부 V2 회귀 예제"><option value="internal-inference">추론 V2</option><option value="internal-training">학습 V2</option></optgroup></select></label>
+            <button type="button" id="partition-load-source" class="secondary-action">예제 불러오기</button>
+          </section>
+          <details class="partition-json-input"><summary>Coordination Plan JSON 직접 입력</summary><label for="partition-coordination-json">schema_version 0.4 원문</label><textarea id="partition-coordination-json" spellcheck="false" placeholder="Federated Coordination Agent 출력 JSON을 붙여넣으세요."></textarea><div><button type="button" id="partition-apply-json" class="secondary-action">JSON 입력 적용</button><span id="partition-context-status" class="status-badge neutral">컨텍스트 보강 대기</span></div></details>
           <dl id="partition-intake-details" class="partition-detail-grid"><div><dt>상태</dt><dd>샘플을 선택하면 V2 planning request가 표시됩니다.</dd></div></dl>
           <details id="partition-intake-research-details" class="partition-research-details"><summary>세부 입력·provenance</summary><dl id="partition-intake-research-content" class="partition-detail-grid"></dl></details>
           <p id="partition-error" class="partition-error" aria-live="polite"></p>

@@ -1,0 +1,33 @@
+{
+  "schema_version": "0.4",
+  "task_type": "federated_training",
+  "round_plan_id": "round-plan-sl-example",
+  "job_id": "sl-training-001",
+  "session_id": "session-sl-001",
+  "model_ref": {
+    "model_id": "model-a",
+    "version": 1
+  },
+  "learning_mode": {
+    "selected": "SL",
+    "fallback_order": ["FL"]
+  },
+  "coordination_mode": {
+    "selected": "SYNC"
+  },
+  "federated_strategy": {
+    "name": "SplitFed",
+    "aggregation_operator": "splitfed_runtime",
+    "parameter_ref": "splitfed-default-v1"
+  },
+  "candidate_participants": [
+    {"client_id": "icns-163-180-117-64", "priority": 1},
+    {"client_id": "ubuntu216-163-180-117-216", "priority": 2}
+  ],
+  "participation_policy": {
+    "type": "SYNC",
+    "candidate_pool_size": 2,
+    "target_active": 2,
+    "minimum_successful_participants": 1
+  }
+}

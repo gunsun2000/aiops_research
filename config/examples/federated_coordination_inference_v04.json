@@ -1,0 +1,29 @@
+{
+  "schema_version": "0.4",
+  "task_type": "distributed_inference",
+  "round_plan_id": "inference-plan-partitioned-example",
+  "inference_plan_id": "inference-plan-partitioned-example",
+  "job_id": "inference-001",
+  "session_id": "session-inference-001",
+  "model_ref": {
+    "model_id": "model-a",
+    "version": 1
+  },
+  "inference_mode": {
+    "selected": "PARTITIONED",
+    "fallback_order": ["REPLICATED"]
+  },
+  "candidate_participants": [
+    {"client_id": "icns-163-180-117-64", "priority": 1},
+    {"client_id": "ubuntu216-163-180-117-216", "priority": 2}
+  ],
+  "serving_policy": {
+    "routing_policy": "LEAST_LOADED",
+    "candidate_pool_size": 2,
+    "pipeline_parallelism": 2,
+    "max_batch_size": 8,
+    "max_concurrent_requests": 32,
+    "request_timeout_sec": 10,
+    "target_latency_ms": 200
+  }
+}

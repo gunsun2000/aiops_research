@@ -90,8 +90,15 @@ export PROMETHEUS_URL="${PROMETHEUS_URL:-http://127.0.0.1:9091}"
 export AIOPS_AUTO_PORT_FORWARD="${AIOPS_AUTO_PORT_FORWARD:-auto}"
 export AIOPSLAB_ROOT
 export AIOPSLAB_PYTHON
+export AIOPS_FEDERATED_CONTEXT_PATH="${AIOPS_FEDERATED_CONTEXT_PATH:-$AIOPS_REPO_ROOT/config/examples/federated_coordination_context_v04.json}"
 export AIOPS_BIND_ADDRESS="${AIOPS_BIND_ADDRESS:-127.0.0.1}"
 export PORT="${PORT:-18180}"
+
+if [[ ! -f "$AIOPS_FEDERATED_CONTEXT_PATH" ]]; then
+  echo "warning: federated participant/model context was not found; v0.4 coordination plans will be blocked" >&2
+else
+  echo "Model Partition context: $AIOPS_FEDERATED_CONTEXT_PATH"
+fi
 
 if ! command -v kubectl >/dev/null 2>&1; then
   echo "warning: kubectl was not found; Mock UI will start without cluster connections" >&2

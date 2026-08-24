@@ -27,8 +27,8 @@ def test_console_has_five_primary_research_views():
     assert "AI Workload Orchestration" in html
     assert "AIOpsLab Benchmark" in html
     assert "실험 결과" in html
-    assert "styles.css?v=39" in html
-    assert "app.js?v=39" in html
+    assert "styles.css?v=42" in html
+    assert "app.js?v=42" in html
 
 
 def test_model_partition_workspace_preserves_upstream_approval_boundary():
@@ -55,8 +55,38 @@ def test_model_partition_workspace_preserves_upstream_approval_boundary():
     assert 'id="partition-mode-select"' not in html
     assert "/api/model-partition/plans" in script
     assert "/api/model-partition/strategies" in script
+
+
+def test_model_partition_workspace_accepts_federated_coordination_v04_plans():
+    html = Path("ui/control_plane_static/index.html").read_text(encoding="utf-8")
+    script = Path("ui/control_plane_static/app.js").read_text(encoding="utf-8")
+
+    for element_id in (
+        "partition-source-select",
+        "partition-load-source",
+        "partition-coordination-json",
+        "partition-apply-json",
+        "partition-context-status",
+    ):
+        assert f'id="{element_id}"' in html
+    assert "/api/model-partition/coordination-plan" in script
+    assert "partitionCoordinationPlan" in script
+    assert "upstream=state.partitionCoordinationPlan" in script
+    assert "participant별 전체 모델 replica" in script
+    assert "Federated Coordination v0.4" in html
     assert "/feedback" in script
     assert "Estimated reward" in script
+
+
+def test_model_partition_workspace_renders_safe_block_report_from_422_response():
+    script = _source(APP_JS)
+
+    assert "error.payload=payload" in script
+    assert 'error.payload.kind==="model_partition_orchestration"' in script
+    assert "state.partitionReport=error.payload" in script
+    assert "loadPartitionHistorySafely" in script
+    assert 'blocked?"\\uacc4\\ud68d \\ucc28\\ub2e8"' in script
+    assert 'setPartitionStage("handoff")' in script
 
 
 def test_model_partition_workspace_exposes_guarded_ranker_controls():
@@ -137,8 +167,8 @@ def test_orchestration_workspace_explains_its_input_decision_output_and_next_sta
     ):
         assert label in index_html
     assert "지연시간·메모리 압력·통신량을 함께 비교한 결과" in script
-    assert "기준 설정 완료" in script
-    assert "외부 전달 준비 완료" in script
+    assert "\\uae30\\uc900 \\uc124\\uc815 \\uc644\\ub8cc" in script
+    assert "\\uc678\\ubd80 \\uc804\\ub2ec \\uc900\\ube44 \\uc644\\ub8cc" in script
 
 
 def test_orchestration_strategy_shows_plain_language_result_before_raw_policy_data():

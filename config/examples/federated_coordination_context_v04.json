@@ -1,0 +1,62 @@
+{
+  "participant_context": {
+    "snapshot_id": "prometheus-participant-snapshot-example",
+    "snapshot_version": "example-v1",
+    "collected_at": "2026-08-24T00:00:00Z",
+    "source": "prometheus-snapshot-example",
+    "devices": [
+      {
+        "device_id": "icns-163-180-117-64",
+        "device_type": "gpu",
+        "compute_units_per_second": 2000000000000.0,
+        "memory_capacity_bytes": 25769803776,
+        "memory_available_bytes": 19327352832
+      },
+      {
+        "device_id": "ubuntu216-163-180-117-216",
+        "device_type": "gpu",
+        "compute_units_per_second": 1800000000000.0,
+        "memory_capacity_bytes": 25769803776,
+        "memory_available_bytes": 17179869184
+      }
+    ],
+    "network_links": [
+      {
+        "source_device": "icns-163-180-117-64",
+        "target_device": "ubuntu216-163-180-117-216",
+        "bandwidth_bytes_per_second": 125000000.0,
+        "latency_ms": 2.0
+      },
+      {
+        "source_device": "ubuntu216-163-180-117-216",
+        "target_device": "icns-163-180-117-64",
+        "bandwidth_bytes_per_second": 125000000.0,
+        "latency_ms": 2.0
+      }
+    ]
+  },
+  "model_contexts": [
+    {
+      "model_id": "model-a",
+      "model_version": "1",
+      "source": "model-registry-example",
+      "profile": {
+        "profile_id": "model-a-transformer-example-v1",
+        "model_id": "model-a",
+        "model_version": "1",
+        "blocks": [
+          {"block_id": "embedding", "layer_names": ["embedding"], "parameter_bytes": 1073741824, "activation_bytes": 268435456, "working_memory_bytes": 536870912},
+          {"block_id": "encoder-1", "layer_names": ["encoder-1"], "parameter_bytes": 2147483648, "activation_bytes": 536870912, "working_memory_bytes": 1073741824},
+          {"block_id": "encoder-2", "layer_names": ["encoder-2"], "parameter_bytes": 2147483648, "activation_bytes": 536870912, "working_memory_bytes": 1073741824},
+          {"block_id": "head", "layer_names": ["head"], "parameter_bytes": 1073741824, "activation_bytes": 268435456, "working_memory_bytes": 536870912}
+        ]
+      },
+      "registry": {
+        "registry_id": "model-registry-example",
+        "registry_version": "registry-v1",
+        "model_id": "model-a",
+        "approved_model_version": "1"
+      }
+    }
+  ]
+}

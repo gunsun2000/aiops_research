@@ -279,6 +279,35 @@ artifact를 준비하는 단계이며, Scheduling, placement, GPU 사용, 학습
 이 저장소의 범위 밖입니다. 웹의 reward와 성능 값은 source와 timestamp가 있는 observed
 evidence가 명시되지 않는 한 **실행 전 예측**입니다.
 
+상위 `Federated Coordination Agent`가 전달하는 schema `0.4` 계획도 그대로 입력할 수
+있습니다. Orchestrator는 계획의 승인 모드를 변경하지 않고, participant/model context를
+결합해 다음처럼 처리합니다.
+
+| 상위 입력 | 내부 처리 | 출력 |
+| --- | --- | --- |
+| `learning_mode.selected=FL` | participant별 전체 모델 replica와 aggregation graph 생성 | `federated-full-model-v1` |
+| `learning_mode.selected=SL` | 모델 split 후보, forward/backward communication, memory 검증 | `training-partition-v1` |
+| `inference_mode.selected=PARTITIONED` | 추론 split 후보, latency/throughput/resource 검증 | `inference-partition-v1` |
+
+팀원이 보낸 계획에는 participant ID만 있으므로, 자원·네트워크·모델 구조는 별도의
+versioned context가 필요합니다. 시작 스크립트는 재현 가능한 예제 context를 자동으로
+연결합니다. 실제 통합에서는 이 경로를 Prometheus와 Model Registry에서 생성한 최신
+스냅샷으로 교체합니다.
+
+```bash
+export AIOPS_FEDERATED_CONTEXT_PATH="$PWD/config/examples/federated_coordination_context_v04.json"
+bash scripts/start_research_console.sh restart
+
+curl -sS -X POST http://127.0.0.1:18180/api/model-partition/coordination-plan \
+  -H 'Content-Type: application/json' \
+  --data-binary @config/examples/federated_coordination_fl_v04.json \
+  | python -m json.tool
+```
+
+SL 또는 PARTITIONED 계획에 필요한 bandwidth evidence가 없으면 계획을 임의 생성하지
+않고 `blocked`로 종료합니다. 예제 context는 UI/계약 재현용이며 실제 Prometheus 성능
+근거가 아닙니다.
+
 처음에는 editable install로 현재 checkout의 CLI를 사용합니다.
 
 ```bash
@@ -290,6 +319,7 @@ aiops-k8s-agents plan-model-partition-v2 \
 ```
 
 상세 구조는 [Orchestrator Agent 설계](docs/design/model_partition_orchestrator_agent_design.md),
+상위 계획 연동은 [Federated Coordination 연동·시험 가이드](docs/experiments/federated_coordination_partition_experiment_guide.md),
 학습·비교 절차는 [Reward Ranker 실험 가이드](docs/experiments/partition_ranker_experiment_guide.md),
 전체 명령은 [실행 코드 가이드](docs/submission/execution_code_guide.md), 재현성 기준은
 [시험 가이드](docs/submission/test_guide.md)에서 확인합니다.
@@ -316,6 +346,7 @@ go test ./...
 | [설치·실행 가이드](docs/submission/install_and_run_guide.md) | 환경별 상세 설치 |
 | [Real runtime 가이드](docs/experiments/platform_real_runtime_guide.md) | Prometheus·Chaos Mesh·Kubernetes 검증 |
 | [Recovery 실험 가이드](docs/experiments/recovery_action_experiment_guide.md) | 장애별 Action 실험 |
+| [Federated Coordination 연동 가이드](docs/experiments/federated_coordination_partition_experiment_guide.md) | FL·SL·분산 추론 계획 입력과 Model Partition 출력 검증 |
 | [정량 분석 가이드](docs/experiments/recovery_quantitative_analysis_guide.md) | 성공률·복구 시간·Reward 분석 |
 | [Control Plane UI 가이드](docs/submission/control_plane_ui_guide.md) | 웹 화면과 API |
 | [연구 보고서](docs/deliverables/AIOps_4Agent_Research_Report.docx) | 발표·검토용 DOCX |

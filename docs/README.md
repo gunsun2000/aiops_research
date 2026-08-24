@@ -71,6 +71,7 @@ docs/
 | `recovery_action_experiment_guide.md` | Chaos Mesh 장애별 recovery action 실험 |
 | `recovery_quantitative_analysis_guide.md` | 복구 시간, 성공률, reward 그래프 분석 |
 | `full_stack_experiment_guide.md` | full-stack 실험 환경 구성 |
+| `federated_coordination_partition_experiment_guide.md` | Federated Coordination v0.4 계획의 Model Partition 연동·검증 |
 | `experiment_commands.md` | 전체 실험 명령 기록 |
 | `server_migration_runbook.md` | 서버 이관 및 실행 절차 |
 

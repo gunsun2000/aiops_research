@@ -85,3 +85,33 @@ predicted, synthetic, mock, dry-run 결과는 실제 Runtime 성능이나 학습
 Dataset Builder, Trainer, Evaluator, Model Registry는 Orchestrator를 지원하는 오프라인
 연구 구성요소다. 후보 생성과 Hard Constraint 판정은 계속 결정론적 코어가 담당한다.
 
+## 6. Federated Coordination Agent schema 0.4 연동
+
+Model Partition Orchestrator는 상위 Agent의 FL·SL·분산 추론 계획을 다음 계약으로
+수용한다.
+
+```text
+Federated Coordination Agent schema 0.4
+  + Versioned Participant Context (Prometheus snapshot)
+  + Versioned Model Context (Model Registry)
+  -> strict contract validation
+  -> V2 planning contract adaptation
+  -> deterministic strategy and hard feasibility
+  -> PartitionExecutionPlan + Scheduling handoff
+```
+
+| 상위 선택 | Orchestrator 전략 | 의미 |
+| --- | --- | --- |
+| `FL` | `federated-full-model-v1` | participant마다 전체 모델을 배치하고 aggregation 경로를 계획 |
+| `SL` | `training-partition-v1` | 모델 분할점과 양방향 activation/gradient 통신을 계획 |
+| `PARTITIONED` | `inference-partition-v1` | 추론 파이프라인 분할과 forward-only 통신을 계획 |
+
+상위 계획의 `round_plan_id`, `session_id`, mode, fallback order, participant priority,
+federated/serving policy는 provenance로 보존한다. Orchestrator는 fallback mode를 자동
+선택하지 않는다. 필수 participant, 승인 모델 버전, network link가 context에 없으면
+fail-closed로 `blocked`를 반환한다.
+
+`config/examples/federated_coordination_context_v04.json`은 계약 재현용 정적
+스냅샷이다. 운영 연결에서는 Prometheus와 Model Registry에서 수집한 값을 동일한
+schema로 materialize하고 `AIOPS_FEDERATED_CONTEXT_PATH`로 주입한다. 따라서 이 예제의
+자원·bandwidth 값은 실제 성능 측정 결과로 인용하지 않는다.
