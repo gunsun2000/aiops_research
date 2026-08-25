@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orchestrator-Agent</title>
+  <link rel="stylesheet" href="/assets/styles.css?v=1">
+  <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
+  <script src="/assets/app.js?v=1" defer></script>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand-mark" aria-hidden="true">OA</div>
+      <div class="brand-copy">
+        <strong>Orchestrator-Agent</strong>
+        <span>Model Partition Research Workbench</span>
+      </div>
+      <nav aria-label="Workbench sections">
+        <button class="nav-item active" data-section="workbench"><i data-lucide="workflow"></i><span>Planning Workbench</span></button>
+        <button class="nav-item" data-section="artifacts"><i data-lucide="archive"></i><span>Plan Artifacts</span></button>
+        <button class="nav-item" data-section="policies"><i data-lucide="sliders-horizontal"></i><span>Policy & Strategy</span></button>
+      </nav>
+      <div class="boundary-note">
+        <span class="status-dot"></span>
+        <div><strong>Planning boundary</strong><small>No runtime execution or scheduling mutation</small></div>
+      </div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">AI WORKLOAD ORCHESTRATION</p>
+          <h1>Model Partition Planning</h1>
+        </div>
+        <div class="api-state" id="apiState"><span class="status-dot"></span><span>API 확인 중</span></div>
+      </header>
+
+      <section id="workbench" class="workspace active">
+        <div class="workflow-strip" aria-label="Orchestration stages">
+          <div class="stage active"><b>01</b><span>Input &amp; Context</span></div>
+          <i data-lucide="arrow-right"></i>
+          <div class="stage"><b>02</b><span>Partition Decision</span></div>
+          <i data-lucide="arrow-right"></i>
+          <div class="stage"><b>03</b><span>Scheduling Handoff</span></div>
+        </div>
+
+        <div class="workbench-grid">
+          <section class="input-panel panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">FEDERATED COORDINATION</p><h2>Input &amp; Context</h2></div>
+              <button class="icon-button" id="resetButton" title="Reset input" aria-label="Reset input"><i data-lucide="rotate-ccw"></i></button>
+            </div>
+
+            <label for="exampleSelect">Coordination plan</label>
+            <select id="exampleSelect">
+              <option value="fl-v04">FL training plan</option>
+              <option value="sl-v04">SL training plan</option>
+              <option value="inference-v04">Distributed inference plan</option>
+            </select>
+
+            <div class="input-summary">
+              <div><span>Task</span><strong id="taskType">-</strong></div>
+              <div><span>Mode</span><strong id="selectedMode">-</strong></div>
+              <div><span>Participants</span><strong id="participantCount">-</strong></div>
+              <div><span>Model</span><strong id="modelReference">-</strong></div>
+            </div>
+
+            <div class="context-source">
+              <i data-lucide="database"></i>
+              <div><span>Context provider</span><strong id="contextSource">JSON snapshot</strong></div>
+              <span class="tag">read-only</span>
+            </div>
+
+            <details>
+              <summary>Request JSON</summary>
+              <textarea id="requestJson" spellcheck="false" aria-label="Coordination request JSON"></textarea>
+            </details>
+            <details>
+              <summary>System context JSON</summary>
+              <textarea id="contextJson" spellcheck="false" aria-label="System context JSON"></textarea>
+            </details>
+
+            <label for="selectionMode">Candidate selection</label>
+            <select id="selectionMode">
+              <option value="deterministic">Deterministic policy</option>
+              <option value="shadow">Shadow ranker</option>
+              <option value="learned_guarded">Learned guarded ranker</option>
+            </select>
+
+            <button class="primary-button" id="generateButton"><i data-lucide="play"></i><span>Generate Plan</span></button>
+          </section>
+
+          <section class="decision-panel panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">ORCHESTRATOR CORE</p><h2>Partition Decision</h2></div>
+              <span class="state-badge idle" id="planStatus">Waiting</span>
+            </div>
+
+            <div class="processing-flow" id="processingFlow">
+              <div class="process-step"><i data-lucide="inbox"></i><span>Intake</span></div>
+              <i data-lucide="chevron-right"></i>
+              <div class="process-step"><i data-lucide="boxes"></i><span>Candidate build</span></div>
+              <i data-lucide="chevron-right"></i>
+              <div class="process-step"><i data-lucide="shield-check"></i><span>Feasibility</span></div>
+              <i data-lucide="chevron-right"></i>
+              <div class="process-step"><i data-lucide="list-ordered"></i><span>Selection</span></div>
+            </div>
+
+            <div class="empty-state" id="emptyState">
+              <i data-lucide="split"></i>
+              <strong>Planning input is ready</strong>
+              <span>Generate a plan to inspect partition placement and execution graph.</span>
+            </div>
+
+            <div class="decision-content hidden" id="decisionContent">
+              <div class="decision-summary">
+                <div><span>Plan type</span><strong id="planType">-</strong></div>
+                <div><span>Strategy</span><strong id="strategyId">-</strong></div>
+                <div><span>Execution mode</span><strong id="executionMode">-</strong></div>
+                <div><span>Confidence</span><strong id="confidence">-</strong></div>
+              </div>
+              <div class="section-heading"><h3>Logical partitions</h3><span id="partitionCount">0 partitions</span></div>
+              <div class="partition-lanes" id="partitionLanes"></div>
+              <div class="metric-row">
+                <div><span>Predicted latency</span><strong id="latencyMetric">-</strong></div>
+                <div><span>Memory pressure</span><strong id="memoryMetric">-</strong></div>
+                <div><span>Communication</span><strong id="transferMetric">-</strong></div>
+                <div><span>Estimated reward</span><strong id="rewardMetric">-</strong></div>
+              </div>
+              <details>
+                <summary>Validation evidence and raw plan</summary>
+                <pre id="rawPlan"></pre>
+              </details>
+            </div>
+          </section>
+
+          <aside class="handoff-panel panel">
+            <div class="panel-heading">
+              <div><p class="eyebrow">EXTERNAL BOUNDARY</p><h2>Scheduling Handoff</h2></div>
+              <i data-lucide="send"></i>
+            </div>
+            <div class="handoff-status idle" id="handoffStatus">
+              <span class="status-dot"></span><strong>Not generated</strong>
+            </div>
+            <dl>
+              <div><dt>Plan ID</dt><dd id="planId">-</dd></div>
+              <div><dt>Version</dt><dd id="planVersion">-</dd></div>
+              <div><dt>Validation</dt><dd id="validationState">-</dd></div>
+              <div><dt>Human review</dt><dd id="humanReview">-</dd></div>
+              <div><dt>Scheduler ref</dt><dd id="schedulerRef">External</dd></div>
+            </dl>
+            <div class="handoff-message">
+              <i data-lucide="info"></i>
+              <p>This project produces a validated PartitionExecutionPlan. Dispatch and placement are owned by the external Scheduling Agent.</p>
+            </div>
+            <button class="secondary-button" id="downloadButton" disabled><i data-lucide="download"></i><span>Download plan JSON</span></button>
+          </aside>
+        </div>
+      </section>
+
+      <section id="artifacts" class="workspace">
+        <div class="section-page"><p class="eyebrow">REPRODUCIBILITY</p><h2>Plan Artifacts</h2><p>Versioned reports and feedback lineage are persisted under <code>runs/model-partition</code>.</p></div>
+      </section>
+
+      <section id="policies" class="workspace">
+        <div class="section-page"><p class="eyebrow">POLICY CATALOG</p><h2>Policy &amp; Strategy</h2><div id="strategyCatalog" class="strategy-table"></div></div>
+      </section>
+    </main>
+  </div>
+</body>
+</html>
+

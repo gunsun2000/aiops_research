@@ -1,0 +1,388 @@
+from __future__ import annotations
+
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+from orchestrator_agent.partition_artifacts import write_partition_report
+from orchestrator_agent.partition_context import canonical_json
+from orchestrator_agent.partition_features import candidate_key
+from orchestrator_agent.partition_learning import (
+    build_partition_ranking_dataset,
+    load_partition_ranking_dataset,
+)
+from orchestrator_agent.partition_models import PartitionCandidate, PartitionContractError
+from orchestrator_agent.partition_service import run_partition_planning
+
+
+ROOT = Path(__file__).resolve().parents[1]
+SIGNING_KEY = "task-6-observed-artifact-signing-key"
+
+
+@pytest.fixture(autouse=True)
+def observed_artifact_signing_key(monkeypatch):
+    monkeypatch.setenv("AIOPS_PARTITION_ARTIFACT_HMAC_KEY", SIGNING_KEY)
+
+
+def read_jsonl(path: Path) -> list[dict]:
+    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+
+
+def write_report_fixture(root: Path, report: dict) -> Path:
+    version = report["plan"]["plan_version"]
+    source_sidecar = (
+        Path(report["artifact_path"]).parent
+        / "versions"
+        / str(version)
+        / "runtime_outcome.json"
+    )
+    return write_partition_report(
+        report,
+        root,
+        sidecars=(
+            None
+            if not source_sidecar.is_file()
+            else {"runtime_outcome.json": json.loads(source_sidecar.read_text(encoding="utf-8"))}
+        ),
+    )
+
+
+@pytest.fixture
+def observed_report(tmp_path) -> dict:
+    return _planned_report(tmp_path / "source", "observed-plan", observed=True)
+
+
+@pytest.fixture
+def predicted_report(tmp_path) -> dict:
+    return _planned_report(tmp_path / "source", "predicted-plan")
+
+
+def test_dataset_defaults_to_observed_selected_candidates_only(
+    tmp_path, observed_report, predicted_report
+):
+    observed_root = tmp_path / "observed"
+    predicted_root = tmp_path / "predicted"
+    write_report_fixture(observed_root, observed_report)
+    write_report_fixture(predicted_root, predicted_report)
+
+    summary = build_partition_ranking_dataset(
+        (observed_root, predicted_root), tmp_path / "dataset.jsonl"
+    )
+    rows = read_jsonl(tmp_path / "dataset.jsonl")
+
+    assert summary.scope == "observed"
+    assert summary.row_count == 1
+    assert rows[0]["evidence_level"] == "observed"
+    assert rows[0]["candidate_key"] == observed_report["plan"]["selection"][
+        "final_selected_candidate_key"
+    ]
+    assert summary.rejections["predicted_evidence"] == 1
+    assert summary.rejections["unselected_candidate"] == sum(
+        len(report["plan"]["alternative_candidates"])
+        for report in (observed_report, predicted_report)
+    )
+
+
+def test_dataset_does_not_copy_selected_reward_to_alternatives(tmp_path, observed_report):
+    write_report_fixture(tmp_path / "artifacts", observed_report)
+
+    build_partition_ranking_dataset((tmp_path / "artifacts",), tmp_path / "dataset.jsonl")
+    rows = read_jsonl(tmp_path / "dataset.jsonl")
+
+    assert len(rows) == 1
+    assert rows[0]["candidate_key"] != candidate_key(
+        PartitionCandidate.from_dict(observed_report["plan"]["alternative_candidates"][0]),
+        observed_report["plan"]["strategy_version"],
+    )
+
+
+def test_loader_rejects_dataset_when_its_committed_source_artifact_changes(
+    tmp_path, observed_report
+):
+    root = tmp_path / "artifacts"
+    write_report_fixture(root, observed_report)
+    dataset_path = tmp_path / "dataset.jsonl"
+    build_partition_ranking_dataset((root,), dataset_path)
+    sidecar = root / observed_report["plan"]["plan_id"] / "versions" / "1" / "normalized_request.json"
+    sidecar.write_text(sidecar.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+
+    with pytest.raises(PartitionContractError) as error:
+        load_partition_ranking_dataset(dataset_path)
+
+    assert error.value.code == "dataset_source_mismatch"
+
+
+def test_loader_rejects_runtime_outcome_ref_that_disagrees_with_source_contract(
+    tmp_path, observed_report
+):
+    root = tmp_path / "artifacts"
+    write_report_fixture(root, observed_report)
+    dataset_path = tmp_path / "dataset.jsonl"
+    build_partition_ranking_dataset((root,), dataset_path)
+    rows = read_jsonl(dataset_path)
+    rows[0]["runtime_outcome_ref"] = "outcomes/forged/versions/1/result"
+    payload = (json.dumps(rows[0], sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    dataset_path.write_bytes(payload)
+    manifest_path = Path(f"{dataset_path}.manifest.json")
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["dataset_sha256"] = hashlib.sha256(payload).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+    with pytest.raises(PartitionContractError) as error:
+        load_partition_ranking_dataset(dataset_path)
+
+    assert error.value.code == "dataset_source_mismatch"
+
+
+def test_dataset_rejects_observed_row_without_source_or_timestamp(tmp_path, observed_report):
+    observed_report["evaluation"]["metrics"].pop("source")
+    write_report_fixture(tmp_path / "artifacts", observed_report)
+
+    summary = build_partition_ranking_dataset((tmp_path / "artifacts",), tmp_path / "dataset.jsonl")
+
+    assert summary.row_count == 0
+    assert summary.rejections["missing_observed_provenance"] == 1
+
+
+@pytest.mark.parametrize("source", ("mock", "dry-run", "synthetic", "offline-generator"))
+def test_dataset_excludes_non_runtime_sources_and_discloses_the_reason(
+    tmp_path, observed_report, source
+):
+    observed_report["evaluation"]["metrics"]["source"] = source
+    write_report_fixture(tmp_path / "artifacts", observed_report)
+
+    summary = build_partition_ranking_dataset((tmp_path / "artifacts",), tmp_path / "dataset.jsonl")
+    manifest = json.loads((tmp_path / "dataset.jsonl.manifest.json").read_text(encoding="utf-8"))
+
+    assert summary.row_count == 0
+    assert summary.rejections["non_runtime_evidence_source"] == 1
+    assert manifest["rejections"]["non_runtime_evidence_source"] == 1
+
+
+def test_dataset_reads_only_committed_complete_report_and_sidecars(tmp_path, observed_report):
+    root = tmp_path / "artifacts"
+    write_report_fixture(root, observed_report)
+    partial = root / "partial-plan"
+    partial.mkdir()
+    (partial / "commit.json").write_text('{"committed": true}\n', encoding="utf-8")
+    (partial / "latest.json").write_text("{not-json", encoding="utf-8")
+
+    summary = build_partition_ranking_dataset((root,), tmp_path / "dataset.jsonl")
+
+    assert summary.row_count == 1
+    assert summary.rejections["corrupt_or_partial_artifact"] == 1
+
+
+def test_dataset_excludes_a_corrupt_committed_sidecar_without_aborting(
+    tmp_path, observed_report
+):
+    root = tmp_path / "artifacts"
+    write_report_fixture(root, observed_report)
+    sidecar = (
+        root
+        / observed_report["plan"]["plan_id"]
+        / "versions"
+        / "1"
+        / "normalized_request.json"
+    )
+    sidecar.write_text("{not-json", encoding="utf-8")
+
+    summary = build_partition_ranking_dataset((root,), tmp_path / "dataset.jsonl")
+
+    assert summary.row_count == 0
+    assert summary.rejections["corrupt_or_partial_artifact"] == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("observed_at", "not-an-iso-8601-timestamp"),
+        ("total_transfer_bytes", float("nan")),
+        ("total_transfer_bytes", -1),
+        ("total_transfer_bytes", 1.5),
+    ),
+)
+def test_dataset_rejects_observed_runtime_metrics_outside_evaluator_contract(
+    tmp_path, observed_report, field, value
+):
+    observed_report["evaluation"]["metrics"][field] = value
+    write_report_fixture(tmp_path / "artifacts", observed_report)
+
+    summary = build_partition_ranking_dataset(
+        (tmp_path / "artifacts",), tmp_path / "dataset.jsonl"
+    )
+
+    assert summary.row_count == 0
+    assert summary.rejections["corrupt_or_partial_artifact"] == 1
+
+
+def test_dataset_rejects_artifact_with_committed_and_pending_markers(
+    tmp_path, observed_report
+):
+    root = tmp_path / "artifacts"
+    write_report_fixture(root, observed_report)
+    plan_directory = root / observed_report["plan"]["plan_id"]
+    (plan_directory / "pending.json").write_text('{"pending": true}\n', encoding="utf-8")
+
+    summary = build_partition_ranking_dataset((root,), tmp_path / "dataset.jsonl")
+
+    assert summary.row_count == 0
+    assert summary.rejections["corrupt_or_partial_artifact"] == 1
+
+
+def test_dataset_has_stable_order_hash_and_provenance_manifest(tmp_path, observed_report):
+    first = _planned_report(tmp_path / "source-z", "z-plan", observed=True)
+    second = _planned_report(tmp_path / "source-a", "a-plan", observed=True)
+    write_report_fixture(tmp_path / "z-root", first)
+    write_report_fixture(tmp_path / "a-root", second)
+
+    first_summary = build_partition_ranking_dataset(
+        (tmp_path / "z-root", tmp_path / "a-root"), tmp_path / "first.jsonl"
+    )
+    second_summary = build_partition_ranking_dataset(
+        (tmp_path / "a-root", tmp_path / "z-root"), tmp_path / "second.jsonl"
+    )
+    manifest = json.loads((tmp_path / "first.jsonl.manifest.json").read_text(encoding="utf-8"))
+
+    assert (tmp_path / "first.jsonl").read_bytes() == (tmp_path / "second.jsonl").read_bytes()
+    assert first_summary.dataset_hash == second_summary.dataset_hash
+    assert first_summary.dataset_hash == hashlib.sha256(
+        (tmp_path / "first.jsonl").read_bytes()
+    ).hexdigest()
+    assert manifest["selected_candidates_only"] is True
+    assert manifest["eligible_for_real_claims"] is True
+    assert manifest["schema_version"] == "partition-ranking-dataset-v1"
+
+
+def test_observed_dataset_rejects_coordinated_report_and_sidecar_tampering(
+    observed_report, tmp_path
+):
+    artifact_root = Path(observed_report["artifact_path"]).parent.parent
+    version_directory = (
+        Path(observed_report["artifact_path"]).parent / "versions" / "1"
+    )
+    for path in (version_directory / "report.json", artifact_root / observed_report["plan"]["plan_id"] / "latest.json"):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload["evaluation"]["metrics"]["latency_ms"] = 1.0
+        path.write_text(json.dumps(payload), encoding="utf-8")
+    runtime_outcome = version_directory / "runtime_outcome.json"
+    outcome = json.loads(runtime_outcome.read_text(encoding="utf-8"))
+    outcome["metrics"]["latency_ms"] = 1.0
+    unsigned_outcome = dict(outcome)
+    unsigned_outcome.pop("payload_sha256")
+    outcome["payload_sha256"] = hashlib.sha256(
+        canonical_json(unsigned_outcome).encode("utf-8")
+    ).hexdigest()
+    runtime_outcome.write_text(json.dumps(outcome), encoding="utf-8")
+
+    summary = build_partition_ranking_dataset(
+        (artifact_root,), tmp_path / "dataset.jsonl"
+    )
+
+    assert summary.row_count == 0
+    assert summary.rejections["authenticated_manifest_mismatch"] == 1
+
+
+def test_observed_dataset_rejects_tampered_normalized_request_before_features(
+    observed_report, tmp_path
+):
+    artifact_root = Path(observed_report["artifact_path"]).parent.parent
+    sidecar = (
+        Path(observed_report["artifact_path"]).parent
+        / "versions"
+        / "1"
+        / "normalized_request.json"
+    )
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    payload["devices"][0]["compute_units_per_second"] = 999_999_999.0
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+    summary = build_partition_ranking_dataset(
+        (artifact_root,), tmp_path / "dataset.jsonl"
+    )
+
+    assert summary.row_count == 0
+    assert summary.rejections["authenticated_manifest_mismatch"] == 1
+
+
+def test_observed_dataset_rejects_tampered_partition_intent_before_features(
+    observed_report, tmp_path
+):
+    artifact_root = Path(observed_report["artifact_path"]).parent.parent
+    sidecar = (
+        Path(observed_report["artifact_path"]).parent
+        / "versions"
+        / "1"
+        / "partition_intent.json"
+    )
+    payload = json.loads(sidecar.read_text(encoding="utf-8"))
+    payload["objective_weights"][0][1] = 999_999_999.0
+    sidecar.write_text(json.dumps(payload), encoding="utf-8")
+
+    summary = build_partition_ranking_dataset(
+        (artifact_root,), tmp_path / "dataset.jsonl"
+    )
+
+    assert summary.row_count == 0
+    assert summary.rejections["authenticated_manifest_mismatch"] == 1
+
+
+def test_observed_dataset_rejects_unexpected_version_file_before_features(
+    observed_report, tmp_path
+):
+    artifact_root = Path(observed_report["artifact_path"]).parent.parent
+    unexpected_file = (
+        Path(observed_report["artifact_path"]).parent
+        / "versions"
+        / "1"
+        / "unexpected.json"
+    )
+    unexpected_file.write_text("{}", encoding="utf-8")
+
+    summary = build_partition_ranking_dataset(
+        (artifact_root,), tmp_path / "dataset.jsonl"
+    )
+
+    assert summary.row_count == 0
+    assert summary.rejections["authenticated_manifest_mismatch"] == 1
+
+
+def test_observed_dataset_requires_external_signing_key(
+    observed_report, tmp_path, monkeypatch
+):
+    monkeypatch.delenv("AIOPS_PARTITION_ARTIFACT_HMAC_KEY")
+    artifact_root = Path(observed_report["artifact_path"]).parent.parent
+
+    with pytest.raises(PartitionContractError) as error:
+        build_partition_ranking_dataset((artifact_root,), tmp_path / "dataset.jsonl")
+
+    assert error.value.code == "artifact_signing_key_required"
+
+
+def _planned_report(artifact_root: Path, plan_id: str, *, observed: bool = False) -> dict:
+    payload = json.loads(
+        (ROOT / "config/examples/model_partition_inference_v2.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    return run_partition_planning(
+        payload,
+        policy_path=ROOT / "config/model_partition_policy.json",
+        artifact_root=artifact_root,
+        plan_id_factory=lambda: plan_id,
+        observed=(
+            None
+            if not observed
+            else {
+                "latency_ms": 120.0,
+                "maximum_memory_pressure": 0.4,
+                "total_transfer_bytes": 2048,
+                "source": "runtime-monitor",
+                "observed_at": "2026-08-21T09:30:00Z",
+                "runtime_outcome_ref": f"outcomes/{plan_id}/versions/1/result",
+            }
+        ),
+    )
+

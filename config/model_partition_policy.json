@@ -1,0 +1,57 @@
+{
+  "version": "partition-policy-v1",
+  "weights": {
+    "latency": 0.5,
+    "memory_pressure": 0.3,
+    "communication": 0.2
+  },
+  "normalization": {
+    "latency_reference_ms": 1000.0,
+    "transfer_reference_bytes": 5000000
+  },
+  "max_replan_attempts": 2,
+  "learned_ranker_guard": {
+    "minimum_observed_samples": 30,
+    "minimum_independent_groups": 5,
+    "maximum_holdout_mae": 0.25,
+    "minimum_spearman_correlation": 0.30,
+    "minimum_selection_confidence": 0.70,
+    "maximum_ood_feature_ratio": 0.20
+  },
+  "strategy_policies": {
+    "inference-partition-v1": {
+      "supported_modes": ["split_inference", "pipeline_parallel", "split_learning"],
+      "objectives": {
+        "latency": 0.5,
+        "memory_pressure": 0.3,
+        "communication": 0.2
+      }
+    },
+    "training-partition-v1": {
+      "supported_modes": ["pipeline_parallel", "split_learning", "hybrid_partition"],
+      "forbidden_split_boundaries": [2],
+      "objectives": {
+        "step_time": 0.35,
+        "load_balance": 0.20,
+        "memory_pressure": 0.20,
+        "communication": 0.15,
+        "resilience": 0.10
+      }
+    },
+    "federated-full-model-v1": {
+      "supported_modes": ["federated_learning"],
+      "objectives": {
+        "step_time": 0.35,
+        "load_balance": 0.20,
+        "memory_pressure": 0.20,
+        "communication": 0.15,
+        "resilience": 0.10
+      }
+    }
+  },
+  "confidence": {
+    "base": 0.95,
+    "missing_forecast_penalty": 0.15,
+    "legacy_input_penalty": 0.10
+  }
+}
