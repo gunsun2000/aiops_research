@@ -33,6 +33,8 @@ def test_plan_artifact_workspace_exposes_catalog_details_and_lineage() -> None:
         "artifactDetail",
         "artifactHistory",
         "artifactDownloadButton",
+        "artifactDeleteButton",
+        "artifactActionMessage",
     ):
         assert f'id="{element_id}"' in html
 
@@ -43,5 +45,10 @@ def test_plan_artifact_workspace_exposes_catalog_details_and_lineage() -> None:
         'fetch(`/api/plans/${encodeURIComponent(planId)}/history`)',
         "await loadArtifacts(report.plan.plan_id)",
         '`/api/plans/${encodeURIComponent(plan.plan_id)}/download`',
+        "plan.display_id || plan.plan_id",
+        'method: "DELETE"',
+        "window.confirm",
+        "cannot be recovered",
+        "was permanently deleted",
     ):
         assert behavior in script

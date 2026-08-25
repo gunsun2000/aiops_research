@@ -186,6 +186,50 @@ def test_repository_marks_only_the_lineage_leaf_as_current(tmp_path, report_v1):
     assert repository.is_current_leaf("partition-plan-v2") is True
 
 
+def test_repository_permanently_deletes_a_lineage_leaf(tmp_path, report_v1):
+    repository = _repository(tmp_path)
+    repository.save(report_v1)
+
+    deleted_path = repository.delete("partition-plan-v1")
+
+    assert deleted_path == tmp_path / "partition-plan-v1"
+    assert not deleted_path.exists()
+    assert not (tmp_path / ".trash").exists()
+
+
+def test_repository_refuses_to_delete_a_plan_with_a_lineage_successor(
+    tmp_path,
+    report_v1,
+):
+    repository = _repository(tmp_path)
+    repository.save(report_v1)
+    report_v2 = copy.deepcopy(report_v1)
+    report_v2["plan"].update(
+        {
+            "plan_id": "partition-plan-v2",
+            "plan_version": 2,
+            "parent_plan_id": "partition-plan-v1",
+        }
+    )
+    repository.save(report_v2)
+
+    with pytest.raises(PartitionContractError) as error:
+        repository.delete("partition-plan-v1")
+
+    assert error.value.code == "plan_has_successor"
+    assert repository.get("partition-plan-v1")["plan"]["plan_version"] == 1
+    assert repository.get("partition-plan-v2")["plan"]["plan_version"] == 2
+
+
+def test_repository_rejects_unsafe_delete_identifiers(tmp_path):
+    repository = _repository(tmp_path)
+
+    with pytest.raises(PartitionContractError) as error:
+        repository.delete("..")
+
+    assert error.value.code == "invalid_plan_id"
+
+
 def test_repository_rejects_an_orphan_parent_plan(tmp_path, report_v1):
     repository = _repository(tmp_path)
     child = copy.deepcopy(report_v1)

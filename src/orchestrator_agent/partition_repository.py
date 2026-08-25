@@ -27,6 +27,58 @@ from orchestrator_agent.partition_validator import PartitionPlanValidator
 
 _ARTIFACT_SIGNING_KEY_ENV = "AIOPS_PARTITION_ARTIFACT_HMAC_KEY"
 _AUTHENTICATED_MANIFEST_FILE = "authenticated_manifest.json"
+_EXECUTION_MODE_CODES = {
+    "federated_learning": "FL",
+    "split_learning": "SL",
+    "distributed_inference": "DI",
+    "pipeline_parallel": "PP",
+    "tensor_parallel": "TP",
+    "data_parallel": "DP",
+}
+_PLAN_TYPE_CODES = {
+    "training": "TRAIN",
+    "inference": "INFER",
+}
+
+
+def _readable_code(value: object, known_codes: Mapping[str, str]) -> str:
+    normalized = str(value or "unknown").strip().lower()
+    if normalized in known_codes:
+        return known_codes[normalized]
+    words = [part for part in normalized.replace("-", "_").split("_") if part]
+    if len(words) > 1:
+        return "".join(word[0] for word in words).upper()
+    return (words[0] if words else "unknown").upper()[:8]
+
+
+def _creation_date_code(value: object) -> str:
+    timestamp = str(value or "").strip()
+    try:
+        return datetime.fromisoformat(timestamp.replace("Z", "+00:00")).strftime(
+            "%Y%m%d"
+        )
+    except ValueError:
+        return "UNDATED"
+
+
+def _display_id_prefix(report: Mapping[str, Any]) -> tuple[str, tuple[str, str, str]]:
+    plan = report.get("plan", {})
+    handoff = report.get("scheduling_handoff", {})
+    mode_code = _readable_code(
+        plan.get("approved_execution_mode") if isinstance(plan, Mapping) else None,
+        _EXECUTION_MODE_CODES,
+    )
+    type_code = _readable_code(
+        plan.get("plan_type") if isinstance(plan, Mapping) else None,
+        _PLAN_TYPE_CODES,
+    )
+    creation_date = _creation_date_code(
+        handoff.get("created_at") if isinstance(handoff, Mapping) else None
+    )
+    return (
+        f"{mode_code}-{type_code}-{creation_date}",
+        (mode_code, type_code, creation_date),
+    )
 
 
 @dataclass(frozen=True)
@@ -288,6 +340,7 @@ class PartitionPlanRepository:
         self._validate_plan(report, plan)
         self._validate_lineage(plan)
         persisted_report = self._with_canonical_handoff(report)
+        persisted_report["display_id"] = self._next_display_id(persisted_report)
         history = self._history_entries(plan_directory, persisted_report, plan)
         self._publish_plan_directory(
             plan_directory,
@@ -300,6 +353,7 @@ class PartitionPlanRepository:
         )
         if isinstance(report, MutableMapping):
             report["scheduling_handoff"] = persisted_report["scheduling_handoff"]
+            report["display_id"] = persisted_report["display_id"]
         return version_path
 
     def get(self, plan_id: str, version: int | None = None) -> dict[str, Any]:
@@ -336,6 +390,7 @@ class PartitionPlanRepository:
             summaries.append(
                 {
                     "plan_id": plan.get("plan_id"),
+                    "display_id": report.get("display_id"),
                     "plan_version": plan.get("plan_version"),
                     "parent_plan_id": plan.get("parent_plan_id"),
                     "plan_type": plan.get("plan_type", "legacy"),
@@ -357,13 +412,70 @@ class PartitionPlanRepository:
                     ),
                 }
             )
-        return tuple(
-            sorted(
-                summaries,
-                key=lambda item: (str(item["created_at"]), str(item["plan_id"])),
-                reverse=True,
-            )
+        chronological = sorted(
+            summaries,
+            key=lambda item: (
+                str(item["created_at"]),
+                str(item.get("display_id") or item["plan_id"]),
+            ),
         )
+        daily_sequences: dict[tuple[str, str, str], int] = {}
+        for summary in chronological:
+            mode_code = _readable_code(
+                summary.get("execution_mode"), _EXECUTION_MODE_CODES
+            )
+            type_code = _readable_code(summary.get("plan_type"), _PLAN_TYPE_CODES)
+            creation_date = _creation_date_code(summary.get("created_at"))
+            sequence_key = (mode_code, type_code, creation_date)
+            stored_display_id = str(summary.get("display_id") or "").strip()
+            prefix = f"{mode_code}-{type_code}-{creation_date}-"
+            if stored_display_id:
+                stored_sequence = stored_display_id.removeprefix(prefix)
+                if stored_sequence.isdigit() and stored_display_id.startswith(prefix):
+                    daily_sequences[sequence_key] = max(
+                        daily_sequences.get(sequence_key, 0), int(stored_sequence)
+                    )
+                continue
+            sequence = daily_sequences.get(sequence_key, 0) + 1
+            daily_sequences[sequence_key] = sequence
+            summary["display_id"] = (
+                f"{mode_code}-{type_code}-{creation_date}-{sequence:03d}"
+            )
+        return tuple(reversed(chronological))
+
+    def delete(self, plan_id: str) -> Path:
+        """Permanently delete one lineage leaf from the repository."""
+        self._recover_incomplete_transactions()
+        plan_directory = (self.root / plan_id).resolve()
+        if plan_directory.parent != self.root or plan_directory.name != plan_id:
+            raise PartitionContractError(
+                "invalid_plan_id", "plan_id must identify one plan directory"
+            )
+        self.get(plan_id)
+        if self._has_persisted_child(plan_id):
+            raise PartitionContractError(
+                "plan_has_successor",
+                "a plan with a persisted lineage successor cannot be deleted",
+            )
+        shutil.rmtree(plan_directory)
+        return plan_directory
+
+    def _next_display_id(self, report: Mapping[str, Any]) -> str:
+        prefix, sequence_key = _display_id_prefix(report)
+        highest_sequence = 0
+        for summary in self.list_summaries():
+            display_id = str(summary.get("display_id") or "")
+            summary_key = (
+                _readable_code(summary.get("execution_mode"), _EXECUTION_MODE_CODES),
+                _readable_code(summary.get("plan_type"), _PLAN_TYPE_CODES),
+                _creation_date_code(summary.get("created_at")),
+            )
+            if summary_key != sequence_key:
+                continue
+            suffix = display_id.removeprefix(f"{prefix}-")
+            if display_id.startswith(f"{prefix}-") and suffix.isdigit():
+                highest_sequence = max(highest_sequence, int(suffix))
+        return f"{prefix}-{highest_sequence + 1:03d}"
 
     def history(self, plan_id: str) -> tuple[dict[str, Any], ...]:
         lineage: list[dict[str, Any]] = []

@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from orchestrator_agent import partition_repository
 from orchestrator_agent.web import create_app
 
 
@@ -87,12 +89,14 @@ def test_plan_catalog_summarizes_a_persisted_plan(tmp_path: Path) -> None:
     ).json()
 
     response = client.get("/api/plans")
+    creation_date = report["scheduling_handoff"]["created_at"][:10].replace("-", "")
 
     assert response.status_code == 200
     assert response.json() == {
         "plans": [
             {
                 "plan_id": report["plan"]["plan_id"],
+                "display_id": f"FL-TRAIN-{creation_date}-001",
                 "plan_version": 1,
                 "parent_plan_id": None,
                 "plan_type": "training",
@@ -105,6 +109,85 @@ def test_plan_catalog_summarizes_a_persisted_plan(tmp_path: Path) -> None:
             }
         ]
     }
+
+
+def test_plan_catalog_assigns_readable_ids_by_plan_and_daily_sequence(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 25, 7, 3, 47, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(partition_repository, "datetime", FrozenDateTime)
+    client = _client(tmp_path)
+
+    for _ in range(2):
+        response = client.post(
+            "/api/coordination-plans",
+            json=_federated_coordination_payload(),
+        )
+        assert response.status_code == 200
+
+    plans = client.get("/api/plans").json()["plans"]
+
+    assert [plan["display_id"] for plan in plans] == [
+        "FL-TRAIN-20260825-002",
+        "FL-TRAIN-20260825-001",
+    ]
+    assert all(plan["plan_id"].startswith("partition-plan-") for plan in plans)
+
+
+def test_deleted_plan_is_permanently_removed_from_the_repository(
+    tmp_path: Path,
+) -> None:
+    client = _client(tmp_path)
+    report = client.post(
+        "/api/coordination-plans",
+        json=_federated_coordination_payload(),
+    ).json()
+    plan_id = report["plan"]["plan_id"]
+
+    response = client.delete(f"/api/plans/{plan_id}")
+
+    assert response.status_code == 200
+    assert response.json() == {"deleted": True, "plan_id": plan_id}
+    assert client.get("/api/plans").json() == {"plans": []}
+    assert not (tmp_path / "plans" / plan_id).exists()
+    assert not (tmp_path / "plans" / ".trash").exists()
+
+
+def test_readable_id_does_not_change_when_an_earlier_plan_is_deleted(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    class FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 8, 25, 7, 3, 47, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(partition_repository, "datetime", FrozenDateTime)
+    client = _client(tmp_path)
+    for _ in range(2):
+        response = client.post(
+            "/api/coordination-plans",
+            json=_federated_coordination_payload(),
+        )
+        assert response.status_code == 200
+    plans = client.get("/api/plans").json()["plans"]
+    first_plan_id = next(
+        plan["plan_id"]
+        for plan in plans
+        if plan["display_id"] == "FL-TRAIN-20260825-001"
+    )
+
+    assert client.delete(f"/api/plans/{first_plan_id}").status_code == 200
+
+    remaining = client.get("/api/plans").json()["plans"]
+    assert [plan["display_id"] for plan in remaining] == [
+        "FL-TRAIN-20260825-002"
+    ]
 
 
 def test_persisted_plan_download_has_a_stable_json_attachment(tmp_path: Path) -> None:

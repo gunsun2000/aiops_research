@@ -193,6 +193,11 @@ def create_app(
     def get_history(plan_id: str) -> dict[str, list[dict[str, Any]]]:
         return {"plans": list(_partition_call(repository.history, plan_id))}
 
+    @app.delete("/api/plans/{plan_id}")
+    def delete_plan(plan_id: str) -> dict[str, str | bool]:
+        _partition_call(repository.delete, plan_id)
+        return {"deleted": True, "plan_id": plan_id}
+
     @app.post("/api/plans/{plan_id}/feedback")
     def feedback(plan_id: str, payload: Mapping[str, Any]) -> dict[str, Any]:
         return _partition_call(

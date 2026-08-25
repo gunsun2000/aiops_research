@@ -39,6 +39,7 @@ function bindActions() {
   $("generateButton").addEventListener("click", generatePlan);
   $("downloadButton").addEventListener("click", downloadPlan);
   $("refreshArtifactsButton").addEventListener("click", () => loadArtifacts());
+  $("artifactDeleteButton").addEventListener("click", deleteSelectedArtifact);
 }
 
 async function checkHealth() {
@@ -219,6 +220,9 @@ async function loadArtifacts(preferredPlanId = null) {
     if (!response.ok) throw new Error(data.detail?.message || data.detail || "Artifact catalog failed");
     state.artifacts = data.plans || [];
     renderArtifactCatalog(state.artifacts);
+    if (state.report?.plan?.plan_id) {
+      $("planId").textContent = readablePlanId(state.report.plan.plan_id);
+    }
     if (!state.artifacts.length) {
       resetArtifactDetail();
       return;
@@ -244,7 +248,7 @@ function renderArtifactCatalog(plans) {
   }
   $("artifactList").innerHTML = plans.map((plan) => `
     <button class="artifact-row" data-plan-id="${escapeHtml(plan.plan_id)}" type="button">
-      <span class="artifact-row-main"><strong>${escapeHtml(plan.plan_id)}</strong><small>${escapeHtml(plan.plan_type)} · ${escapeHtml(plan.execution_mode)}</small></span>
+      <span class="artifact-row-main"><strong>${escapeHtml(plan.display_id || plan.plan_id)}</strong><small>${escapeHtml(plan.plan_type)} · ${escapeHtml(plan.execution_mode)}</small></span>
       <span class="artifact-row-strategy">${escapeHtml(plan.strategy_id)}</span>
       <span class="state-badge ${plan.validation_status === "passed" ? "ready" : "blocked"}">${escapeHtml(plan.validation_status)}</span>
       <time>${escapeHtml(formatTimestamp(plan.created_at))}</time>
@@ -275,7 +279,7 @@ async function loadArtifact(planId) {
 
 function renderArtifactDetail(report, lineage) {
   const plan = report.plan;
-  $("artifactDetailTitle").textContent = plan.plan_id;
+  $("artifactDetailTitle").textContent = readablePlanId(plan.plan_id);
   $("artifactDetailState").className = `state-badge ${report.validation?.valid ? "ready" : "blocked"}`;
   $("artifactDetailState").textContent = report.status;
   $("artifactVersion").textContent = String(plan.plan_version);
@@ -286,7 +290,7 @@ function renderArtifactDetail(report, lineage) {
   $("artifactHistory").innerHTML = lineage.map((entry, index) => `
     <div class="history-row">
       <span>${index === 0 ? "Current" : `Parent ${index}`}</span>
-      <strong>${escapeHtml(entry.plan.plan_id)}</strong>
+      <strong>${escapeHtml(readablePlanId(entry.plan.plan_id))}</strong>
       <code>v${escapeHtml(entry.plan.plan_version)}</code>
       <small>${escapeHtml(entry.status)}</small>
     </div>
@@ -296,6 +300,13 @@ function renderArtifactDetail(report, lineage) {
   download.href = `/api/plans/${encodeURIComponent(plan.plan_id)}/download`;
   download.download = `${plan.plan_id}.json`;
   download.setAttribute("aria-disabled", "false");
+  $("artifactDeleteButton").disabled = false;
+  $("artifactActionMessage").textContent = "";
+}
+
+function readablePlanId(planId) {
+  const summary = state.artifacts.find((plan) => plan.plan_id === planId);
+  return summary?.display_id || planId;
 }
 
 function resetArtifactDetail() {
@@ -311,6 +322,41 @@ function resetArtifactDetail() {
   download.removeAttribute("href");
   download.removeAttribute("download");
   download.setAttribute("aria-disabled", "true");
+  $("artifactDeleteButton").disabled = true;
+}
+
+async function deleteSelectedArtifact() {
+  const plan = state.artifactReport?.plan;
+  if (!plan) return;
+  const displayId = readablePlanId(plan.plan_id);
+  const confirmed = window.confirm(
+    `Permanently delete ${displayId}?\n\n` +
+    "This cannot be recovered. External scheduling is not cancelled."
+  );
+  if (!confirmed) return;
+
+  const button = $("artifactDeleteButton");
+  const message = $("artifactActionMessage");
+  button.disabled = true;
+  message.className = "artifact-action-message";
+  message.textContent = `Deleting ${displayId}...`;
+  try {
+    const response = await fetch(`/api/plans/${encodeURIComponent(plan.plan_id)}`, {
+      method: "DELETE",
+    });
+    const result = await response.json();
+    if (!response.ok) {
+      throw new Error(result.detail?.message || result.detail || "Artifact deletion failed");
+    }
+    state.artifactReport = null;
+    await loadArtifacts();
+    message.className = "artifact-action-message success";
+    message.textContent = `${displayId} was permanently deleted.`;
+  } catch (error) {
+    button.disabled = false;
+    message.className = "artifact-action-message error";
+    message.textContent = String(error.message || error);
+  }
 }
 
 function downloadPlan() {
