@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Orchestrator-Agent</title>
-  <link rel="stylesheet" href="/assets/styles.css?v=1">
+  <link rel="stylesheet" href="/assets/styles.css?v=3">
   <script src="https://unpkg.com/lucide@0.468.0/dist/umd/lucide.min.js" defer></script>
-  <script src="/assets/app.js?v=1" defer></script>
+  <script src="/assets/app.js?v=3" defer></script>
 </head>
 <body>
   <div class="app-shell">
@@ -160,7 +160,48 @@
       </section>
 
       <section id="artifacts" class="workspace">
-        <div class="section-page"><p class="eyebrow">REPRODUCIBILITY</p><h2>Plan Artifacts</h2><p>Versioned reports and feedback lineage are persisted under <code>runs/model-partition</code>.</p></div>
+        <div class="section-page">
+          <div class="artifact-heading">
+            <div>
+              <p class="eyebrow">REPRODUCIBILITY</p>
+              <h2>Plan Artifacts</h2>
+              <p>Versioned reports and feedback lineage persisted under <code>runs/model-partition</code>.</p>
+            </div>
+            <button class="icon-button" id="refreshArtifactsButton" title="Refresh artifacts" aria-label="Refresh artifacts"><i data-lucide="refresh-cw"></i></button>
+          </div>
+          <div class="artifact-browser">
+            <section class="artifact-catalog" aria-label="Persisted plan artifacts">
+              <div class="artifact-empty" id="artifactEmpty">
+                <strong>No plan artifacts yet</strong>
+                <span>Generate a plan in the Planning Workbench to create the first artifact.</span>
+              </div>
+              <div class="artifact-list" id="artifactList"></div>
+            </section>
+            <aside class="artifact-detail" id="artifactDetail">
+              <div class="artifact-detail-heading">
+                <div>
+                  <p class="eyebrow">SELECTED ARTIFACT</p>
+                  <h3 id="artifactDetailTitle">No plan selected</h3>
+                </div>
+                <span class="state-badge idle" id="artifactDetailState">Waiting</span>
+              </div>
+              <dl class="artifact-metadata">
+                <div><dt>Version</dt><dd id="artifactVersion">-</dd></div>
+                <div><dt>Strategy</dt><dd id="artifactStrategy">-</dd></div>
+                <div><dt>Validation</dt><dd id="artifactValidation">-</dd></div>
+                <div><dt>Handoff</dt><dd id="artifactHandoff">-</dd></div>
+                <div><dt>Created</dt><dd id="artifactCreatedAt">-</dd></div>
+              </dl>
+              <div class="section-heading"><h3>Feedback lineage</h3><span>current → origin</span></div>
+              <div class="artifact-history" id="artifactHistory"><span>Select a plan to inspect lineage.</span></div>
+              <a class="secondary-button" id="artifactDownloadButton" aria-disabled="true"><i data-lucide="download"></i><span>Download selected JSON</span></a>
+              <details>
+                <summary>Raw persisted report</summary>
+                <pre id="artifactRawReport">Select a plan artifact.</pre>
+              </details>
+            </aside>
+          </div>
+        </div>
       </section>
 
       <section id="policies" class="workspace">

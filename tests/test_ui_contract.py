@@ -21,3 +21,27 @@ def test_ui_exposes_the_orchestration_workflow_without_recovery_controls() -> No
 
     for forbidden in ("ha agent", "cost agent", "chaos mesh", "aiopslab", "autogen"):
         assert forbidden not in combined
+
+
+def test_plan_artifact_workspace_exposes_catalog_details_and_lineage() -> None:
+    html = (ROOT / "ui" / "index.html").read_text(encoding="utf-8")
+    script = (ROOT / "ui" / "app.js").read_text(encoding="utf-8")
+
+    for element_id in (
+        "artifactList",
+        "artifactEmpty",
+        "artifactDetail",
+        "artifactHistory",
+        "artifactDownloadButton",
+    ):
+        assert f'id="{element_id}"' in html
+
+    for behavior in (
+        'fetch("/api/plans")',
+        "async function loadArtifacts",
+        "async function loadArtifact",
+        'fetch(`/api/plans/${encodeURIComponent(planId)}/history`)',
+        "await loadArtifacts(report.plan.plan_id)",
+        '`/api/plans/${encodeURIComponent(plan.plan_id)}/download`',
+    ):
+        assert behavior in script

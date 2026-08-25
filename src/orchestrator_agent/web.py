@@ -7,7 +7,7 @@ import tempfile
 from typing import Any, Mapping
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from orchestrator_agent.federated_coordination_adapter import (
@@ -165,9 +165,29 @@ def create_app(
             "rankers": [artifact.to_dict() for artifact in PartitionRankerRepository(rankers).list()]
         }
 
+    @app.get("/api/plans")
+    def list_plans() -> dict[str, list[dict[str, Any]]]:
+        return {"plans": list(_partition_call(repository.list_summaries))}
+
     @app.get("/api/plans/{plan_id}")
     def get_plan(plan_id: str) -> dict[str, Any]:
         return _partition_call(repository.get, plan_id)
+
+    @app.get("/api/plans/{plan_id}/download")
+    def download_plan(plan_id: str) -> JSONResponse:
+        report = _partition_call(repository.get, plan_id)
+        safe_plan_id = "".join(
+            character if character.isalnum() or character in "-_." else "_"
+            for character in plan_id
+        )
+        return JSONResponse(
+            content=report,
+            headers={
+                "Content-Disposition": (
+                    f'attachment; filename="{safe_plan_id or "partition-plan"}.json"'
+                )
+            },
+        )
 
     @app.get("/api/plans/{plan_id}/history")
     def get_history(plan_id: str) -> dict[str, list[dict[str, Any]]]:

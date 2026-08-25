@@ -1,6 +1,8 @@
 const state = {
   exampleId: "fl-v04",
   report: null,
+  artifactReport: null,
+  artifacts: [],
   rankerVersion: null,
 };
 
@@ -14,15 +16,19 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadExample(state.exampleId);
   await loadStrategies();
   await loadRankers();
+  await loadArtifacts();
 });
 
 function bindNavigation() {
   document.querySelectorAll(".nav-item").forEach((button) => {
-    button.addEventListener("click", () => {
+    button.addEventListener("click", async () => {
       document.querySelectorAll(".nav-item").forEach((item) => item.classList.remove("active"));
       document.querySelectorAll(".workspace").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
       $(button.dataset.section).classList.add("active");
+      if (button.dataset.section === "artifacts") {
+        await loadArtifacts(state.report?.plan?.plan_id || state.artifactReport?.plan?.plan_id);
+      }
     });
   });
 }
@@ -32,6 +38,7 @@ function bindActions() {
   $("resetButton").addEventListener("click", () => loadExample(state.exampleId));
   $("generateButton").addEventListener("click", generatePlan);
   $("downloadButton").addEventListener("click", downloadPlan);
+  $("refreshArtifactsButton").addEventListener("click", () => loadArtifacts());
 }
 
 async function checkHealth() {
@@ -90,6 +97,7 @@ async function generatePlan() {
     if (!response.ok) throw new Error(report.detail?.message || report.detail || "Planning failed");
     state.report = report;
     renderReport(report);
+    await loadArtifacts(report.plan.plan_id);
   } catch (error) {
     status.className = "state-badge blocked";
     status.textContent = "Blocked";
@@ -204,14 +212,125 @@ async function loadRankers() {
     : `Registered ranker: ${state.rankerVersion}`;
 }
 
+async function loadArtifacts(preferredPlanId = null) {
+  try {
+    const response = await fetch("/api/plans");
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.detail?.message || data.detail || "Artifact catalog failed");
+    state.artifacts = data.plans || [];
+    renderArtifactCatalog(state.artifacts);
+    if (!state.artifacts.length) {
+      resetArtifactDetail();
+      return;
+    }
+    const selectedPlanId = state.artifacts.some((item) => item.plan_id === preferredPlanId)
+      ? preferredPlanId
+      : state.artifacts[0].plan_id;
+    await loadArtifact(selectedPlanId);
+  } catch (error) {
+    $("artifactEmpty").classList.remove("hidden");
+    $("artifactEmpty").innerHTML = `<strong>Artifact catalog unavailable</strong><span>${escapeHtml(error.message || error)}</span>`;
+    $("artifactList").innerHTML = "";
+    resetArtifactDetail();
+  }
+}
+
+function renderArtifactCatalog(plans) {
+  const empty = $("artifactEmpty");
+  empty.classList.toggle("hidden", plans.length > 0);
+  if (!plans.length) {
+    $("artifactList").innerHTML = "";
+    return;
+  }
+  $("artifactList").innerHTML = plans.map((plan) => `
+    <button class="artifact-row" data-plan-id="${escapeHtml(plan.plan_id)}" type="button">
+      <span class="artifact-row-main"><strong>${escapeHtml(plan.plan_id)}</strong><small>${escapeHtml(plan.plan_type)} · ${escapeHtml(plan.execution_mode)}</small></span>
+      <span class="artifact-row-strategy">${escapeHtml(plan.strategy_id)}</span>
+      <span class="state-badge ${plan.validation_status === "passed" ? "ready" : "blocked"}">${escapeHtml(plan.validation_status)}</span>
+      <time>${escapeHtml(formatTimestamp(plan.created_at))}</time>
+    </button>
+  `).join("");
+  document.querySelectorAll(".artifact-row").forEach((button) => {
+    button.addEventListener("click", () => loadArtifact(button.dataset.planId));
+  });
+}
+
+async function loadArtifact(planId) {
+  if (!planId) return;
+  const encodedPlanId = encodeURIComponent(planId);
+  const [reportResponse, historyResponse] = await Promise.all([
+    fetch(`/api/plans/${encodedPlanId}`),
+    fetch(`/api/plans/${encodeURIComponent(planId)}/history`),
+  ]);
+  const report = await reportResponse.json();
+  const history = await historyResponse.json();
+  if (!reportResponse.ok) throw new Error(report.detail?.message || report.detail || "Artifact detail failed");
+  if (!historyResponse.ok) throw new Error(history.detail?.message || history.detail || "Artifact history failed");
+  state.artifactReport = report;
+  renderArtifactDetail(report, history.plans || []);
+  document.querySelectorAll(".artifact-row").forEach((row) => {
+    row.classList.toggle("active", row.dataset.planId === planId);
+  });
+}
+
+function renderArtifactDetail(report, lineage) {
+  const plan = report.plan;
+  $("artifactDetailTitle").textContent = plan.plan_id;
+  $("artifactDetailState").className = `state-badge ${report.validation?.valid ? "ready" : "blocked"}`;
+  $("artifactDetailState").textContent = report.status;
+  $("artifactVersion").textContent = String(plan.plan_version);
+  $("artifactStrategy").textContent = plan.strategy_id || "legacy-policy";
+  $("artifactValidation").textContent = report.validation?.valid ? "passed" : "failed";
+  $("artifactHandoff").textContent = report.scheduling_handoff?.status || plan.handoff_status || "unknown";
+  $("artifactCreatedAt").textContent = formatTimestamp(report.scheduling_handoff?.created_at);
+  $("artifactHistory").innerHTML = lineage.map((entry, index) => `
+    <div class="history-row">
+      <span>${index === 0 ? "Current" : `Parent ${index}`}</span>
+      <strong>${escapeHtml(entry.plan.plan_id)}</strong>
+      <code>v${escapeHtml(entry.plan.plan_version)}</code>
+      <small>${escapeHtml(entry.status)}</small>
+    </div>
+  `).join("") || "<span>No lineage records found.</span>";
+  $("artifactRawReport").textContent = JSON.stringify(report, null, 2);
+  const download = $("artifactDownloadButton");
+  download.href = `/api/plans/${encodeURIComponent(plan.plan_id)}/download`;
+  download.download = `${plan.plan_id}.json`;
+  download.setAttribute("aria-disabled", "false");
+}
+
+function resetArtifactDetail() {
+  state.artifactReport = null;
+  $("artifactDetailTitle").textContent = "No plan selected";
+  $("artifactDetailState").className = "state-badge idle";
+  $("artifactDetailState").textContent = "Waiting";
+  ["artifactVersion", "artifactStrategy", "artifactValidation", "artifactHandoff", "artifactCreatedAt"]
+    .forEach((id) => $(id).textContent = "-");
+  $("artifactHistory").innerHTML = "<span>Select a plan to inspect lineage.</span>";
+  $("artifactRawReport").textContent = "Select a plan artifact.";
+  const download = $("artifactDownloadButton");
+  download.removeAttribute("href");
+  download.removeAttribute("download");
+  download.setAttribute("aria-disabled", "true");
+}
+
 function downloadPlan() {
   if (!state.report) return;
-  const blob = new Blob([JSON.stringify(state.report, null, 2)], { type: "application/json" });
+  downloadReport(state.report);
+}
+
+function downloadReport(report) {
+  const blob = new Blob([JSON.stringify(report, null, 2)], { type: "application/json" });
   const link = document.createElement("a");
   link.href = URL.createObjectURL(blob);
-  link.download = `${state.report.plan.plan_id}.json`;
+  link.download = `${report.plan.plan_id}.json`;
   link.click();
   URL.revokeObjectURL(link.href);
+}
+
+function formatTimestamp(value) {
+  if (!value) return "unknown";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
 function formatBytes(value) {

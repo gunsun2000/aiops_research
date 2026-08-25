@@ -316,6 +316,55 @@ class PartitionPlanRepository:
             )
         return self._read_json(path)
 
+    def list_summaries(self) -> tuple[dict[str, Any], ...]:
+        self._recover_incomplete_transactions()
+        if not self.root.is_dir():
+            return ()
+
+        summaries: list[dict[str, Any]] = []
+        for plan_directory in self.root.iterdir():
+            latest_path = plan_directory / "latest.json"
+            if not self._is_committed(plan_directory) or not latest_path.is_file():
+                continue
+            report = self._read_json(latest_path)
+            plan = report.get("plan", {})
+            validation = report.get("validation", {})
+            handoff = report.get("scheduling_handoff", {})
+            validation_valid = (
+                validation.get("valid") if isinstance(validation, Mapping) else None
+            )
+            summaries.append(
+                {
+                    "plan_id": plan.get("plan_id"),
+                    "plan_version": plan.get("plan_version"),
+                    "parent_plan_id": plan.get("parent_plan_id"),
+                    "plan_type": plan.get("plan_type", "legacy"),
+                    "strategy_id": plan.get("strategy_id", "legacy-policy"),
+                    "execution_mode": plan.get("approved_execution_mode"),
+                    "status": report.get("status"),
+                    "validation_status": (
+                        "passed"
+                        if validation_valid is True
+                        else "failed" if validation_valid is False else "unknown"
+                    ),
+                    "handoff_status": (
+                        handoff.get("status") if isinstance(handoff, Mapping) else None
+                    ),
+                    "created_at": (
+                        handoff.get("created_at", "")
+                        if isinstance(handoff, Mapping)
+                        else ""
+                    ),
+                }
+            )
+        return tuple(
+            sorted(
+                summaries,
+                key=lambda item: (str(item["created_at"]), str(item["plan_id"])),
+                reverse=True,
+            )
+        )
+
     def history(self, plan_id: str) -> tuple[dict[str, Any], ...]:
         lineage: list[dict[str, Any]] = []
         seen: set[str] = set()

@@ -100,7 +100,9 @@ orchestrator-agent plan-model-partition-v2 \
 | `POST` | `/api/plans` | native request planning |
 | `GET` | `/api/strategies` | strategy catalog |
 | `GET` | `/api/rankers` | registered learned rankers |
+| `GET` | `/api/plans` | persisted plan artifact catalog |
 | `GET` | `/api/plans/{plan_id}` | persisted plan |
+| `GET` | `/api/plans/{plan_id}/download` | persisted plan JSON download |
 | `GET` | `/api/plans/{plan_id}/history` | plan lineage |
 | `POST` | `/api/plans/{plan_id}/feedback` | bounded repartition feedback |
 
