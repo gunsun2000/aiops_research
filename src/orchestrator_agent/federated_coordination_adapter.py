@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import json
 from math import isfinite
 from pathlib import Path
@@ -275,6 +276,115 @@ class MappingParticipantContextProvider:
             workload_forecast=self.context.workload_forecast,
             source=self.context.source,
         )
+
+
+def participant_context_from_fca_snapshot(
+    plan: FederatedCoordinationPlanV04,
+) -> ParticipantContext:
+    """Build the partition resource context from the exact FCA snapshot."""
+    snapshot = _mapping(
+        plan.original_payload.get("system_snapshot"), "system_snapshot"
+    )
+    resources = _mapping(
+        snapshot.get("resource_summary", {}), "system_snapshot.resource_summary"
+    )
+    nodes = _mapping(
+        resources.get("nodes", {}), "system_snapshot.resource_summary.nodes"
+    )
+    network = _mapping(
+        snapshot.get("network_summary", {}), "system_snapshot.network_summary"
+    )
+    peers = _mapping(
+        network.get("peers", {}), "system_snapshot.network_summary.peers"
+    )
+    clients = {
+        _text(
+            _mapping(item, "system_snapshot.clients[]").get("client_id"),
+            "client_id",
+        ): _mapping(item, "system_snapshot.clients[]")
+        for item in _sequence(snapshot.get("clients", []), "system_snapshot.clients")
+    }
+    devices: list[ResourceDevice] = []
+    for participant_id in plan.participant_ids:
+        client = clients.get(participant_id)
+        node = nodes.get(participant_id)
+        if client is None or not isinstance(node, Mapping):
+            raise PartitionContractError(
+                "participant_context_missing",
+                f"Prometheus resource context is missing for {participant_id}",
+            )
+        if str(client.get("status", "")).lower() != "online":
+            raise PartitionContractError(
+                "participant_context_stale",
+                f"selected participant is no longer online: {participant_id}",
+            )
+        gpu_memory_available = int(node.get("gpu_memory_allocatable_bytes") or 0)
+        has_gpu = bool(node.get("dcgm_available") or gpu_memory_available > 0)
+        memory_available = (
+            gpu_memory_available
+            if has_gpu and gpu_memory_available > 0
+            else int(node.get("memory_allocatable_bytes") or 0)
+        )
+        memory_capacity = (
+            int(node.get("gpu_memory_total_bytes") or memory_available)
+            if has_gpu
+            else int(node.get("memory_total_bytes") or memory_available)
+        )
+        memory_capacity = max(memory_capacity, memory_available, 1)
+        utilization = node.get("gpu_utilization_ratio")
+        utilization_ratio = (
+            min(max(float(utilization), 0.0), 1.0)
+            if isinstance(utilization, (int, float))
+            else 0.0
+        )
+        devices.append(
+            ResourceDevice(
+                participant_id,
+                "gpu" if has_gpu else "cpu",
+                max(1.0, 1_000_000_000_000.0 * (1.0 - utilization_ratio)),
+                memory_capacity,
+                memory_available,
+            )
+        )
+
+    links: list[NetworkLink] = []
+    for source_id in plan.participant_ids:
+        for target_id in plan.participant_ids:
+            if source_id == target_id:
+                continue
+            peer = peers.get(target_id, {})
+            if not isinstance(peer, Mapping):
+                continue
+            bandwidth = float(
+                peer.get("available_bandwidth_bytes_per_second") or 0
+            )
+            latency_seconds = peer.get("rtt_seconds")
+            if bandwidth <= 0 or not isinstance(latency_seconds, (int, float)):
+                continue
+            links.append(
+                NetworkLink(
+                    source_id,
+                    target_id,
+                    bandwidth,
+                    max(0.0, float(latency_seconds) * 1000.0),
+                )
+            )
+    generated_at = str(snapshot.get("generated_at") or "").strip()
+    if not generated_at:
+        generated_at = datetime.now(timezone.utc).isoformat()
+    return ParticipantContext(
+        snapshot_id=_text(
+            snapshot.get("state_snapshot_id"), "system_snapshot.state_snapshot_id"
+        ),
+        snapshot_version=_text(
+            snapshot.get("state_snapshot_id"), "system_snapshot.state_snapshot_id"
+        ),
+        collected_at=generated_at,
+        devices=tuple(devices),
+        network_links=tuple(links),
+        workload_forecast=None,
+        source=str(snapshot.get("source") or "prometheus"),
+    )
 
 
 @dataclass(frozen=True)

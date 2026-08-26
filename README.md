@@ -95,6 +95,7 @@ orchestrator-agent plan-model-partition-v2 \
 | Method | Path | Role |
 | --- | --- | --- |
 | `GET` | `/healthz` | service readiness |
+| `POST` | `/api/v1/orchestrator/plans` | bare FCA v0.4 plan을 Scheduling Agent로 전달 |
 | `GET` | `/api/examples` | FL, SL, inference examples |
 | `POST` | `/api/coordination-plans` | Federated Coordination v0.4 planning |
 | `POST` | `/api/plans` | native request planning |
@@ -108,6 +109,11 @@ orchestrator-agent plan-model-partition-v2 \
 
 Swagger UI: [http://127.0.0.1:18200/docs](http://127.0.0.1:18200/docs)
 
+상주 endpoint는 FCA가 첨부한 `system_snapshot`을 우선 사용하므로 Prometheus에서
+변경된 node/resource/network 상태가 매 revision의 partition 판단에 반영됩니다.
+모델 구조는 `ORCHESTRATOR_CONTEXT_PATH`, Scheduling Agent 주소는
+`SCHEDULING_AGENT_URL`로 설정합니다.
+
 ## 시험
 
 ```bash
@@ -118,5 +124,7 @@ python -m pytest
 
 ## 중요한 경계
 
-예제의 `source: prometheus-snapshot-example`은 Prometheus에서 수집됐다고 가정한 JSON snapshot입니다. 이 독립본은 첫 단계에서 JSON-backed context provider를 제공하며 Prometheus에 직접 접속한다고 주장하지 않습니다. 향후 Prometheus/Shared State adapter는 동일 context 계약을 구현하면 됩니다.
-
+Orchestrator가 Prometheus를 직접 scrape하지는 않습니다. 상주 연동에서는 FCA가 수집한
+버전 고정 snapshot을 plan과 함께 전달하고, Orchestrator는 그 snapshot만 사용해
+partition을 계산한 뒤 외부 Scheduling Agent에 제출합니다. placement와 execution
+lifecycle 판단은 계속 Scheduler와 Controller 소유입니다.
